@@ -1,0 +1,11 @@
+bin/
+# Environment file
+.env
+
+# OS specific
+.DS_Store
+*.swp
+*.swo
+
+# IDE specific
+.vscode/
