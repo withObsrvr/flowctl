@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/withobsrvr/flowctl/internal/api"
+	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	pb "github.com/withobsrvr/flowctl/proto"
 )
 
@@ -22,6 +23,7 @@ var (
 		Short: "Start the control plane server",
 		Long:  `Start the control plane server that manages service registration and discovery.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+
 			// Create listener
 			lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 			if err != nil {
@@ -41,12 +43,12 @@ var (
 			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 			go func() {
 				<-sigChan
-				fmt.Println("\nShutting down server...")
+				logger.Info("Shutting down server...")
 				s.GracefulStop()
 			}()
 
 			// Start server
-			fmt.Printf("Starting control plane server on port %d...\n", port)
+			logger.Infof("Starting control plane server on port %d...", port)
 			if err := s.Serve(lis); err != nil {
 				return fmt.Errorf("failed to serve: %w", err)
 			}

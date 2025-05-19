@@ -1,0 +1,64 @@
+apiVersion: flowctl/v1
+kind: Pipeline
+metadata:
+  name: local-test-pipeline
+  description: Test pipeline for local execution
+
+version: 0.1
+log_level: info
+
+source:
+  type: stellar-source
+  params:
+    image: ghcr.io/withobsrvr/stellar-live-source-datalake:latest
+    command:
+      - ./stellar_live_source_datalake
+      - --local
+      - --test-mode
+    env:
+      STORAGE_TYPE: LOCAL
+      DATA_PATH: ./test-data
+      LEDGERS_PER_FILE: 1
+      FILES_PER_PARTITION: 10
+      FLOWCTL_ENDPOINT: localhost:8080
+    ports:
+      - 50052
+    health_check: /health
+    health_port: 8080
+
+processors:
+  - name: ttp-processor
+    plugin: token-transfer
+    params:
+      image: ghcr.io/withobsrvr/ttp-processor:latest
+      command:
+        - ./ttp_processor_server
+        - --local
+      env:
+        SOURCE_SERVICE_ADDRESS: localhost:50052
+        NETWORK_PASSPHRASE: Test SDF Network ; September 2015
+        FLOWCTL_ENDPOINT: localhost:8080
+        HEALTH_PORT: 8089
+      ports:
+        - 50053
+        - 8089
+      health_check: /health
+
+sink:
+  type: demo-consumer
+  params:
+    image: ghcr.io/withobsrvr/consumer-app:latest
+    command:
+      - node
+      - index.js
+      - --source
+      - localhost:50053
+      - --range
+      - 409907
+      - 409948
+    env:
+      FLOWCTL_ENDPOINT: localhost:8080
+    ports:
+      - 3000
+    health_check: /health
+    health_port: 3000

@@ -1,0 +1,104 @@
+version: "3.8"
+services:
+    demo-consumer:
+        image: ghcr.io/withobsrvr/consumer-app:latest
+        container_name: -demo-consumer
+        command:
+            - npm
+            - start
+            - --
+            - "409907"
+            - "409948"
+        environment:
+            FLOWCTL_ENDPOINT: localhost:8080
+            SOURCE_SERVICE_ADDRESS: ttp-processor:50053
+        ports:
+            - 3000:3000
+        depends_on:
+            - ttp-processor
+        networks:
+            - pipeline
+        healthcheck:
+            test:
+                - CMD
+                - wget
+                - --quiet
+                - --tries=1
+                - --spider
+                - /health
+            interval: 10s
+            timeout: 5s
+            retries: 3
+            start_period: 5s
+        restart: unless-stopped
+        labels:
+            com.obsrvr.component: sink
+            com.obsrvr.type: demo-consumer
+    stellar-source:
+        image: ghcr.io/withobsrvr/stellar-live-source-datalake:latest
+        container_name: -stellar-source
+        command:
+            - ./stellar_live_source_datalake
+        environment:
+            BUCKET_NAME: obsrvr-stellar-ledger-data-testnet-data/landing/ledgers
+            FILES_PER_PARTITION: "64000"
+            FLOWCTL_ENDPOINT: localhost:8080
+            GOOGLE_APPLICATION_CREDENTIALS: ${HOME}/.config/gcloud/application_default_credentials.json
+            LEDGERS_PER_FILE: "1"
+            STORAGE_TYPE: GCS
+        ports:
+            - 50052:50052
+        networks:
+            - pipeline
+        healthcheck:
+            test:
+                - CMD
+                - wget
+                - --quiet
+                - --tries=1
+                - --spider
+                - /health
+            interval: 10s
+            timeout: 5s
+            retries: 3
+            start_period: 5s
+        restart: unless-stopped
+        labels:
+            com.obsrvr.component: source
+            com.obsrvr.type: stellar-source
+    ttp-processor:
+        image: ghcr.io/withobsrvr/ttp-processor:latest
+        container_name: -ttp-processor
+        command:
+            - ./ttp_processor_server
+        environment:
+            FLOWCTL_ENDPOINT: localhost:8080
+            HEALTH_PORT: "8089"
+            NETWORK_PASSPHRASE: Test SDF Network ; September 2015
+            SOURCE_SERVICE_ADDRESS: stellar-source:50052
+        ports:
+            - 50053:50053
+            - 8089:8089
+        depends_on:
+            - stellar-source
+        networks:
+            - pipeline
+        healthcheck:
+            test:
+                - CMD
+                - wget
+                - --quiet
+                - --tries=1
+                - --spider
+                - /health
+            interval: 10s
+            timeout: 5s
+            retries: 3
+            start_period: 5s
+        restart: unless-stopped
+        labels:
+            com.obsrvr.component: processor
+            com.obsrvr.order: "0"
+            com.obsrvr.type: token-transfer
+networks:
+    pipeline: {}

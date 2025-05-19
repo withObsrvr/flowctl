@@ -5,6 +5,8 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
+	"github.com/withobsrvr/flowctl/internal/utils/logger"
+	"go.uber.org/zap"
 )
 
 var (
@@ -19,6 +21,14 @@ var versionCmd = &cobra.Command{
 	Short: "Print version information",
 	Long:  `Print version information for flowctl and its components.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		logger.Debug("Version command executed", 
+			zap.String("version", version),
+			zap.String("commit", commit),
+			zap.String("build_time", buildTime),
+			zap.String("go_version", runtime.Version()),
+			zap.String("os", runtime.GOOS),
+			zap.String("arch", runtime.GOARCH))
+
 		fmt.Printf("flowctl version %s\n", version)
 		fmt.Printf("  commit: %s\n", commit)
 		fmt.Printf("  built: %s\n", buildTime)

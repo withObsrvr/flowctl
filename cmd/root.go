@@ -6,6 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/withobsrvr/flowctl/internal/utils/logger"
+	"go.uber.org/zap"
 )
 
 var (
@@ -28,8 +30,10 @@ a Flow-powered stack.`,
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 func Execute() {
+	defer logger.Sync()
+	
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
+		logger.Error("Command execution failed", zap.Error(err))
 		os.Exit(1)
 	}
 }
@@ -73,8 +77,14 @@ func initConfig() {
 
 	viper.AutomaticEnv() // read in environment variables that match
 
+	// Initialize the logger
+	if err := logger.Init(logLevel); err != nil {
+		fmt.Printf("Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
+
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+		logger.Info("Using config file", zap.String("file", viper.ConfigFileUsed()))
 	}
 }
