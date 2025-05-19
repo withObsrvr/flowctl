@@ -9,6 +9,7 @@ import (
 	"github.com/withobsrvr/flowctl/internal/processor"
 	"github.com/withobsrvr/flowctl/internal/sink"
 	"github.com/withobsrvr/flowctl/internal/source"
+	"github.com/withobsrvr/flowctl/internal/testfixtures"
 )
 
 // Pipeline represents a data processing pipeline
@@ -28,11 +29,11 @@ func NewPipeline(cfg *config.Config) (*Pipeline, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	// For now, we'll use mock components
-	src := source.NewMockSource()
+	// For now, we'll use mock components from testfixtures
+	src := testfixtures.CreateMockSource()
 	procs := make([]processor.Processor, len(cfg.Processors))
 	for i, p := range cfg.Processors {
-		procs[i] = processor.NewMockProcessor(p.Name)
+		procs[i] = testfixtures.CreateMockProcessor(p.Name)
 	}
 	snk := sink.NewStdoutSink()
 

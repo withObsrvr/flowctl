@@ -26,38 +26,4 @@ type Source interface {
 	Healthy() error
 }
 
-// MockSource implements Source interface for testing
-type MockSource struct {
-	ticker chan EventEnvelope
-}
-
-// NewMockSource creates a new mock source that emits events on a ticker
-func NewMockSource() *MockSource {
-	return &MockSource{
-		ticker: make(chan EventEnvelope),
-	}
-}
-
-func (m *MockSource) Open(ctx context.Context) error {
-	return nil
-}
-
-func (m *MockSource) Events(ctx context.Context, out chan<- EventEnvelope) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case event := <-m.ticker:
-			out <- event
-		}
-	}
-}
-
-func (m *MockSource) Close() error {
-	close(m.ticker)
-	return nil
-}
-
-func (m *MockSource) Healthy() error {
-	return nil
-}
+// For testing purposes, see internal/testfixtures/source/mocksource.go
