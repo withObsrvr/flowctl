@@ -41,8 +41,6 @@ func findSchemaPath() string {
 		"../schemas/cue",
 		// Absolute path for production deployments
 		"/opt/flowctl/schemas/cue",
-		// For development
-		"./internal/translator/schemas/cue",
 	}
 
 	for _, path := range possiblePaths {
@@ -71,14 +69,16 @@ func (v *CueValidator) Validate(pipeline *model.Pipeline) error {
 	// Create CUE context
 	ctx := cuecontext.New()
 
-	// Load CUE schema
+	// Load CUE schema using absolute path to schema file
+	schemaFile := filepath.Join(v.schemaPath, "schema.cue")
+	
 	loadConfig := &load.Config{
 		ModuleRoot: v.schemaPath,
 		Module:     "github.com/withobsrvr/flowctl/schemas/cue",
 	}
 
 	entrypoints := []string{
-		"schema.cue",
+		schemaFile,
 	}
 
 	buildInstances := load.Instances(entrypoints, loadConfig)
@@ -116,7 +116,7 @@ func (v *CueValidator) Validate(pipeline *model.Pipeline) error {
 			errMsg = strings.Replace(errMsg, "#Pipeline", "Pipeline", -1)
 		}
 		if strings.Contains(errMsg, "field not allowed") {
-			errMsg = strings.Replace(errMsg, "field not allowed", "field is required but not provided", -1)
+			errMsg = strings.Replace(errMsg, "field not allowed", "unexpected field provided", -1)
 		}
 		
 		// Format the error more clearly

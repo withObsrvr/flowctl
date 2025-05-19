@@ -1,4 +1,4 @@
-// Enhanced Pipeline schema in CUE with strict validation
+// Unified Pipeline schema in CUE with comprehensive validation
 package pipeline
 
 // Pipeline represents a data processing pipeline with all components
@@ -39,13 +39,13 @@ package pipeline
 	// Optional driver for deployment
 	driver?: "docker" | "kubernetes" | "k8s" | "nomad" | "local"
 	
-	// At least one source is required
+	// At least one source is required - use SourceComponent to enforce source-specific rules
 	sources: [...#SourceComponent] & [_, ...] 
 	
-	// Optional list of processors
+	// Optional list of processors - use ProcessorComponent to enforce processor-specific rules
 	processors?: [...#ProcessorComponent]
 	
-	// At least one sink is required
+	// At least one sink is required - use SinkComponent to enforce sink-specific rules
 	sinks: [...#SinkComponent] & [_, ...]
 	
 	// Optional configuration parameters
