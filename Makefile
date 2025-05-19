@@ -1,8 +1,13 @@
-.PHONY: build test clean
+.PHONY: build test clean schemas
 
 # Build the binary
-build:
+build: schemas
 	CGO_ENABLED=0 go build -o bin/flowctl
+	
+# Install schema files
+schemas:
+	mkdir -p bin/schemas/cue
+	cp -r schemas/cue/* bin/schemas/cue/
 
 # Run tests
 test:

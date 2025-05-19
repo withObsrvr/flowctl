@@ -1,0 +1,24 @@
+apiVersion: flowctl/v1
+kind: Pipeline
+metadata:
+  name: test-pipeline
+  namespace: default
+  labels:
+    app: test-app
+spec:
+  description: A test pipeline for schema validation
+  driver: kubernetes
+  sources:
+    - id: source1
+      image: source:latest
+      health_check: /health
+      health_port: 8080
+  processors:
+    - id: processor1
+      image: processor:latest
+      inputs: [source1]
+      replicas: 2
+  sinks:
+    - id: sink1
+      image: sink:latest
+      inputs: [processor1]
