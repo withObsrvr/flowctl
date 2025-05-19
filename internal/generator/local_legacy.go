@@ -12,12 +12,14 @@ import (
 	"go.uber.org/zap"
 )
 
-// LocalGenerator implements Generator for local execution
-type LocalGenerator struct{}
+// LegacyLocalGenerator implements Generator for local execution with bash scripts
+// Deprecated: Use DockerComposeLocalGenerator instead
+type LegacyLocalGenerator struct{}
 
-// NewLocalGenerator creates a new local execution generator
-func NewLocalGenerator() *LocalGenerator {
-	return &LocalGenerator{}
+// NewLegacyLocalGenerator creates a new local execution generator using bash scripts
+// Deprecated: Use NewLocalGenerator instead
+func NewLegacyLocalGenerator() *LegacyLocalGenerator {
+	return &LegacyLocalGenerator{}
 }
 
 // LocalRunConfig represents the local run configuration
@@ -190,7 +192,7 @@ FLOWCTL_LOG_DIR={{ .LogDir }}
 `
 
 // Generate produces local execution configuration
-func (g *LocalGenerator) Generate(pipeline *model.Pipeline, opts model.TranslationOptions) ([]byte, error) {
+func (g *LegacyLocalGenerator) Generate(pipeline *model.Pipeline, opts model.TranslationOptions) ([]byte, error) {
 	logger.Debug("Generating local execution configuration")
 
 	// Validate the pipeline for local execution
@@ -308,7 +310,7 @@ func (g *LocalGenerator) Generate(pipeline *model.Pipeline, opts model.Translati
 }
 
 // Validate checks if the pipeline can be translated to local execution
-func (g *LocalGenerator) Validate(pipeline *model.Pipeline) error {
+func (g *LegacyLocalGenerator) Validate(pipeline *model.Pipeline) error {
 	logger.Debug("Validating pipeline for local execution")
 
 	// Check basic requirements

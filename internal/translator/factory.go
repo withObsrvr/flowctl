@@ -1,6 +1,7 @@
 package translator
 
 import (
+	"github.com/withobsrvr/flowctl/internal/config"
 	"github.com/withobsrvr/flowctl/internal/generator"
 	"github.com/withobsrvr/flowctl/internal/interfaces"
 )
@@ -30,8 +31,17 @@ func NewNomadGenerator() interfaces.Generator {
 	return generator.NewNomadGenerator()
 }
 
-// NewLocalGenerator creates a local execution generator
+// NewLocalGenerator creates a local execution generator based on configuration
 func NewLocalGenerator() interfaces.Generator {
+	// Load global config to determine which generator to use
+	globalCfg := config.LoadGlobalConfig()
+	
+	if globalCfg.UseBashScriptGenerator() {
+		// Use legacy bash script generator if specifically requested
+		return generator.NewLegacyLocalGenerator()
+	}
+	
+	// Default to Docker Compose based generator (modern approach)
 	return generator.NewLocalGenerator()
 }
 

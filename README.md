@@ -106,20 +106,45 @@ Supported output formats:
 - `docker-compose`: Docker Compose YAML
 - `kubernetes`: Kubernetes manifests (coming soon)
 - `nomad`: Nomad job specifications (coming soon)
-- `local`: Local execution script for development
+- `local`: Local execution configuration (Docker Compose or bash script)
 
 ### Local Execution
 
-When using the `local` output format, flowctl generates a bash script that runs pipeline components directly on your local machine without containers. This is useful for development and debugging.
+When using the `local` output format, flowctl generates a configuration for running your pipeline locally. By default, it creates a Docker Compose configuration with profiles, but you can also use the legacy bash script generator if needed.
 
-The local generator creates:
-1. A bash script to start and manage pipeline components
+#### Docker Compose-based Local Execution (Default)
+
+The Docker Compose-based local generator creates:
+1. A Docker Compose configuration file with profile support
 2. An environment file with all required variables
 3. Proper dependency ordering between components
 4. Health check monitoring
-5. Process supervision with automatic restart
+5. Volume management for persistent data and logs
 
 ```bash
+# Generate Docker Compose configuration for local execution
+./bin/flowctl translate -f examples/local-test.yaml -o local --to-file docker-compose.yaml
+
+# Start the pipeline
+docker compose --profile local up -d
+
+# View logs
+docker compose logs -f
+
+# Stop the pipeline
+docker compose down
+```
+
+See [Local Execution with Docker Compose](docs/local-execution.md) for more details.
+
+#### Legacy Bash Script Generator
+
+For compatibility with existing workflows, you can still use the bash script generator:
+
+```bash
+# Set environment variable to use bash script generator
+export FLOWCTL_LOCAL_GENERATOR_TYPE=bash
+
 # Generate local execution script
 ./bin/flowctl translate -f examples/local-test.yaml -o local --to-file run_pipeline.sh
 
@@ -129,6 +154,13 @@ chmod +x run_pipeline.sh
 # Run the pipeline
 ./run_pipeline.sh
 ```
+
+The bash script generator creates:
+1. A bash script to start and manage pipeline components
+2. An environment file with all required variables
+3. Proper dependency ordering between components
+4. Health check monitoring
+5. Process supervision with automatic restart
 
 ## Development
 
