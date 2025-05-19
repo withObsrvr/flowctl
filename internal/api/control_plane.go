@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/withobsrvr/flowctl/proto"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
@@ -25,15 +26,38 @@ type Service struct {
 // ControlPlaneServer implements the control plane gRPC service
 type ControlPlaneServer struct {
 	pb.UnimplementedControlPlaneServer
-	mu       sync.RWMutex
-	services map[string]*Service
+	mu          sync.RWMutex
+	services    map[string]*Service
+	heartbeatTTL time.Duration
+	janitorInterval time.Duration
+	done         chan struct{}
 }
 
 // NewControlPlaneServer creates a new control plane server
 func NewControlPlaneServer() *ControlPlaneServer {
-	return &ControlPlaneServer{
-		services: make(map[string]*Service),
+	server := &ControlPlaneServer{
+		services:        make(map[string]*Service),
+		heartbeatTTL:    30 * time.Second, // Default TTL is 30 seconds
+		janitorInterval: 10 * time.Second, // Default janitor interval is 10 seconds
+		done:            make(chan struct{}),
 	}
+	
+	// Start the janitor goroutine
+	go server.runJanitor()
+	
+	return server
+}
+
+// SetHeartbeatTTL sets the TTL for service heartbeats
+func (s *ControlPlaneServer) SetHeartbeatTTL(ttl time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.heartbeatTTL = ttl
+}
+
+// Close stops the control plane server and cleans up resources
+func (s *ControlPlaneServer) Close() {
+	close(s.done)
 }
 
 // Register implements the Register RPC
@@ -47,10 +71,16 @@ func (s *ControlPlaneServer) Register(ctx context.Context, info *pb.ServiceInfo)
 	}
 
 	// Create service record
+	now := time.Now()
 	service := &Service{
-		Info:     info,
-		Status:   &pb.ServiceStatus{ServiceId: info.ServiceId, ServiceType: info.ServiceType},
-		LastSeen: time.Now(),
+		Info: info,
+		Status: &pb.ServiceStatus{
+			ServiceId:     info.ServiceId,
+			ServiceType:   info.ServiceType,
+			IsHealthy:     true,
+			LastHeartbeat: timestamppb.New(now),
+		},
+		LastSeen: now,
 	}
 
 	// Store service
@@ -99,12 +129,14 @@ func (s *ControlPlaneServer) Heartbeat(ctx context.Context, hb *pb.ServiceHeartb
 		return nil, fmt.Errorf("service %s not found", hb.ServiceId)
 	}
 
-	service.LastSeen = time.Now()
+	now := time.Now()
+	service.LastSeen = now
 	service.Status.Metrics = hb.Metrics
 	service.Status.IsHealthy = true
+	service.Status.LastHeartbeat = timestamppb.New(now)
 
 	// Log heartbeat receipt
-	logger.Info("Received heartbeat",
+	logger.Debug("Received heartbeat",
 		zap.String("service_id", hb.ServiceId),
 		zap.String("service_type", service.Info.ServiceType.String()),
 		zap.Any("metrics", hb.Metrics),
@@ -137,4 +169,49 @@ func (s *ControlPlaneServer) ListServices(ctx context.Context, _ *emptypb.Empty)
 	}
 
 	return &pb.ServiceList{Services: services}, nil
+}
+
+// runJanitor periodically checks for services that haven't sent heartbeats
+// and marks them as unhealthy
+func (s *ControlPlaneServer) runJanitor() {
+	ticker := time.NewTicker(s.janitorInterval)
+	defer ticker.Stop()
+
+	logger.Info("Starting health check janitor",
+		zap.Duration("ttl", s.heartbeatTTL),
+		zap.Duration("interval", s.janitorInterval))
+
+	for {
+		select {
+		case <-s.done:
+			logger.Info("Stopping health check janitor")
+			return
+		case <-ticker.C:
+			s.checkServiceHealth()
+		}
+	}
+}
+
+// checkServiceHealth checks all services for stale heartbeats
+func (s *ControlPlaneServer) checkServiceHealth() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	staleThreshold := now.Add(-s.heartbeatTTL)
+
+	for id, service := range s.services {
+		// If the service hasn't sent a heartbeat within the TTL
+		if service.LastSeen.Before(staleThreshold) {
+			if service.Status.IsHealthy {
+				// Mark it as unhealthy and log the event
+				service.Status.IsHealthy = false
+				logger.Warn("Service marked unhealthy due to stale heartbeat",
+					zap.String("service_id", id),
+					zap.String("service_type", service.Info.ServiceType.String()),
+					zap.Time("last_seen", service.LastSeen),
+					zap.Duration("ttl", s.heartbeatTTL))
+			}
+		}
+	}
 }
