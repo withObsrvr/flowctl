@@ -38,9 +38,11 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 					zap.String("key", opts.TLSKey))
 			}
 
-			// For now, just print that the server would start
-			fmt.Printf("Server would start on %s:%d\n", opts.Address, opts.Port)
-			fmt.Println("Placeholder for server implementation")
+			// For now, log that the server would start
+			logger.Info("Server would start",
+				zap.String("address", opts.Address),
+				zap.Int("port", opts.Port))
+			logger.Info("Placeholder for server implementation")
 			return nil
 		},
 	}
