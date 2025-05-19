@@ -27,35 +27,4 @@ type Processor interface {
 	Name() string
 }
 
-// MockProcessor implements Processor interface for testing
-type MockProcessor struct {
-	name string
-}
-
-// NewMockProcessor creates a new mock processor that passes through events
-func NewMockProcessor(name string) *MockProcessor {
-	return &MockProcessor{
-		name: name,
-	}
-}
-
-func (m *MockProcessor) Init(cfg map[string]any) error {
-	return nil
-}
-
-func (m *MockProcessor) Process(ctx context.Context, e *source.EventEnvelope) ([]*Message, error) {
-	return []*Message{
-		{
-			Type:    "mock",
-			Payload: e.Payload,
-		},
-	}, nil
-}
-
-func (m *MockProcessor) Flush(ctx context.Context) error {
-	return nil
-}
-
-func (m *MockProcessor) Name() string {
-	return m.name
-}
+// For testing purposes, see internal/testfixtures/processor/mockprocessor.go

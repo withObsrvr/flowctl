@@ -6,6 +6,13 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/withobsrvr/flowctl/cmd/apply"
+	"github.com/withobsrvr/flowctl/cmd/list"
+	"github.com/withobsrvr/flowctl/cmd/server"
+	"github.com/withobsrvr/flowctl/cmd/translate"
+	"github.com/withobsrvr/flowctl/cmd/version"
+	"github.com/withobsrvr/flowctl/internal/utils/logger"
+	"go.uber.org/zap"
 )
 
 var (
@@ -28,8 +35,10 @@ a Flow-powered stack.`,
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 func Execute() {
+	defer logger.Sync()
+	
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
+		logger.Error("Command execution failed", zap.Error(err))
 		os.Exit(1)
 	}
 }
@@ -50,6 +59,13 @@ func init() {
 	viper.BindPFlag("namespace", rootCmd.PersistentFlags().Lookup("namespace"))
 	viper.BindPFlag("output", rootCmd.PersistentFlags().Lookup("output"))
 	viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
+
+	// Add commands
+	rootCmd.AddCommand(apply.NewCommand())
+	rootCmd.AddCommand(list.NewCommand())
+	rootCmd.AddCommand(translate.NewCommand())
+	rootCmd.AddCommand(server.NewCommand())
+	rootCmd.AddCommand(version.NewCommand())
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -73,8 +89,14 @@ func initConfig() {
 
 	viper.AutomaticEnv() // read in environment variables that match
 
+	// Initialize the logger
+	if err := logger.Init(logLevel); err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to initialize logger:", err)
+		os.Exit(1)
+	}
+
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+		logger.Info("Using config file", zap.String("file", viper.ConfigFileUsed()))
 	}
 }

@@ -9,3 +9,5 @@ bin/
 
 # IDE specific
 .vscode/
+
+**/.claude/settings.local.json

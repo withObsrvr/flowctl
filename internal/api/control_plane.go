@@ -10,6 +10,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	pb "github.com/withobsrvr/flowctl/proto"
+	"github.com/withobsrvr/flowctl/internal/utils/logger"
+	"go.uber.org/zap"
 )
 
 // Service represents a registered service
@@ -54,6 +56,16 @@ func (s *ControlPlaneServer) Register(ctx context.Context, info *pb.ServiceInfo)
 	// Store service
 	s.services[info.ServiceId] = service
 
+	// Log service registration
+	logger.Info("Service registered",
+		zap.String("service_id", info.ServiceId),
+		zap.String("service_type", info.ServiceType.String()),
+		zap.String("health_endpoint", info.HealthEndpoint),
+		zap.Strings("input_event_types", info.InputEventTypes),
+		zap.Strings("output_event_types", info.OutputEventTypes),
+		zap.Int32("max_inflight", info.MaxInflight),
+	)
+
 	// Generate topic names based on service type and event types
 	var topicNames []string
 	switch info.ServiceType {
@@ -90,6 +102,13 @@ func (s *ControlPlaneServer) Heartbeat(ctx context.Context, hb *pb.ServiceHeartb
 	service.LastSeen = time.Now()
 	service.Status.Metrics = hb.Metrics
 	service.Status.IsHealthy = true
+
+	// Log heartbeat receipt
+	logger.Info("Received heartbeat",
+		zap.String("service_id", hb.ServiceId),
+		zap.String("service_type", service.Info.ServiceType.String()),
+		zap.Any("metrics", hb.Metrics),
+	)
 
 	return &emptypb.Empty{}, nil
 }

@@ -8,8 +8,10 @@ flowctl is a CLI-driven event-stream engine that ingests Stellar ledger data, tr
 - Pluggable processor architecture
 - Support for multiple sink types
 - YAML-based configuration
+- Structured logging with Uber's Zap
 - Built-in health monitoring
 - Prometheus metrics
+- Multi-platform deployment (Docker, Kubernetes, Nomad)
 
 ## Installation
 
@@ -59,6 +61,75 @@ sink:
     pretty: true
 ```
 
+For a more complex example, see `examples/stellar-pipeline.yaml`.
+
+### Logging
+
+flowctl uses structured logging powered by Uber's Zap library. You can control the log level using:
+
+- Configuration file: Set the `log_level` field in your YAML configuration
+- Command line: Use the `--log-level` flag (e.g., `--log-level=debug`)
+
+Available log levels:
+- `debug`: Detailed information for debugging
+- `info`: General operational information (default)
+- `warn`: Warning conditions
+- `error`: Error conditions
+
+Example:
+```bash
+./bin/flowctl apply -f examples/minimal.yaml --log-level=debug
+```
+
+## Pipeline Translation
+
+flowctl supports translating pipeline configurations to different deployment formats:
+
+```bash
+# Translate a pipeline to Docker Compose
+./bin/flowctl translate -f examples/docker-test.yaml -o docker-compose
+
+# Save the output to a file
+./bin/flowctl translate -f examples/docker-test.yaml -o docker-compose --to-file docker-compose.yml
+
+# Add a resource prefix for naming consistency
+./bin/flowctl translate -f examples/docker-test.yaml -o docker-compose --prefix myapp
+
+# Specify a container registry
+./bin/flowctl translate -f examples/docker-test.yaml -o docker-compose --registry ghcr.io/myorg
+
+# Generate local execution script
+./bin/flowctl translate -f examples/local-test.yaml -o local --to-file run_pipeline.sh
+```
+
+Supported output formats:
+- `docker-compose`: Docker Compose YAML
+- `kubernetes`: Kubernetes manifests (coming soon)
+- `nomad`: Nomad job specifications (coming soon)
+- `local`: Local execution script for development
+
+### Local Execution
+
+When using the `local` output format, flowctl generates a bash script that runs pipeline components directly on your local machine without containers. This is useful for development and debugging.
+
+The local generator creates:
+1. A bash script to start and manage pipeline components
+2. An environment file with all required variables
+3. Proper dependency ordering between components
+4. Health check monitoring
+5. Process supervision with automatic restart
+
+```bash
+# Generate local execution script
+./bin/flowctl translate -f examples/local-test.yaml -o local --to-file run_pipeline.sh
+
+# Make the script executable
+chmod +x run_pipeline.sh
+
+# Run the pipeline
+./run_pipeline.sh
+```
+
 ## Development
 
 ### Building
@@ -93,4 +164,4 @@ MPL-2.0
 2. Create your feature branch
 3. Commit your changes
 4. Push to the branch
-5. Create a Pull Request 
+5. Create a Pull Request
