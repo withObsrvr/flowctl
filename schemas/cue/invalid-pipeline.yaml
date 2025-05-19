@@ -1,0 +1,20 @@
+apiVersion: flowctl/v1
+kind: Pipeline
+metadata:
+  name: invalid-pipeline
+spec:
+  driver: unsupported-driver
+  sources:
+    - id: source1
+      image: source:latest
+      health_check: /health
+      # Missing health_port which should fail validation
+  processors:
+    - id: processor1
+      image: processor:latest
+      # Missing inputs which should fail for processors
+      replicas: -1  # Invalid negative value
+  sinks:
+    - id: sink1
+      image: sink:latest
+      inputs: []  # Empty inputs list should fail validation

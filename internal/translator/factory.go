@@ -37,5 +37,7 @@ func NewLocalGenerator() interfaces.Generator {
 
 // NewSchemaValidator creates a schema validator
 func NewSchemaValidator() interfaces.Validator {
-	return NewSchemaValidatorImpl()
+	// Use the CUE validator if available, fall back to basic validator
+	cueValidator := NewCueValidator()
+	return cueValidator
 }
