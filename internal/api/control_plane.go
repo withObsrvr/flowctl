@@ -26,38 +26,78 @@ type Service struct {
 // ControlPlaneServer implements the control plane gRPC service
 type ControlPlaneServer struct {
 	pb.UnimplementedControlPlaneServer
-	mu          sync.RWMutex
-	services    map[string]*Service
-	heartbeatTTL time.Duration
-	janitorInterval time.Duration
-	done         chan struct{}
+	mu               sync.RWMutex
+	services         map[string]*Service
+	heartbeatTTL     time.Duration
+	janitorInterval  time.Duration
+	done             chan struct{}
+	janitorStarted   bool
+	janitorWaitGroup sync.WaitGroup
 }
 
-// NewControlPlaneServer creates a new control plane server
+// NewControlPlaneServer creates a new control plane server with default settings.
+// The server will use default values for heartbeat TTL (30s) and janitor interval (10s).
+// To customize these values, use SetHeartbeatTTL and SetJanitorInterval before
+// calling Start().
 func NewControlPlaneServer() *ControlPlaneServer {
-	server := &ControlPlaneServer{
+	return &ControlPlaneServer{
 		services:        make(map[string]*Service),
 		heartbeatTTL:    30 * time.Second, // Default TTL is 30 seconds
 		janitorInterval: 10 * time.Second, // Default janitor interval is 10 seconds
 		done:            make(chan struct{}),
+		janitorStarted:  false,
 	}
-	
-	// Start the janitor goroutine
-	go server.runJanitor()
-	
-	return server
 }
 
-// SetHeartbeatTTL sets the TTL for service heartbeats
+// SetHeartbeatTTL sets the TTL for service heartbeats.
+// This is the duration after which a service without heartbeats will be marked as unhealthy.
+// This method should be called before Start() to take effect for the initial janitor.
 func (s *ControlPlaneServer) SetHeartbeatTTL(ttl time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.heartbeatTTL = ttl
+	logger.Info("Heartbeat TTL updated", zap.Duration("ttl", ttl))
 }
 
-// Close stops the control plane server and cleans up resources
+// SetJanitorInterval sets the interval at which the janitor checks for unhealthy services.
+// This method should be called before Start() to take effect for the initial janitor.
+func (s *ControlPlaneServer) SetJanitorInterval(interval time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.janitorInterval = interval
+	logger.Info("Janitor interval updated", zap.Duration("interval", interval))
+}
+
+// Start begins monitoring service health by launching the janitor goroutine.
+// This should be called after configuring the server with SetHeartbeatTTL and
+// SetJanitorInterval if non-default values are desired.
+func (s *ControlPlaneServer) Start() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	
+	if !s.janitorStarted {
+		s.janitorStarted = true
+		s.janitorWaitGroup.Add(1)
+		go s.runJanitor()
+		logger.Info("Health check janitor started", 
+			zap.Duration("heartbeat_ttl", s.heartbeatTTL), 
+			zap.Duration("janitor_interval", s.janitorInterval))
+	}
+}
+
+// Close stops the control plane server and cleans up resources.
+// This method will stop the janitor goroutine and wait for it to complete.
 func (s *ControlPlaneServer) Close() {
-	close(s.done)
+	s.mu.Lock()
+	if s.janitorStarted {
+		close(s.done)
+		s.janitorStarted = false
+	}
+	s.mu.Unlock()
+	
+	// Wait for janitor to complete
+	s.janitorWaitGroup.Wait()
+	logger.Info("Control plane server closed")
 }
 
 // Register implements the Register RPC
@@ -174,12 +214,15 @@ func (s *ControlPlaneServer) ListServices(ctx context.Context, _ *emptypb.Empty)
 // runJanitor periodically checks for services that haven't sent heartbeats
 // and marks them as unhealthy
 func (s *ControlPlaneServer) runJanitor() {
-	ticker := time.NewTicker(s.janitorInterval)
+	defer s.janitorWaitGroup.Done()
+	
+	// Make a copy of the settings to avoid holding a lock
+	s.mu.RLock()
+	interval := s.janitorInterval
+	s.mu.RUnlock()
+	
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-
-	logger.Info("Starting health check janitor",
-		zap.Duration("ttl", s.heartbeatTTL),
-		zap.Duration("interval", s.janitorInterval))
 
 	for {
 		select {

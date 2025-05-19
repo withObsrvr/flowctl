@@ -78,6 +78,12 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 			if opts.HeartbeatTTL > 0 {
 				controlPlane.SetHeartbeatTTL(opts.HeartbeatTTL)
 			}
+			if opts.JanitorInterval > 0 {
+				controlPlane.SetJanitorInterval(opts.JanitorInterval)
+			}
+			
+			// Start the health check janitor
+			controlPlane.Start()
 			
 			// Register the control plane service
 			pb.RegisterControlPlaneServer(grpcServer, controlPlane)

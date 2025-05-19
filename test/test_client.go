@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"os"
 	"os/signal"
@@ -15,19 +16,32 @@ import (
 	pb "github.com/withobsrvr/flowctl/proto"
 )
 
+// Configuration constants
+const (
+	defaultServerAddr     = "localhost:8080"
+	defaultHeartbeatEvery = 5 * time.Second
+	defaultStatusEvery    = 15 * time.Second
+)
+
 func main() {
-	log.Println("Starting test client...")
+	// Parse command line flags
+	serverAddr := flag.String("server", defaultServerAddr, "Control plane server address")
+	heartbeatInterval := flag.Duration("heartbeat", defaultHeartbeatEvery, "Heartbeat interval")
+	statusInterval := flag.Duration("status", defaultStatusEvery, "Status check interval")
+	flag.Parse()
+	
+	log.Printf("Starting test client (heartbeat: %s, status checks: %s)...", 
+		*heartbeatInterval, *statusInterval)
+		
 	// Connect to flowctl control plane
-	conn, err := grpc.Dial("localhost:8080", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(*serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to control plane: %v", err)
 	}
 	defer conn.Close()
 
 	// Get connection info
-	log.Println("Connection info:", map[string]string{
-		"control_plane_endpoint": "localhost:8080",
-	})
+	log.Printf("Connection info: control_plane_endpoint=%s", *serverAddr)
 
 	// Create client
 	client := pb.NewControlPlaneClient(conn)
@@ -59,17 +73,17 @@ func main() {
 	serviceID := ack.ServiceId
 
 	// Start heartbeat loop in background
-	heartbeatTicker := time.NewTicker(5 * time.Second)
+	heartbeatTicker := time.NewTicker(*heartbeatInterval)
 	defer heartbeatTicker.Stop()
 	
 	// Create a signal channel for clean shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	
-	log.Printf("Starting heartbeat loop (every 5s) - press Ctrl+C to exit")
+	log.Printf("Starting heartbeat loop (every %s) - press Ctrl+C to exit", *heartbeatInterval)
 	
 	// Periodically check service status too
-	statusTicker := time.NewTicker(15 * time.Second)
+	statusTicker := time.NewTicker(*statusInterval)
 	defer statusTicker.Stop()
 	
 	for {
