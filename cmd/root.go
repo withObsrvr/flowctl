@@ -91,7 +91,7 @@ func initConfig() {
 
 	// Initialize the logger
 	if err := logger.Init(logLevel); err != nil {
-		fmt.Printf("Failed to initialize logger: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Failed to initialize logger:", err)
 		os.Exit(1)
 	}
 
