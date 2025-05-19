@@ -1,4 +1,4 @@
-package cmd
+package list
 
 import (
 	"context"
@@ -15,7 +15,11 @@ import (
 
 var (
 	endpoint string
-	listCmd  = &cobra.Command{
+)
+
+// NewCommand creates the list command
+func NewCommand() *cobra.Command {
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List registered services",
 		Long:  `List all services registered with the control plane.`,
@@ -60,9 +64,9 @@ var (
 			return nil
 		},
 	}
-)
 
-func init() {
-	listCmd.Flags().StringVarP(&endpoint, "endpoint", "e", "localhost:8080", "Control plane endpoint")
-	rootCmd.AddCommand(listCmd)
+	// Add flags
+	cmd.Flags().StringVarP(&endpoint, "endpoint", "e", "localhost:8080", "Control plane endpoint")
+
+	return cmd
 }

@@ -1,4 +1,4 @@
-package cmd
+package apply
 
 import (
 	"context"
@@ -6,62 +6,14 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/spf13/cobra"
+	"github.com/withobsrvr/flowctl/internal/interfaces"
+	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/translator"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
 )
 
-var (
-	filePath       string
-	dryRun         bool
-	outputPath     string
-	outputFormat   string
-	translateOnly  bool
-	resourcePrefix string
-	registryPrefix string
-)
-
-// applyCmd represents the apply command
-var applyCmd = &cobra.Command{
-	Use:   "apply -f <file>",
-	Short: "Create or update resources",
-	Long: `Create or update resources from a file or directory.
-This command follows the Kubernetes-style declarative approach to resource management.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if filePath == "" {
-			logger.Error("Missing file path", zap.String("command", "apply"))
-			return fmt.Errorf("file path is required. Use -f to specify a file or directory")
-		}
-
-		logger.Debug("Starting apply command", 
-			zap.String("file", filePath),
-			zap.Bool("dry_run", dryRun),
-			zap.String("output_format", outputFormat),
-			zap.String("output_path", outputPath),
-			zap.Bool("translate_only", translateOnly))
-
-		// Check if path exists
-		info, err := os.Stat(filePath)
-		if err != nil {
-			logger.Error("Failed to access path", 
-				zap.String("file", filePath),
-				zap.Error(err))
-			return fmt.Errorf("failed to access path: %w", err)
-		}
-
-		if info.IsDir() {
-			// Process directory
-			logger.Info("Processing directory", zap.String("dir", filePath))
-			return processDirectory(filePath, dryRun)
-		}
-
-		// Process single file
-		logger.Info("Processing file", zap.String("file", filePath))
-		return processFile(filePath, dryRun)
-	},
-}
-
+// processDirectory processes all applicable files in a directory
 func processDirectory(dir string, dryRun bool) error {
 	// Walk through directory
 	logger.Debug("Walking directory", zap.String("dir", dir))
@@ -89,6 +41,7 @@ func processDirectory(dir string, dryRun bool) error {
 	})
 }
 
+// processFile processes a single file for the apply command
 func processFile(file string, dryRun bool) error {
 	// Determine output path if not specified
 	outPath := outputPath
@@ -108,17 +61,17 @@ func processFile(file string, dryRun bool) error {
 	// If we're translating
 	if outputFormat != "" {
 		// Create translator options
-		opts := translator.TranslationOptions{
+		opts := model.TranslationOptions{
 			ResourcePrefix: resourcePrefix,
 			RegistryPrefix: registryPrefix,
 			OutputPath:     outPath,
 		}
 
 		// Create translator
-		t := translator.NewTranslator(opts)
+		var t interfaces.Translator = translator.NewTranslator(opts)
 
 		// Parse format
-		format := translator.Format(outputFormat)
+		format := model.Format(outputFormat)
 
 		// Validate format
 		validFormats := t.ValidFormats()
@@ -178,15 +131,4 @@ func processFile(file string, dryRun bool) error {
 	}
 
 	return nil
-}
-
-func init() {
-	rootCmd.AddCommand(applyCmd)
-	applyCmd.Flags().StringVarP(&filePath, "file", "f", "", "file or directory to apply")
-	applyCmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be applied without making changes")
-	applyCmd.Flags().StringVarP(&outputPath, "output", "o", "", "output file path for translation")
-	applyCmd.Flags().StringVar(&outputFormat, "target", "", "target format for translation (docker-compose, kubernetes, nomad, local)")
-	applyCmd.Flags().BoolVar(&translateOnly, "translate-only", false, "only translate the file without applying")
-	applyCmd.Flags().StringVar(&resourcePrefix, "prefix", "", "prefix for resource names")
-	applyCmd.Flags().StringVar(&registryPrefix, "registry", "", "prefix for container registry")
 }

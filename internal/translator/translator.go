@@ -7,100 +7,69 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/withobsrvr/flowctl/internal/config"
+	"github.com/withobsrvr/flowctl/internal/interfaces"
+	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
 )
 
-// Format represents a target output format
-type Format string
-
-const (
-	// DockerCompose format generates Docker Compose YAML
-	DockerCompose Format = "docker-compose"
-	// Kubernetes format generates Kubernetes manifests
-	Kubernetes Format = "kubernetes"
-	// Nomad format generates Nomad job specifications
-	Nomad Format = "nomad"
-	// Local format for local execution (no container orchestration)
-	Local Format = "local"
-)
-
-// TranslationOptions holds configuration for the translation process
-type TranslationOptions struct {
-	// OutputVersion is the version of the output format (e.g., "v1" for Kubernetes)
-	OutputVersion string
-	// ResourcePrefix is a prefix for resource names
-	ResourcePrefix string
-	// Labels are additional labels/tags to add to resources
-	Labels map[string]string
-	// EnvVars are environment variables to inject into all components
-	EnvVars map[string]string
-	// RegistryPrefix is a prefix for container image references
-	RegistryPrefix string
-	// OutputPath is the path where output files should be written
-	OutputPath string
-}
-
-// Translator is the interface for pipeline translation
-type Translator interface {
-	// Translate converts a pipeline config to a target format
-	Translate(ctx context.Context, cfg *config.Config, format Format) ([]byte, error)
-
-	// TranslateFromReader reads pipeline config from io.Reader and translates it
-	TranslateFromReader(ctx context.Context, r io.Reader, format Format) ([]byte, error)
-
-	// TranslateFromFile translates a pipeline config file to target format
-	TranslateFromFile(ctx context.Context, filePath string, format Format) ([]byte, error)
-
-	// ValidFormats returns all supported output formats
-	ValidFormats() []Format
-}
-
-// translatorImpl implements the Translator interface
+// translatorImpl implements the interfaces.Translator interface
 type translatorImpl struct {
-	options    TranslationOptions
-	parsers    map[string]Parser
-	generators map[Format]Generator
-	validator  SchemaValidator
+	options    model.TranslationOptions
+	parsers    map[string]interfaces.Parser
+	generators map[model.Format]interfaces.Generator
+	validator  interfaces.Validator
 }
 
 // NewTranslator creates a new translator with given options
-func NewTranslator(opts TranslationOptions) Translator {
-	return &translatorImpl{
-		options: opts,
-		parsers: map[string]Parser{
-			".yaml": &YAMLParser{},
-			".yml":  &YAMLParser{},
-			".json": &JSONParser{},
-		},
-		generators: map[Format]Generator{
-			DockerCompose: &DockerComposeGenerator{},
-			Kubernetes:    &KubernetesGenerator{},
-			Nomad:         &NomadGenerator{},
-			Local:         &LocalGenerator{},
-		},
-		validator: NewSchemaValidator(),
+func NewTranslator(opts model.TranslationOptions) interfaces.Translator {
+	// We'll initialize parsers and generators separately
+	t := &translatorImpl{
+		options:    opts,
+		parsers:    make(map[string]interfaces.Parser),
+		generators: make(map[model.Format]interfaces.Generator),
 	}
+
+	// Initialize parsers and generators during creation
+	t.registerParsersAndGenerators()
+
+	return t
 }
 
-// Translate converts a pipeline config to a target format
-func (t *translatorImpl) Translate(ctx context.Context, cfg *config.Config, format Format) ([]byte, error) {
-	logger.Debug("Translating pipeline config", zap.String("format", string(format)))
+// registerParsersAndGenerators sets up the available parsers and generators
+func (t *translatorImpl) registerParsersAndGenerators() {
+	// Register parsers - we'll implement factory functions in separate files
+	t.parsers[".yaml"] = NewYAMLParser()
+	t.parsers[".yml"] = NewYAMLParser()
+	t.parsers[".json"] = NewJSONParser()
 
-	// Validate the config
-	if err := t.validator.Validate(cfg); err != nil {
+	// Register generators - we'll implement factory functions in separate files
+	t.generators[model.DockerCompose] = NewDockerComposeGenerator()
+	t.generators[model.Kubernetes] = NewKubernetesGenerator()
+	t.generators[model.Nomad] = NewNomadGenerator()
+	t.generators[model.Local] = NewLocalGenerator()
+
+	// Set validator
+	t.validator = NewSchemaValidator()
+}
+
+// Translate converts a pipeline to a target format
+func (t *translatorImpl) Translate(ctx context.Context, pipeline *model.Pipeline, format model.Format) ([]byte, error) {
+	logger.Debug("Translating pipeline", zap.String("format", string(format)))
+
+	// Validate the pipeline
+	if err := t.validator.Validate(pipeline); err != nil {
 		return nil, fmt.Errorf("invalid pipeline configuration: %w", err)
 	}
 
 	// Get the appropriate generator
-	generator, ok := t.generators[format]
+	gen, ok := t.generators[format]
 	if !ok {
 		return nil, fmt.Errorf("unsupported output format: %s", format)
 	}
 
 	// Generate the output
-	result, err := generator.Generate(cfg, t.options)
+	result, err := gen.Generate(pipeline, t.options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate %s output: %w", format, err)
 	}
@@ -109,27 +78,27 @@ func (t *translatorImpl) Translate(ctx context.Context, cfg *config.Config, form
 }
 
 // TranslateFromReader reads pipeline config from io.Reader and translates it
-func (t *translatorImpl) TranslateFromReader(ctx context.Context, r io.Reader, format Format) ([]byte, error) {
-	// Get the right parser based on expected content
-	parser := t.parsers[".yaml"] // Default to YAML
+func (t *translatorImpl) TranslateFromReader(ctx context.Context, r io.Reader, format model.Format) ([]byte, error) {
+	// Determine the parser to use
+	p := t.parsers[".yaml"] // Default to YAML
 
 	// Parse the input
-	cfg, err := parser.ParseReader(r)
+	pipeline, err := p.ParseReader(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse input: %w", err)
 	}
 
 	// Translate the parsed config
-	return t.Translate(ctx, cfg, format)
+	return t.Translate(ctx, pipeline, format)
 }
 
 // TranslateFromFile translates a pipeline config file to target format
-func (t *translatorImpl) TranslateFromFile(ctx context.Context, filePath string, format Format) ([]byte, error) {
+func (t *translatorImpl) TranslateFromFile(ctx context.Context, filePath string, format model.Format) ([]byte, error) {
 	logger.Debug("Translating file", zap.String("file", filePath), zap.String("format", string(format)))
 
 	// Get file extension
 	ext := filepath.Ext(filePath)
-	parser, ok := t.parsers[ext]
+	p, ok := t.parsers[ext]
 	if !ok {
 		return nil, fmt.Errorf("unsupported file extension: %s", ext)
 	}
@@ -141,18 +110,18 @@ func (t *translatorImpl) TranslateFromFile(ctx context.Context, filePath string,
 	}
 
 	// Parse the file
-	cfg, err := parser.Parse(data)
+	pipeline, err := p.Parse(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse file: %w", err)
 	}
 
 	// Translate the parsed config
-	result, err := t.Translate(ctx, cfg, format)
+	result, err := t.Translate(ctx, pipeline, format)
 	if err != nil {
 		return nil, err
 	}
 
-	// If output path is specified, write the result to file
+	// If output path is specified in options, write the result to file
 	if t.options.OutputPath != "" {
 		outputFile := t.options.OutputPath
 		if err := os.WriteFile(outputFile, result, 0644); err != nil {
@@ -165,8 +134,8 @@ func (t *translatorImpl) TranslateFromFile(ctx context.Context, filePath string,
 }
 
 // ValidFormats returns all supported output formats
-func (t *translatorImpl) ValidFormats() []Format {
-	formats := make([]Format, 0, len(t.generators))
+func (t *translatorImpl) ValidFormats() []model.Format {
+	formats := make([]model.Format, 0, len(t.generators))
 	for format := range t.generators {
 		formats = append(formats, format)
 	}

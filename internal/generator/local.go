@@ -1,12 +1,12 @@
-package translator
+package generator
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
-
-	"github.com/withobsrvr/flowctl/internal/config"
+	
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
@@ -14,6 +14,11 @@ import (
 
 // LocalGenerator implements Generator for local execution
 type LocalGenerator struct{}
+
+// NewLocalGenerator creates a new local execution generator
+func NewLocalGenerator() *LocalGenerator {
+	return &LocalGenerator{}
+}
 
 // LocalRunConfig represents the local run configuration
 type LocalRunConfig struct {
@@ -184,19 +189,22 @@ FLOWCTL_LOG_DIR={{ .LogDir }}
 {{ end }}
 `
 
-// Generate produces local run configuration
-func (g *LocalGenerator) Generate(cfg *config.Config, opts model.TranslationOptions) ([]byte, error) {
-	logger.Debug("Generating local run configuration")
+// Generate produces local execution configuration
+func (g *LocalGenerator) Generate(pipeline *model.Pipeline, opts model.TranslationOptions) ([]byte, error) {
+	logger.Debug("Generating local execution configuration")
 
-	// Validate the configuration
-	if err := g.Validate(cfg); err != nil {
+	// Validate the pipeline for local execution
+	if err := g.Validate(pipeline); err != nil {
 		return nil, err
 	}
 
 	// Extract or generate pipeline name
 	pipelineName := opts.ResourcePrefix
 	if pipelineName == "" {
-		pipelineName = "flowctl-pipeline"
+		pipelineName = pipeline.Metadata.Name
+		if pipelineName == "" {
+			pipelineName = "flowctl-pipeline"
+		}
 	}
 
 	// Create local run configuration
@@ -208,26 +216,61 @@ func (g *LocalGenerator) Generate(cfg *config.Config, opts model.TranslationOpti
 		RestartPolicy: "on-failure", // Default restart policy
 	}
 
-	// Process source
-	sourceID := sanitizeID(cfg.Source.Type)
-	sourceName := cfg.Source.Type
-	sourceComponent := buildLocalComponent(sourceID, sourceName, "source", cfg.Source.Params, []string{})
-	runConfig.Components = append(runConfig.Components, sourceComponent)
+	// Process sources
+	sourceIDs := make([]string, len(pipeline.Spec.Sources))
+	for i, src := range pipeline.Spec.Sources {
+		sourceID := sanitizeID(src.ID)
+		sourceIDs[i] = sourceID
+		sourceComponent := buildLocalComponent(sourceID, src.ID, "source", src, []string{})
+		runConfig.Components = append(runConfig.Components, sourceComponent)
+	}
 
 	// Process processors
-	var processorIDs []string
-	for _, proc := range cfg.Processors {
-		procID := sanitizeID(proc.Name)
-		processorIDs = append(processorIDs, procID)
-		procComponent := buildLocalComponent(procID, proc.Name, "processor", proc.Params, []string{sourceID})
+	processorIDs := make([]string, len(pipeline.Spec.Processors))
+	for i, proc := range pipeline.Spec.Processors {
+		procID := sanitizeID(proc.ID)
+		processorIDs[i] = procID
+		
+		// Determine dependencies
+		var dependencies []string
+		if len(proc.Inputs) > 0 {
+			// Use explicit inputs
+			dependencies = make([]string, len(proc.Inputs))
+			for j, input := range proc.Inputs {
+				dependencies[j] = sanitizeID(input)
+			}
+		} else if len(sourceIDs) > 0 {
+			// Default to depending on all sources
+			dependencies = sourceIDs
+		}
+		
+		procComponent := buildLocalComponent(procID, proc.ID, "processor", proc, dependencies)
 		runConfig.Components = append(runConfig.Components, procComponent)
 	}
 
-	// Process sink
-	sinkID := sanitizeID(cfg.Sink.Type)
-	sinkName := cfg.Sink.Type
-	sinkComponent := buildLocalComponent(sinkID, sinkName, "sink", cfg.Sink.Params, processorIDs)
-	runConfig.Components = append(runConfig.Components, sinkComponent)
+	// Process sinks
+	for _, sink := range pipeline.Spec.Sinks {
+		sinkID := sanitizeID(sink.ID)
+		
+		// Determine dependencies
+		var dependencies []string
+		if len(sink.Inputs) > 0 {
+			// Use explicit inputs
+			dependencies = make([]string, len(sink.Inputs))
+			for j, input := range sink.Inputs {
+				dependencies[j] = sanitizeID(input)
+			}
+		} else if len(processorIDs) > 0 {
+			// Default to depending on all processors
+			dependencies = processorIDs
+		} else if len(sourceIDs) > 0 {
+			// If no processors, depend on sources
+			dependencies = sourceIDs
+		}
+		
+		sinkComponent := buildLocalComponent(sinkID, sink.ID, "sink", sink, dependencies)
+		runConfig.Components = append(runConfig.Components, sinkComponent)
+	}
 
 	// Generate the runner script
 	tmpl, err := template.New("local_runner").Parse(localRunnerTemplate)
@@ -264,36 +307,41 @@ func (g *LocalGenerator) Generate(cfg *config.Config, opts model.TranslationOpti
 	return []byte(runnerScript.String()), nil
 }
 
-// Validate checks if the config can be translated to local execution
-func (g *LocalGenerator) Validate(cfg *config.Config) error {
-	logger.Debug("Validating configuration for local execution")
+// Validate checks if the pipeline can be translated to local execution
+func (g *LocalGenerator) Validate(pipeline *model.Pipeline) error {
+	logger.Debug("Validating pipeline for local execution")
 
-	// Basic validation that pipeline components are defined
-	if cfg.Source.Type == "" {
-		return fmt.Errorf("source type must be specified")
+	// Check basic requirements
+	if len(pipeline.Spec.Sources) == 0 {
+		return fmt.Errorf("at least one source is required")
 	}
 
-	if len(cfg.Processors) == 0 {
-		return fmt.Errorf("at least one processor must be defined")
-	}
-
-	if cfg.Sink.Type == "" {
-		return fmt.Errorf("sink type must be specified")
-	}
-
-	// Check for required parameters in components
-	if _, ok := cfg.Source.Params["command"]; !ok {
-		return fmt.Errorf("source must have a 'command' parameter")
-	}
-
-	for i, proc := range cfg.Processors {
-		if _, ok := proc.Params["command"]; !ok {
-			return fmt.Errorf("processor %d (%s) must have a 'command' parameter", i, proc.Name)
+	// Check component-specific requirements
+	for _, src := range pipeline.Spec.Sources {
+		if src.ID == "" {
+			return fmt.Errorf("source id is required")
+		}
+		if len(src.Command) == 0 {
+			return fmt.Errorf("source %s must have a command", src.ID)
 		}
 	}
 
-	if _, ok := cfg.Sink.Params["command"]; !ok {
-		return fmt.Errorf("sink must have a 'command' parameter")
+	for _, proc := range pipeline.Spec.Processors {
+		if proc.ID == "" {
+			return fmt.Errorf("processor id is required")
+		}
+		if len(proc.Command) == 0 {
+			return fmt.Errorf("processor %s must have a command", proc.ID)
+		}
+	}
+
+	for _, sink := range pipeline.Spec.Sinks {
+		if sink.ID == "" {
+			return fmt.Errorf("sink id is required")
+		}
+		if len(sink.Command) == 0 {
+			return fmt.Errorf("sink %s must have a command", sink.ID)
+		}
 	}
 
 	return nil
@@ -319,76 +367,57 @@ func sanitizeID(name string) string {
 	return sanitized
 }
 
-// buildLocalComponent creates a LocalComponent from component parameters
-func buildLocalComponent(id, name, cType string, params map[string]interface{}, dependsOn []string) LocalComponent {
-	component := LocalComponent{
+// buildLocalComponent creates a LocalComponent from a pipeline component
+func buildLocalComponent(id, name, cType string, component model.Component, dependsOn []string) LocalComponent {
+	localComponent := LocalComponent{
 		ID:      id,
 		Name:    name,
 		Type:    cType,
-		EnvVars: make(map[string]string),
+		EnvVars: component.Env,
 		LogFile: fmt.Sprintf("%s.log", id),
 	}
 
-	// Extract command
-	if cmd, ok := params["command"].([]interface{}); ok && len(cmd) > 0 {
-		component.Command = fmt.Sprintf("%v", cmd[0])
-		if len(cmd) > 1 {
-			component.Args = make([]string, len(cmd)-1)
-			for i, arg := range cmd[1:] {
-				component.Args[i] = fmt.Sprintf("%v", arg)
-			}
-		}
-	} else if cmdStr, ok := params["command"].(string); ok {
-		component.Command = cmdStr
-	}
-
-	// Extract environment variables
-	if env, ok := params["env"].(map[string]interface{}); ok {
-		for k, v := range env {
-			component.EnvVars[k] = fmt.Sprintf("%v", v)
+	// Extract command and args
+	if len(component.Command) > 0 {
+		localComponent.Command = component.Command[0]
+		if len(component.Command) > 1 {
+			localComponent.Args = component.Command[1:]
 		}
 	}
 
 	// Extract ports
-	if ports, ok := params["ports"].([]interface{}); ok {
-		component.Ports = make([]int, 0, len(ports))
-		for _, p := range ports {
-			if port, ok := p.(int); ok {
-				component.Ports = append(component.Ports, port)
-			} else if portStr, ok := p.(string); ok {
-				var port int
-				if _, err := fmt.Sscanf(portStr, "%d", &port); err == nil {
-					component.Ports = append(component.Ports, port)
-				}
-			}
+	if len(component.Ports) > 0 {
+		localComponent.Ports = make([]int, len(component.Ports))
+		for i, p := range component.Ports {
+			localComponent.Ports[i] = p.ContainerPort
 		}
 	}
 
 	// Extract health check
-	if health, ok := params["health_check"].(string); ok && health != "" {
-		component.HealthCheck = health
-		component.HealthCheckPort = 8080 // Default health check port
+	if component.HealthCheck != "" {
+		localComponent.HealthCheck = component.HealthCheck
+		localComponent.HealthCheckPort = component.HealthPort
 
-		// Try to extract health check port from parameters
-		if hcPort, ok := params["health_port"].(int); ok {
-			component.HealthCheckPort = hcPort
-		} else if hcPortStr, ok := params["health_port"].(string); ok {
-			var port int
-			if _, err := fmt.Sscanf(hcPortStr, "%d", &port); err == nil {
-				component.HealthCheckPort = port
+		// Default to a reasonable port if not specified
+		if localComponent.HealthCheckPort == 0 {
+			// Try to use the first port if available
+			if len(localComponent.Ports) > 0 {
+				localComponent.HealthCheckPort = localComponent.Ports[0]
+			} else {
+				localComponent.HealthCheckPort = 8080 // Default fallback
 			}
 		}
 
 		// Format full health check URL
-		if !strings.HasPrefix(component.HealthCheck, "http") {
-			component.HealthCheck = fmt.Sprintf("http://localhost:%d%s", 
-				component.HealthCheckPort, 
-				component.HealthCheck)
+		if !strings.HasPrefix(localComponent.HealthCheck, "http") {
+			localComponent.HealthCheck = fmt.Sprintf("http://localhost:%d%s", 
+				localComponent.HealthCheckPort, 
+				localComponent.HealthCheck)
 		}
 	}
 
 	// Set dependencies
-	component.DependsOn = dependsOn
+	localComponent.DependsOn = dependsOn
 
 	// Build wait-for command if dependencies exist
 	if len(dependsOn) > 0 {
@@ -396,8 +425,17 @@ func buildLocalComponent(id, name, cType string, params map[string]interface{}, 
 		for _, dep := range dependsOn {
 			waitCmds = append(waitCmds, fmt.Sprintf("while ! kill -0 \"${PIDS[%s]}\" 2>/dev/null; do sleep 1; done", dep))
 		}
-		component.WaitFor = strings.Join(waitCmds, " && ")
+		localComponent.WaitFor = strings.Join(waitCmds, " && ")
 	}
 
-	return component
+	return localComponent
+}
+
+// writeToFile writes data to a file
+func writeToFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	return os.WriteFile(path, data, 0644)
 }

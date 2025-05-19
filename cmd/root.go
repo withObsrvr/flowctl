@@ -6,6 +6,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/withobsrvr/flowctl/cmd/apply"
+	"github.com/withobsrvr/flowctl/cmd/list"
+	"github.com/withobsrvr/flowctl/cmd/server"
+	"github.com/withobsrvr/flowctl/cmd/translate"
+	"github.com/withobsrvr/flowctl/cmd/version"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
 )
@@ -54,6 +59,13 @@ func init() {
 	viper.BindPFlag("namespace", rootCmd.PersistentFlags().Lookup("namespace"))
 	viper.BindPFlag("output", rootCmd.PersistentFlags().Lookup("output"))
 	viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
+
+	// Add commands
+	rootCmd.AddCommand(apply.NewCommand())
+	rootCmd.AddCommand(list.NewCommand())
+	rootCmd.AddCommand(translate.NewCommand())
+	rootCmd.AddCommand(server.NewCommand())
+	rootCmd.AddCommand(version.NewCommand())
 }
 
 // initConfig reads in config file and ENV variables if set.
