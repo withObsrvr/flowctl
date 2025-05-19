@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
@@ -12,19 +16,32 @@ import (
 	pb "github.com/withobsrvr/flowctl/proto"
 )
 
+// Configuration constants
+const (
+	defaultServerAddr     = "localhost:8080"
+	defaultHeartbeatEvery = 5 * time.Second
+	defaultStatusEvery    = 15 * time.Second
+)
+
 func main() {
-	log.Println("Starting test client...")
+	// Parse command line flags
+	serverAddr := flag.String("server", defaultServerAddr, "Control plane server address")
+	heartbeatInterval := flag.Duration("heartbeat", defaultHeartbeatEvery, "Heartbeat interval")
+	statusInterval := flag.Duration("status", defaultStatusEvery, "Status check interval")
+	flag.Parse()
+	
+	log.Printf("Starting test client (heartbeat: %s, status checks: %s)...", 
+		*heartbeatInterval, *statusInterval)
+		
 	// Connect to flowctl control plane
-	conn, err := grpc.Dial("localhost:8080", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(*serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to control plane: %v", err)
 	}
 	defer conn.Close()
 
 	// Get connection info
-	log.Println("Connection info:", map[string]string{
-		"control_plane_endpoint": "localhost:8080",
-	})
+	log.Printf("Connection info: control_plane_endpoint=%s", *serverAddr)
 
 	// Create client
 	client := pb.NewControlPlaneClient(conn)
@@ -55,27 +72,59 @@ func main() {
 	// Store the service ID for future heartbeats
 	serviceID := ack.ServiceId
 
-	// Start heartbeat loop
+	// Start heartbeat loop in background
+	heartbeatTicker := time.NewTicker(*heartbeatInterval)
+	defer heartbeatTicker.Stop()
+	
+	// Create a signal channel for clean shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	
+	log.Printf("Starting heartbeat loop (every %s) - press Ctrl+C to exit", *heartbeatInterval)
+	
+	// Periodically check service status too
+	statusTicker := time.NewTicker(*statusInterval)
+	defer statusTicker.Stop()
+	
 	for {
-		time.Sleep(10 * time.Second)
-		
-		// Send heartbeat
-		heartbeat := &pb.ServiceHeartbeat{
-			ServiceId:  serviceID,
-			Timestamp:  timestamppb.Now(),
-			Metrics: map[string]float64{
-				"chunks_per_second": 12.5,
-				"last_ledger":       45678923,
-			},
+		select {
+		case <-heartbeatTicker.C:
+			// Send heartbeat
+			heartbeat := &pb.ServiceHeartbeat{
+				ServiceId:  serviceID,
+				Timestamp:  timestamppb.Now(),
+				Metrics: map[string]float64{
+					"chunks_per_second": 12.5,
+					"last_ledger":       45678923,
+				},
+			}
+			
+			hbCtx, hbCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, hbErr := client.Heartbeat(hbCtx, heartbeat)
+			if hbErr != nil {
+				log.Printf("Failed to send heartbeat: %v", hbErr)
+			} else {
+				log.Printf("Sent heartbeat for service %s", serviceID)
+			}
+			hbCancel()
+			
+		case <-statusTicker.C:
+			// Check our status to verify health state
+			stCtx, stCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			status, stErr := client.GetServiceStatus(stCtx, &pb.ServiceInfo{ServiceId: serviceID})
+			if stErr != nil {
+				log.Printf("Failed to get service status: %v", stErr)
+			} else {
+				log.Printf("Service status: ID=%s, Healthy=%v, Last Heartbeat=%v", 
+					status.ServiceId, 
+					status.IsHealthy,
+					status.LastHeartbeat.AsTime())
+			}
+			stCancel()
+			
+		case sig := <-sigChan:
+			log.Printf("Received signal %v, shutting down", sig)
+			return
 		}
-		
-		hbCtx, hbCancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_, hbErr := client.Heartbeat(hbCtx, heartbeat)
-		if hbErr != nil {
-			log.Printf("Failed to send heartbeat: %v", hbErr)
-		} else {
-			log.Printf("Sent heartbeat for service %s", serviceID)
-		}
-		hbCancel()
 	}
 }
