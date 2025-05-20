@@ -12,6 +12,8 @@ flowctl is a CLI-driven event-stream engine that ingests Stellar ledger data, tr
 - Built-in health monitoring
 - Prometheus metrics
 - Multi-platform deployment (Docker, Kubernetes, Nomad)
+- DAG-based processor chaining with buffered channels
+- Flexible pipeline topologies with fan-out/fan-in support
 
 ## Installation
 
@@ -61,7 +63,9 @@ sink:
     pretty: true
 ```
 
-For a more complex example, see `examples/stellar-pipeline.yaml`.
+For more complex examples, see:
+- `examples/stellar-pipeline.yaml` - Traditional pipeline
+- `examples/dag-pipeline.yaml` - DAG-based pipeline with complex topology
 
 ### Logging
 
@@ -107,6 +111,19 @@ Supported output formats:
 - `kubernetes`: Kubernetes manifests (coming soon)
 - `nomad`: Nomad job specifications (coming soon)
 - `local`: Local execution configuration (Docker Compose or bash script)
+
+## Advanced Features
+
+### DAG-Based Processing
+
+flowctl supports a Directed Acyclic Graph (DAG) based processing pipeline, which allows complex topologies beyond simple linear chains. This enables:
+
+- Parallel processing of data streams
+- Fan-out/fan-in patterns
+- Buffered channels for flow control
+- Strongly typed event connections
+
+For more information, see [DAG-Based Processing](docs/dag-processing.md).
 
 ### Local Execution
 
