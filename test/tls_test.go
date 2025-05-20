@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"io/ioutil" // Use os in Go 1.16+
 	"net"
 	"os"
 	"os/exec"
@@ -26,7 +25,7 @@ import (
 // It returns the paths to the generated certificate files.
 func genTLSCertificates(t *testing.T) (certFile, keyFile, caFile string) {
 	// Create a temporary directory for certificates
-	tmpDir, err := ioutil.TempDir("", "flowctl-tls-test")
+	tmpDir, err := os.MkdirTemp("", "flowctl-tls-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -173,6 +172,23 @@ func TestTLSConnection(t *testing.T) {
 				ServerName: "localhost",
 			},
 			expectError: true, // Should fail - client doesn't provide cert
+		},
+		{
+			name: "Server mTLS, Client mTLS with cert (successful mTLS)",
+			serverConfig: &config.TLSConfig{
+				Mode:     config.TLSModeMutual,
+				CertFile: certFile,
+				KeyFile:  keyFile,
+				CAFile:   caFile,
+			},
+			clientConfig: &config.TLSConfig{
+				Mode:       config.TLSModeMutual,
+				CertFile:   certFile, // Using same cert for simplicity in test
+				KeyFile:    keyFile,
+				CAFile:     caFile,
+				ServerName: "localhost",
+			},
+			expectError: false, // Should succeed - both server and client provide certs
 		},
 		{
 			name: "TLS with Skip Verify",

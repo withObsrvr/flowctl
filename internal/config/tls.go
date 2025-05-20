@@ -83,7 +83,10 @@ func (c *TLSConfig) Validate() error {
 	}
 	
 	// For mTLS, CA file is required (for client authentication)
-	if c.Mode == TLSModeMutual && c.CAFile != "" {
+	if c.Mode == TLSModeMutual {
+		if c.CAFile == "" {
+			return fmt.Errorf("ca_file is required when mutual TLS is enabled")
+		}
 		if _, err := os.Stat(c.CAFile); os.IsNotExist(err) {
 			return fmt.Errorf("CA file does not exist: %s", c.CAFile)
 		}

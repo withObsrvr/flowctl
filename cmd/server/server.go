@@ -28,7 +28,6 @@ var (
 		TLSCert         string
 		TLSKey          string
 		TLSCACert       string
-		SkipVerify      bool
 		HeartbeatTTL    time.Duration
 		JanitorInterval time.Duration
 		DBPath          string
@@ -62,11 +61,10 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 			
 			// Configure TLS based on CLI flags
 			tlsConfig := &config.TLSConfig{
-				Mode:       config.TLSModeDisabled,
-				CertFile:   opts.TLSCert,
-				KeyFile:    opts.TLSKey,
-				CAFile:     opts.TLSCACert,
-				SkipVerify: opts.SkipVerify,
+				Mode:     config.TLSModeDisabled,
+				CertFile: opts.TLSCert,
+				KeyFile:  opts.TLSKey,
+				CAFile:   opts.TLSCACert,
 			}
 			
 			// Enable TLS if cert and key are provided
@@ -188,7 +186,6 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 	cmd.Flags().StringVar(&opts.TLSCert, "tls-cert", "", "TLS certificate file")
 	cmd.Flags().StringVar(&opts.TLSKey, "tls-key", "", "TLS key file")
 	cmd.Flags().StringVar(&opts.TLSCACert, "tls-ca-cert", "", "TLS CA certificate file for mutual TLS")
-	cmd.Flags().BoolVar(&opts.SkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification")
 	cmd.Flags().DurationVar(&opts.HeartbeatTTL, "heartbeat-ttl", 30*time.Second, "heartbeat time-to-live duration")
 	cmd.Flags().DurationVar(&opts.JanitorInterval, "janitor-interval", 10*time.Second, "interval for checking service health")
 	cmd.Flags().StringVar(&opts.DBPath, "db-path", "", "path to the BoltDB file for service registry persistence")
