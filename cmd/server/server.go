@@ -12,12 +12,12 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/withobsrvr/flowctl/internal/api"
+	"github.com/withobsrvr/flowctl/internal/config"
 	"github.com/withobsrvr/flowctl/internal/storage"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	pb "github.com/withobsrvr/flowctl/proto"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 )
 
 var (
@@ -27,6 +27,7 @@ var (
 		Address         string
 		TLSCert         string
 		TLSKey          string
+		TLSCACert       string
 		HeartbeatTTL    time.Duration
 		JanitorInterval time.Duration
 		DBPath          string
@@ -58,18 +59,39 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 			// Create gRPC server options
 			var serverOptions []grpc.ServerOption
 			
-			// Configure TLS if enabled
-			useTLS := opts.TLSCert != "" && opts.TLSKey != ""
-			if useTLS {
-				logger.Info("TLS enabled",
-					zap.String("cert", opts.TLSCert),
-					zap.String("key", opts.TLSKey))
+			// Configure TLS based on CLI flags
+			tlsConfig := &config.TLSConfig{
+				Mode:     config.TLSModeDisabled,
+				CertFile: opts.TLSCert,
+				KeyFile:  opts.TLSKey,
+				CAFile:   opts.TLSCACert,
+			}
+			
+			// Enable TLS if cert and key are provided
+			if opts.TLSCert != "" && opts.TLSKey != "" {
+				tlsConfig.Mode = config.TLSModeEnabled
 				
-				creds, err := credentials.NewServerTLSFromFile(opts.TLSCert, opts.TLSKey)
+				// Enable mutual TLS if CA certificate is provided
+				if opts.TLSCACert != "" {
+					tlsConfig.Mode = config.TLSModeMutual
+				}
+				
+				logger.Info("TLS configuration",
+					zap.String("mode", string(tlsConfig.Mode)),
+					zap.String("cert", tlsConfig.CertFile),
+					zap.String("key", tlsConfig.KeyFile),
+					zap.String("ca_cert", tlsConfig.CAFile))
+				
+				// Load server credentials from TLS config
+				serverCreds, err := tlsConfig.LoadServerCredentials()
 				if err != nil {
 					return fmt.Errorf("failed to load TLS credentials: %w", err)
 				}
-				serverOptions = append(serverOptions, grpc.Creds(creds))
+				
+				// Add TLS credentials to server options if enabled
+				if serverCreds != nil {
+					serverOptions = append(serverOptions, serverCreds)
+				}
 			}
 
 			// Create gRPC server
@@ -163,6 +185,7 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 	cmd.Flags().StringVar(&opts.Address, "address", "0.0.0.0", "address to listen on")
 	cmd.Flags().StringVar(&opts.TLSCert, "tls-cert", "", "TLS certificate file")
 	cmd.Flags().StringVar(&opts.TLSKey, "tls-key", "", "TLS key file")
+	cmd.Flags().StringVar(&opts.TLSCACert, "tls-ca-cert", "", "TLS CA certificate file for mutual TLS")
 	cmd.Flags().DurationVar(&opts.HeartbeatTTL, "heartbeat-ttl", 30*time.Second, "heartbeat time-to-live duration")
 	cmd.Flags().DurationVar(&opts.JanitorInterval, "janitor-interval", 10*time.Second, "interval for checking service health")
 	cmd.Flags().StringVar(&opts.DBPath, "db-path", "", "path to the BoltDB file for service registry persistence")

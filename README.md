@@ -14,6 +14,7 @@ flowctl is a CLI-driven event-stream engine that ingests Stellar ledger data, tr
 - Multi-platform deployment (Docker, Kubernetes, Nomad)
 - DAG-based processor chaining with buffered channels
 - Flexible pipeline topologies with fan-out/fan-in support
+- Secure communication with TLS and mutual TLS support
 
 ## Installation
 
@@ -124,6 +125,37 @@ flowctl supports a Directed Acyclic Graph (DAG) based processing pipeline, which
 - Strongly typed event connections
 
 For more information, see [DAG-Based Processing](docs/dag-processing.md).
+
+### Secure Communication with TLS
+
+flowctl supports secure communication between components using Transport Layer Security (TLS):
+
+- Server-side TLS for encrypted communication
+- Mutual TLS (mTLS) where both client and server authenticate each other
+- Certificate validation options, including CA certificate support
+- TLS skip verification for development environments (not recommended for production)
+
+For server configuration:
+```bash
+# Start a server with TLS
+flowctl server --port 8080 --tls-cert server.crt --tls-key server.key
+
+# Start a server with mutual TLS
+flowctl server --port 8080 --tls-cert server.crt --tls-key server.key --tls-ca-cert ca.crt
+```
+
+For client configuration, add a `tls` section to your YAML configuration:
+```yaml
+tls:
+  mode: "enabled"  # Options: disabled, enabled, mutual
+  cert_file: "client.crt"
+  key_file: "client.key"
+  ca_file: "ca.crt"  # Required for mutual TLS
+  skip_verify: false
+  server_name: "flowctl-server.example.com"  # For SNI verification
+```
+
+For more information, see [TLS Configuration](docs/tls-configuration.md).
 
 ### Local Execution
 
