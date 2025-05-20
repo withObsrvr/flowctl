@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/withobsrvr/flowctl/proto"
+	"github.com/withobsrvr/flowctl/internal/storage"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
 )
@@ -27,7 +28,8 @@ type Service struct {
 type ControlPlaneServer struct {
 	pb.UnimplementedControlPlaneServer
 	mu               sync.RWMutex
-	services         map[string]*Service
+	services         map[string]*Service // In-memory cache of services
+	storage          storage.ServiceStorage // Persistent storage
 	heartbeatTTL     time.Duration
 	janitorInterval  time.Duration
 	done             chan struct{}
@@ -39,14 +41,24 @@ type ControlPlaneServer struct {
 // The server will use default values for heartbeat TTL (30s) and janitor interval (10s).
 // To customize these values, use SetHeartbeatTTL and SetJanitorInterval before
 // calling Start().
-func NewControlPlaneServer() *ControlPlaneServer {
+//
+// If a nil storage is provided, the service registry will be in-memory only and not
+// persist data between restarts.
+func NewControlPlaneServer(storage storage.ServiceStorage) *ControlPlaneServer {
 	return &ControlPlaneServer{
 		services:        make(map[string]*Service),
+		storage:         storage,
 		heartbeatTTL:    30 * time.Second, // Default TTL is 30 seconds
 		janitorInterval: 10 * time.Second, // Default janitor interval is 10 seconds
 		done:            make(chan struct{}),
 		janitorStarted:  false,
 	}
+}
+
+// NewInMemoryControlPlaneServer creates a new control plane server with in-memory storage.
+// This is equivalent to NewControlPlaneServer(nil) and is provided for backward compatibility.
+func NewInMemoryControlPlaneServer() *ControlPlaneServer {
+	return NewControlPlaneServer(nil)
 }
 
 // SetHeartbeatTTL sets the TTL for service heartbeats.
@@ -69,11 +81,29 @@ func (s *ControlPlaneServer) SetJanitorInterval(interval time.Duration) {
 }
 
 // Start begins monitoring service health by launching the janitor goroutine.
+// This method also initializes the storage (if provided) and loads any persisted
+// service information.
+//
 // This should be called after configuring the server with SetHeartbeatTTL and
 // SetJanitorInterval if non-default values are desired.
-func (s *ControlPlaneServer) Start() {
+func (s *ControlPlaneServer) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	
+	// Initialize storage if provided
+	if s.storage != nil {
+		logger.Info("Initializing persistent storage")
+		if err := s.storage.Open(); err != nil {
+			return fmt.Errorf("failed to initialize storage: %w", err)
+		}
+		
+		// Load persisted services
+		if err := s.loadServices(); err != nil {
+			return fmt.Errorf("failed to load services from storage: %w", err)
+		}
+	} else {
+		logger.Info("Using in-memory service registry (no persistence)")
+	}
 	
 	if !s.janitorStarted {
 		s.janitorStarted = true
@@ -83,11 +113,41 @@ func (s *ControlPlaneServer) Start() {
 			zap.Duration("heartbeat_ttl", s.heartbeatTTL), 
 			zap.Duration("janitor_interval", s.janitorInterval))
 	}
+	
+	return nil
+}
+
+// loadServices loads persisted services from storage
+func (s *ControlPlaneServer) loadServices() error {
+	if s.storage == nil {
+		return nil
+	}
+	
+	ctx := context.Background()
+	services, err := s.storage.ListServices(ctx)
+	if err != nil {
+		return err
+	}
+	
+	count := 0
+	for _, storedService := range services {
+		service := &Service{
+			Info:     storedService.Info,
+			Status:   storedService.Status,
+			LastSeen: storedService.LastSeen,
+		}
+		s.services[service.Info.ServiceId] = service
+		count++
+	}
+	
+	logger.Info("Loaded services from persistent storage", zap.Int("count", count))
+	return nil
 }
 
 // Close stops the control plane server and cleans up resources.
-// This method will stop the janitor goroutine and wait for it to complete.
-func (s *ControlPlaneServer) Close() {
+// This method will stop the janitor goroutine, close the storage, and wait for
+// all background tasks to complete.
+func (s *ControlPlaneServer) Close() error {
 	s.mu.Lock()
 	if s.janitorStarted {
 		close(s.done)
@@ -97,7 +157,17 @@ func (s *ControlPlaneServer) Close() {
 	
 	// Wait for janitor to complete
 	s.janitorWaitGroup.Wait()
+	
+	// Close storage if available
+	if s.storage != nil {
+		logger.Info("Closing persistent storage")
+		if err := s.storage.Close(); err != nil {
+			return fmt.Errorf("failed to close storage: %w", err)
+		}
+	}
+	
 	logger.Info("Control plane server closed")
+	return nil
 }
 
 // Register implements the Register RPC
@@ -123,8 +193,25 @@ func (s *ControlPlaneServer) Register(ctx context.Context, info *pb.ServiceInfo)
 		LastSeen: now,
 	}
 
-	// Store service
+	// Store service in memory
 	s.services[info.ServiceId] = service
+
+	// Persist to storage if available
+	if s.storage != nil {
+		// Convert to storage model
+		serviceInfo := &storage.ServiceInfo{
+			Info:     info,
+			Status:   service.Status,
+			LastSeen: now,
+		}
+		
+		if err := s.storage.RegisterService(ctx, serviceInfo); err != nil {
+			logger.Error("Failed to persist service registration",
+				zap.String("service_id", info.ServiceId),
+				zap.Error(err))
+			// We continue anyway as the service is registered in memory
+		}
+	}
 
 	// Log service registration
 	logger.Info("Service registered",
@@ -174,6 +261,24 @@ func (s *ControlPlaneServer) Heartbeat(ctx context.Context, hb *pb.ServiceHeartb
 	service.Status.Metrics = hb.Metrics
 	service.Status.IsHealthy = true
 	service.Status.LastHeartbeat = timestamppb.New(now)
+
+	// Update in persistent storage if available
+	if s.storage != nil {
+		err := s.storage.UpdateService(ctx, hb.ServiceId, func(storedService *storage.ServiceInfo) error {
+			storedService.LastSeen = now
+			storedService.Status.Metrics = hb.Metrics
+			storedService.Status.IsHealthy = true
+			storedService.Status.LastHeartbeat = timestamppb.New(now)
+			return nil
+		})
+		
+		if err != nil && !storage.IsNotFound(err) {
+			logger.Error("Failed to update service heartbeat in storage",
+				zap.String("service_id", hb.ServiceId),
+				zap.Error(err))
+			// Continue anyway as the heartbeat is processed in memory
+		}
+	}
 
 	// Log heartbeat receipt
 	logger.Debug("Received heartbeat",
@@ -242,6 +347,7 @@ func (s *ControlPlaneServer) checkServiceHealth() {
 
 	now := time.Now()
 	staleThreshold := now.Add(-s.heartbeatTTL)
+	ctx := context.Background()
 
 	for id, service := range s.services {
 		// If the service hasn't sent a heartbeat within the TTL
@@ -254,6 +360,20 @@ func (s *ControlPlaneServer) checkServiceHealth() {
 					zap.String("service_type", service.Info.ServiceType.String()),
 					zap.Time("last_seen", service.LastSeen),
 					zap.Duration("ttl", s.heartbeatTTL))
+				
+				// Update in persistent storage if available
+				if s.storage != nil {
+					err := s.storage.UpdateService(ctx, id, func(storedService *storage.ServiceInfo) error {
+						storedService.Status.IsHealthy = false
+						return nil
+					})
+					
+					if err != nil && !storage.IsNotFound(err) {
+						logger.Error("Failed to update service health status in storage",
+							zap.String("service_id", id),
+							zap.Error(err))
+					}
+				}
 			}
 		}
 	}

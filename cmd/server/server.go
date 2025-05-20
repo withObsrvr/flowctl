@@ -6,11 +6,13 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/withobsrvr/flowctl/internal/api"
+	"github.com/withobsrvr/flowctl/internal/storage"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	pb "github.com/withobsrvr/flowctl/proto"
 	"go.uber.org/zap"
@@ -27,6 +29,8 @@ var (
 		TLSKey          string
 		HeartbeatTTL    time.Duration
 		JanitorInterval time.Duration
+		DBPath          string
+		NoPersistence   bool
 	}
 )
 
@@ -71,8 +75,35 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 			// Create gRPC server
 			grpcServer := grpc.NewServer(serverOptions...)
 			
+			// Create and configure storage if persistence is enabled
+			var serviceStorage storage.ServiceStorage
+			if !opts.NoPersistence {
+				dbPath := opts.DBPath
+				if dbPath == "" {
+					// Use default path in user's home directory if not specified
+					homeDir, err := os.UserHomeDir()
+					if err != nil {
+						return fmt.Errorf("failed to get user home directory: %w", err)
+					}
+					dbPath = filepath.Join(homeDir, ".flowctl", storage.DefaultBoltFilePath)
+				}
+				
+				// Ensure directory exists
+				dbDir := filepath.Dir(dbPath)
+				if err := os.MkdirAll(dbDir, 0755); err != nil {
+					return fmt.Errorf("failed to create directory for database: %w", err)
+				}
+				
+				logger.Info("Using persistent storage for service registry", zap.String("path", dbPath))
+				serviceStorage = storage.NewBoltDBStorage(&storage.BoltOptions{
+					Path: dbPath,
+				})
+			} else {
+				logger.Info("Persistence disabled, using in-memory service registry")
+			}
+			
 			// Create control plane server
-			controlPlane := api.NewControlPlaneServer()
+			controlPlane := api.NewControlPlaneServer(serviceStorage)
 			
 			// Configure heartbeat TTL and janitor interval
 			if opts.HeartbeatTTL > 0 {
@@ -82,8 +113,10 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 				controlPlane.SetJanitorInterval(opts.JanitorInterval)
 			}
 			
-			// Start the health check janitor
-			controlPlane.Start()
+			// Start the health check janitor and initialize storage
+			if err := controlPlane.Start(); err != nil {
+				return fmt.Errorf("failed to start control plane server: %w", err)
+			}
 			
 			// Register the control plane service
 			pb.RegisterControlPlaneServer(grpcServer, controlPlane)
@@ -116,7 +149,9 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 			// Graceful shutdown
 			logger.Info("Shutting down server...")
 			grpcServer.GracefulStop()
-			controlPlane.Close()
+			if err := controlPlane.Close(); err != nil {
+				logger.Error("Error closing control plane", zap.Error(err))
+			}
 			logger.Info("Server shutdown complete")
 
 			return nil
@@ -130,6 +165,8 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 	cmd.Flags().StringVar(&opts.TLSKey, "tls-key", "", "TLS key file")
 	cmd.Flags().DurationVar(&opts.HeartbeatTTL, "heartbeat-ttl", 30*time.Second, "heartbeat time-to-live duration")
 	cmd.Flags().DurationVar(&opts.JanitorInterval, "janitor-interval", 10*time.Second, "interval for checking service health")
+	cmd.Flags().StringVar(&opts.DBPath, "db-path", "", "path to the BoltDB file for service registry persistence")
+	cmd.Flags().BoolVar(&opts.NoPersistence, "no-persistence", false, "disable persistence for service registry")
 
 	return cmd
 }
