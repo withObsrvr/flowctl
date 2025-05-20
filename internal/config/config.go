@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
@@ -16,6 +17,8 @@ type Config struct {
 	Source     SourceConfig      `yaml:"source"`
 	Processors []ProcessorConfig `yaml:"processors"`
 	Sink       SinkConfig        `yaml:"sink"`
+	// TLS configuration for gRPC communication
+	TLS        *TLSConfig        `yaml:"tls,omitempty"`
 }
 
 // SourceConfig represents source configuration
@@ -56,10 +59,26 @@ func LoadFromFile(path string) (*Config, error) {
 			zap.Error(err))
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+	
+	// Set default TLS config if not provided
+	if cfg.TLS == nil {
+		cfg.TLS = DefaultTLSConfig()
+	}
+	
+	// Resolve relative certificate paths based on config file location
+	if cfg.TLS.Mode != TLSModeDisabled {
+		baseDir := filepath.Dir(path)
+		cfg.TLS.CertFile = ResolveCertPath(cfg.TLS.CertFile, baseDir)
+		cfg.TLS.KeyFile = ResolveCertPath(cfg.TLS.KeyFile, baseDir)
+		if cfg.TLS.CAFile != "" {
+			cfg.TLS.CAFile = ResolveCertPath(cfg.TLS.CAFile, baseDir)
+		}
+	}
 
 	logger.Debug("Successfully loaded config file", 
 		zap.String("path", path), 
-		zap.String("version", cfg.Version))
+		zap.String("version", cfg.Version),
+		zap.String("tls_mode", string(cfg.TLS.Mode)))
 	return &cfg, nil
 }
 
@@ -86,11 +105,20 @@ func (c *Config) Validate() error {
 		logger.Error("Invalid configuration", zap.String("reason", "missing sink type"))
 		return fmt.Errorf("sink type is required")
 	}
+	
+	// Validate TLS configuration if set
+	if c.TLS != nil {
+		if err := c.TLS.Validate(); err != nil {
+			logger.Error("Invalid TLS configuration", zap.Error(err))
+			return fmt.Errorf("invalid TLS configuration: %w", err)
+		}
+	}
 
 	logger.Debug("Configuration validated successfully", 
 		zap.String("version", c.Version),
 		zap.String("source", c.Source.Type),
 		zap.Int("processors", len(c.Processors)),
-		zap.String("sink", c.Sink.Type))
+		zap.String("sink", c.Sink.Type),
+		zap.String("tls_mode", string(c.TLS.Mode)))
 	return nil
 }
