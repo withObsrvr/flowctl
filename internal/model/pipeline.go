@@ -29,19 +29,21 @@ type Spec struct {
 
 // Component represents a pipeline component (source, processor, or sink)
 type Component struct {
-	ID         string                 `yaml:"id" json:"id"`
-	Type       string                 `yaml:"type,omitempty" json:"type,omitempty"`
-	Image      string                 `yaml:"image" json:"image"`
-	Command    []string               `yaml:"command,omitempty" json:"command,omitempty"`
-	Inputs     []string               `yaml:"inputs,omitempty" json:"inputs,omitempty"`
-	Config     map[string]interface{} `yaml:"config,omitempty" json:"config,omitempty"`
-	Env        map[string]string      `yaml:"env,omitempty" json:"env,omitempty"`
-	Volumes    []Volume               `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	Ports      []Port                 `yaml:"ports,omitempty" json:"ports,omitempty"`
-	HealthCheck string                `yaml:"health_check,omitempty" json:"health_check,omitempty"`
-	HealthPort int                    `yaml:"health_port,omitempty" json:"health_port,omitempty"`
-	Replicas   int                    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
-	Resources  Resources              `yaml:"resources,omitempty" json:"resources,omitempty"`
+	ID              string                 `yaml:"id" json:"id"`
+	Type            string                 `yaml:"type,omitempty" json:"type,omitempty"`
+	Image           string                 `yaml:"image" json:"image"`
+	Command         []string               `yaml:"command,omitempty" json:"command,omitempty"`
+	Inputs          []string               `yaml:"inputs,omitempty" json:"inputs,omitempty"`
+	InputEventTypes []string               `yaml:"input_event_types,omitempty" json:"input_event_types,omitempty"`
+	OutputEventTypes []string              `yaml:"output_event_types,omitempty" json:"output_event_types,omitempty"`
+	Config          map[string]interface{} `yaml:"config,omitempty" json:"config,omitempty"`
+	Env             map[string]string      `yaml:"env,omitempty" json:"env,omitempty"`
+	Volumes         []Volume               `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Ports           []Port                 `yaml:"ports,omitempty" json:"ports,omitempty"`
+	HealthCheck     string                 `yaml:"health_check,omitempty" json:"health_check,omitempty"`
+	HealthPort      int                    `yaml:"health_port,omitempty" json:"health_port,omitempty"`
+	Replicas        int                    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
+	Resources       Resources              `yaml:"resources,omitempty" json:"resources,omitempty"`
 }
 
 // Volume represents a volume mount in a component

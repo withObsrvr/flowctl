@@ -1,0 +1,89 @@
+apiVersion: flowctl/v1
+kind: Pipeline
+metadata:
+  name: dag-example-pipeline
+  namespace: default
+  labels:
+    environment: test
+    version: "1.0"
+spec:
+  description: "Example pipeline using the DAG-based executor"
+  driver: dag
+  
+  sources:
+    - id: stellar-source
+      image: stellar-source:latest
+      command: ["stellar-source", "--network=testnet"]
+      output_event_types: ["stellar.ledger", "stellar.transaction"]
+      health_check: "/health"
+      health_port: 8080
+      env:
+        STELLAR_NETWORK: "testnet"
+        HORIZON_URL: "https://horizon-testnet.stellar.org"
+      ports:
+        - containerPort: 8080
+          hostPort: 18080
+      resources:
+        requests:
+          cpu: "0.1"
+          memory: "128Mi"
+        limits:
+          cpu: "0.5"
+          memory: "256Mi"
+  
+  processors:
+    - id: token-transfer-processor
+      image: token-transfer-processor:latest
+      command: ["token-transfer-processor"]
+      inputs: ["stellar-source"]
+      input_event_types: ["stellar.transaction"]
+      output_event_types: ["token.transfer"]
+      health_check: "/health"
+      health_port: 8081
+      env:
+        LOG_LEVEL: "info"
+        PROCESSOR_ID: "token-transfer"
+        
+    - id: account-processor
+      image: account-processor:latest
+      command: ["account-processor"]
+      inputs: ["stellar-source"]
+      input_event_types: ["stellar.transaction"]
+      output_event_types: ["account.activity"]
+      health_check: "/health"
+      health_port: 8082
+      env:
+        LOG_LEVEL: "info"
+        PROCESSOR_ID: "account-activity"
+        
+    - id: alert-processor
+      image: alert-processor:latest
+      command: ["alert-processor"]
+      inputs: ["token-transfer-processor", "account-processor"]
+      input_event_types: ["token.transfer", "account.activity"]
+      output_event_types: ["alert.notification"]
+      health_check: "/health"
+      health_port: 8083
+      env:
+        LOG_LEVEL: "info"
+        THRESHOLD: "1000"
+  
+  sinks:
+    - id: kafka-sink
+      image: kafka-sink:latest
+      command: ["kafka-sink"]
+      inputs: ["token-transfer-processor", "account-processor", "alert-processor"]
+      health_check: "/health"
+      health_port: 8084
+      env:
+        KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+        KAFKA_TOPIC_PREFIX: "stellar-events"
+
+    - id: metrics-sink
+      image: metrics-sink:latest
+      command: ["metrics-sink"]
+      inputs: ["alert-processor"]
+      health_check: "/health"
+      health_port: 8085
+      env:
+        PROMETHEUS_ENDPOINT: "http://prometheus:9090/api/v1/write"
