@@ -17,12 +17,12 @@ const (
 	// DefaultBoltFilePath is the default path for the BoltDB file
 	DefaultBoltFilePath = "flowctl-service-registry.db"
 
-	// DefaultBoltFileMode is the default file mode for the BoltDB file
-	DefaultBoltFileMode = 0600
-
 	// DefaultBoltTimeout is the default timeout for BoltDB operations
 	DefaultBoltTimeout = 1 * time.Second
 )
+
+// DefaultBoltFileMode is the default file mode for the BoltDB file
+var DefaultBoltFileMode = os.FileMode(0600)
 
 // BucketName is the name of the bucket where service information is stored
 var serviceBucket = []byte("services")
@@ -78,11 +78,18 @@ func (s *BoltDBStorage) Open() error {
 
 	// Open the database
 	opts := &bolt.Options{Timeout: DefaultBoltTimeout}
-	if s.options != nil && s.options.Timeout > 0 {
-		opts.Timeout = s.options.Timeout
+	fileMode := DefaultBoltFileMode
+	
+	if s.options != nil {
+		if s.options.Timeout > 0 {
+			opts.Timeout = s.options.Timeout
+		}
+		if s.options.FileMode != 0 {
+			fileMode = s.options.FileMode
+		}
 	}
 	
-	db, err := bolt.Open(s.path, 0600, opts)
+	db, err := bolt.Open(s.path, fileMode, opts)
 	if err != nil {
 		return fmt.Errorf("failed to open BoltDB: %w", err)
 	}
