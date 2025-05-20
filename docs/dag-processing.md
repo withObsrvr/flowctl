@@ -96,7 +96,7 @@ Here's a visualization of an example DAG pipeline:
        │                           │
        ▼                           ▼
 ┌─────────────────┐     ┌─────────────────┐
-│ token-processor │     │ account-process │
+│ token-processor │     │account-processor│
 └─────────────────┘     └─────────────────┘
        │                           │
        │                           │

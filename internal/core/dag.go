@@ -104,12 +104,12 @@ func (d *DAG) Connect(fromID, toID string, eventType string) error {
 
 	fromNode, exists := d.Nodes[fromID]
 	if !exists {
-		return fmt.Errorf("source processor %s not found", fromID)
+		return fmt.Errorf("processor %s not found", fromID)
 	}
 
 	toNode, exists := d.Nodes[toID]
 	if !exists {
-		return fmt.Errorf("destination processor %s not found", toID)
+		return fmt.Errorf("processor %s not found", toID)
 	}
 
 	// Check if the destination processor accepts this event type

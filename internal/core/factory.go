@@ -66,6 +66,8 @@ func CreatePipeline(cfg *config.Config, pipeline *model.Pipeline) (PipelineInter
 	
 	switch pipelineType {
 	case PipelineTypeSimple:
+		// For simple pipeline, we could enhance the legacy implementation to use the pipeline model
+		// For now, we call the legacy constructor that only uses cfg
 		return NewPipelineFromConfig(cfg)
 	case PipelineTypeDAG:
 		return NewDAGPipelineFromConfig(cfg, pipeline)

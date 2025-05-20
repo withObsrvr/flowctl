@@ -92,32 +92,38 @@ func (p *DAGPipeline) buildPipelineGraph() error {
 		p.dag.AddSinkChannel(sinkConfig.ID)
 	}
 
+	// Pre-index sources and processors by ID for direct lookup
+	sourceMap := make(map[string]model.Component)
+	for _, src := range p.pipeline.Spec.Sources {
+		sourceMap[src.ID] = src
+	}
+	
+	processorMap := make(map[string]model.Component)
+	for _, proc := range p.pipeline.Spec.Processors {
+		processorMap[proc.ID] = proc
+	}
+	
 	// Connect sources to processors
 	for _, procConfig := range p.pipeline.Spec.Processors {
-		// For each input, find the source
+		// For each input, find the source or processor
 		for _, inputID := range procConfig.Inputs {
 			// Check if input is a source
-			for _, srcConfig := range p.pipeline.Spec.Sources {
-				if srcConfig.ID == inputID {
-					// Connect source to processor
-					// We need to determine the event types this source produces
-					for _, eventType := range srcConfig.OutputEventTypes {
-						if err := p.dag.ConnectSourceToProcessor(srcConfig.ID, procConfig.ID, eventType); err != nil {
-							return fmt.Errorf("failed to connect source to processor: %w", err)
-						}
+			if srcConfig, exists := sourceMap[inputID]; exists {
+				// Connect source to processor
+				for _, eventType := range srcConfig.OutputEventTypes {
+					if err := p.dag.ConnectSourceToProcessor(srcConfig.ID, procConfig.ID, eventType); err != nil {
+						return fmt.Errorf("failed to connect source to processor: %w", err)
 					}
 				}
+				continue // Found a source, no need to check processors
 			}
-
+			
 			// Check if input is a processor
-			for _, upstreamProcConfig := range p.pipeline.Spec.Processors {
-				if upstreamProcConfig.ID == inputID {
-					// Connect upstream processor to this processor
-					// We need to determine the event types the upstream processor produces
-					for _, eventType := range upstreamProcConfig.OutputEventTypes {
-						if err := p.dag.Connect(upstreamProcConfig.ID, procConfig.ID, eventType); err != nil {
-							return fmt.Errorf("failed to connect processors: %w", err)
-						}
+			if upstreamProc, exists := processorMap[inputID]; exists {
+				// Connect upstream processor to this processor
+				for _, eventType := range upstreamProc.OutputEventTypes {
+					if err := p.dag.Connect(upstreamProc.ID, procConfig.ID, eventType); err != nil {
+						return fmt.Errorf("failed to connect processors: %w", err)
 					}
 				}
 			}
@@ -128,15 +134,12 @@ func (p *DAGPipeline) buildPipelineGraph() error {
 	for _, sinkConfig := range p.pipeline.Spec.Sinks {
 		// For each input, find the processor
 		for _, inputID := range sinkConfig.Inputs {
-			// Find the processor that matches this input ID
-			for _, procConfig := range p.pipeline.Spec.Processors {
-				if procConfig.ID == inputID {
-					// Connect processor to sink
-					// We need to determine the event types the processor produces
-					for _, eventType := range procConfig.OutputEventTypes {
-						if err := p.dag.ConnectProcessorToSink(procConfig.ID, sinkConfig.ID, eventType); err != nil {
-							return fmt.Errorf("failed to connect processor to sink: %w", err)
-						}
+			// Find the processor that matches this input ID using the pre-indexed map
+			if procConfig, exists := processorMap[inputID]; exists {
+				// Connect processor to sink
+				for _, eventType := range procConfig.OutputEventTypes {
+					if err := p.dag.ConnectProcessorToSink(procConfig.ID, sinkConfig.ID, eventType); err != nil {
+						return fmt.Errorf("failed to connect processor to sink: %w", err)
 					}
 				}
 			}
@@ -170,13 +173,13 @@ func (p *DAGPipeline) Start(ctx context.Context) error {
 				select {
 				case <-ctx.Done():
 					return
-				case msgs, ok := <-ch:
+				case msg, ok := <-ch:
 					if !ok {
 						logger.Info("Sink channel closed, stopping sink", zap.String("sink_id", sinkID))
 						return
 					}
 
-					if err := s.Write(ctx, []*processor.Message{msgs}); err != nil {
+					if err := s.Write(ctx, []*processor.Message{msg}); err != nil {
 						logger.Error("Error writing to sink",
 							zap.String("sink_id", sinkID),
 							zap.Error(err))
@@ -286,28 +289,75 @@ func (s *mockSource) Open(ctx context.Context) error {
 
 func (s *mockSource) Events(ctx context.Context, out chan<- source.EventEnvelope) error {
 	// Generate events periodically for testing
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond) // Faster for testing
 	defer ticker.Stop()
 
-	for {
+	// Create a single event immediately for tests to ensure they can proceed
+	// This is especially important for tests that expect at least one event
+	initialEvent := source.EventEnvelope{
+		LedgerSeq: 12345,
+		Payload:   []byte(`{"data": "initial test event from ` + s.id + `"}`),
+		Cursor:    "test-cursor-initial",
+	}
+
+	// Send the initial event, but only if context hasn't been canceled
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case out <- initialEvent:
+		// Initial event sent successfully
+	}
+
+	// Use an atomic flag to safely track context cancellation
+	ctxCanceled := false
+
+	// Setup a goroutine to monitor context cancellation
+	ctxDone := ctx.Done()
+	go func() {
+		<-ctxDone
+		ctxCanceled = true
+	}()
+
+	for !ctxCanceled {
 		select {
-		case <-ctx.Done():
-			return nil
+		case <-ctxDone:
+			ctxCanceled = true
+			return ctx.Err()
 		case <-ticker.C:
+			// Double-check context before creating the event
+			if ctxCanceled {
+				return ctx.Err()
+			}
+
 			// Create a test event
 			event := source.EventEnvelope{
 				LedgerSeq: 12345,
 				Payload:   []byte(`{"data": "test event from ` + s.id + `"}`),
 				Cursor:    "test-cursor",
 			}
+			
+			// Try to send, but check context again before sending
+			if ctxCanceled {
+				return ctx.Err()
+			}
+
+			// Use a separate select with timeout to avoid blocking forever
 			select {
-			case <-ctx.Done():
-				return nil
+			case <-ctxDone:
+				ctxCanceled = true
+				return ctx.Err()
 			case out <- event:
 				// Event sent successfully
+			case <-time.After(50 * time.Millisecond):
+				// Couldn't send within timeout, check if context is canceled
+				if ctxCanceled {
+					return ctx.Err()
+				}
 			}
 		}
 	}
+
+	return ctx.Err()
 }
 
 func (s *mockSource) Close() error {

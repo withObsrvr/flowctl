@@ -16,7 +16,7 @@ func TestDAGBasicFlow(t *testing.T) {
 	dag := NewDAG(10)
 	
 	// Create a mock source
-	mockSrc := &mockSource{id: "source1"}
+	mockSrc := &mockTestSource{id: "source1"}
 	err := dag.AddSource("source1", mockSrc)
 	if err != nil {
 		t.Fatalf("Failed to add source: %v", err)
@@ -46,40 +46,53 @@ func TestDAGBasicFlow(t *testing.T) {
 	
 	// Create a context with cancellation
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	
 	// Start the DAG
 	err = dag.Start(ctx)
 	if err != nil {
+		cancel() // Cancel the context before failing
 		t.Fatalf("Failed to start DAG: %v", err)
 	}
 	
-	// Create a WaitGroup to wait for sink processing
-	var wg sync.WaitGroup
-	wg.Add(1)
+	// Create a channel to signal when we've received a message
+	messageReceived := make(chan struct{})
 	
 	// Collect messages from the sink channel
 	var receivedMessages []*processor.Message
+	
+	// Start a goroutine to collect messages
 	go func() {
-		defer wg.Done()
+		defer close(messageReceived)
 		
-		// Wait for at least one message or timeout
+		// Wait for a message with a timeout
 		select {
-		case msg := <-sinkChan:
-			receivedMessages = append(receivedMessages, msg)
+		case msg, ok := <-sinkChan:
+			if ok {
+				receivedMessages = append(receivedMessages, msg)
+			}
 		case <-ctx.Done():
+			// Context canceled or timed out
 			return
 		}
 	}()
 	
-	// Wait for the sink processing to complete or timeout
-	wg.Wait()
+	// Wait for message or timeout
+	select {
+	case <-messageReceived:
+		// Got a message
+	case <-time.After(2 * time.Second):
+		// Timeout waiting for message
+	}
 	
-	// Stop the DAG
+	// Cancel context and stop the DAG
+	cancel()
 	err = dag.Stop()
 	if err != nil {
 		t.Fatalf("Failed to stop DAG: %v", err)
 	}
+	
+	// Wait a bit for goroutines to finish
+	time.Sleep(100 * time.Millisecond)
 	
 	// Verify we received at least one message if not timed out
 	if ctx.Err() == context.DeadlineExceeded {
@@ -103,7 +116,7 @@ func TestDAGComplexFlow(t *testing.T) {
 	dag := NewDAG(10)
 	
 	// Create a mock source
-	mockSrc := &mockSource{id: "source1"}
+	mockSrc := &mockTestSource{id: "source1"}
 	err := dag.AddSource("source1", mockSrc)
 	if err != nil {
 		t.Fatalf("Failed to add source: %v", err)
@@ -164,59 +177,83 @@ func TestDAGComplexFlow(t *testing.T) {
 	
 	// Create a context with cancellation
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	
 	// Start the DAG
 	err = dag.Start(ctx)
 	if err != nil {
+		cancel() // Cancel context before failing
 		t.Fatalf("Failed to start DAG: %v", err)
 	}
 	
-	// Create a WaitGroup to wait for sink processing
-	var wg sync.WaitGroup
-	wg.Add(2)
+	// Define a mutex to protect our message collections
+	var mu sync.Mutex
 	
-	// Collect messages from sink1
+	// Collect messages from both sinks
 	var sink1Messages []*processor.Message
-	go func() {
-		defer wg.Done()
-		
-		// Wait for at least one message or timeout
-		select {
-		case msg := <-sink1Chan:
-			sink1Messages = append(sink1Messages, msg)
-		case <-ctx.Done():
-			return
-		}
-	}()
-	
-	// Collect messages from sink2
 	var sink2Messages []*processor.Message
+	
+	// Channel to signal when both sinks have received messages
+	bothReceived := make(chan struct{})
+	
+	// Track how many sinks have received messages
+	receiveCount := 0
+	
+	// Start goroutines to collect messages from each sink
 	go func() {
-		defer wg.Done()
-		
-		// Wait for at least one message or timeout
 		select {
-		case msg := <-sink2Chan:
-			sink2Messages = append(sink2Messages, msg)
+		case msg, ok := <-sink1Chan:
+			if ok {
+				mu.Lock()
+				sink1Messages = append(sink1Messages, msg)
+				receiveCount++
+				if receiveCount >= 2 {
+					close(bothReceived)
+				}
+				mu.Unlock()
+			}
 		case <-ctx.Done():
-			return
+			// Context canceled
 		}
 	}()
 	
-	// Wait for the sink processing to complete or timeout
-	wg.Wait()
+	go func() {
+		select {
+		case msg, ok := <-sink2Chan:
+			if ok {
+				mu.Lock()
+				sink2Messages = append(sink2Messages, msg)
+				receiveCount++
+				if receiveCount >= 2 {
+					close(bothReceived)
+				}
+				mu.Unlock()
+			}
+		case <-ctx.Done():
+			// Context canceled
+		}
+	}()
 	
-	// Stop the DAG
+	// Wait for messages with a shorter timeout
+	select {
+	case <-bothReceived:
+		// Both sinks received messages
+	case <-time.After(2 * time.Second):
+		// Timeout waiting for messages
+	}
+	
+	// Cancel context and stop DAG
+	cancel()
 	err = dag.Stop()
 	if err != nil {
 		t.Fatalf("Failed to stop DAG: %v", err)
 	}
 	
-	// Verify we received messages if not timed out
-	if ctx.Err() == context.DeadlineExceeded {
-		t.Fatal("Test timed out waiting for messages")
-	}
+	// Wait a bit for goroutines to finish
+	time.Sleep(100 * time.Millisecond)
+	
+	// Check results
+	mu.Lock()
+	defer mu.Unlock()
 	
 	if len(sink1Messages) == 0 {
 		t.Fatal("No messages received from sink1")
@@ -284,18 +321,30 @@ func (s *mockTestSource) Open(ctx context.Context) error {
 }
 
 func (s *mockTestSource) Events(ctx context.Context, out chan<- source.EventEnvelope) error {
-	// Send a test event immediately
-	event := source.EventEnvelope{
-		LedgerSeq: 12345,
-		Payload:   []byte(`{"source":"` + s.id + `","data":"test-data"}`),
-		Cursor:    "test-cursor",
-	}
-	
+	// Send a test event immediately if the context is not already canceled
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case out <- event:
-		// Event sent
+	default:
+		// Context not canceled, proceed with sending
+		event := source.EventEnvelope{
+			LedgerSeq: 12345,
+			Payload:   []byte(`{"source":"` + s.id + `","data":"test-data"}`),
+			Cursor:    "test-cursor",
+		}
+		
+		// Try to send with a timeout to avoid blocking forever
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case out <- event:
+			// Event sent successfully
+		case <-time.After(100 * time.Millisecond):
+			// Timeout occurred, check context again
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
 	}
 	
 	// Keep the channel open until context is cancelled
