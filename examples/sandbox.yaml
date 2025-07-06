@@ -1,0 +1,81 @@
+services:
+  redis:
+    image: redis:7
+    ports:
+      - host: 6379
+        container: 6379
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    ports:
+      - host: 8123
+        container: 8123
+      - host: 9000
+        container: 9000
+    env:
+      CLICKHOUSE_DB: flow
+      CLICKHOUSE_USER: flowctl
+      CLICKHOUSE_PASSWORD: flowctl123
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    ports:
+      - host: 9092
+        container: 9092
+    env:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    depends_on:
+      - zookeeper
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    ports:
+      - host: 2181
+        container: 2181
+    env:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  postgres:
+    image: postgres:15
+    ports:
+      - host: 5432
+        container: 5432
+    env:
+      POSTGRES_DB: flowctl
+      POSTGRES_USER: flowctl
+      POSTGRES_PASSWORD: flowctl123
+    volumes:
+      - host: ./data/postgres
+        container: /var/lib/postgresql/data
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - host: 9090
+        container: 9090
+    volumes:
+      - host: ./config/prometheus.yml
+        container: /etc/prometheus/prometheus.yml
+        readonly: true
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/etc/prometheus/console_libraries
+      - --web.console.templates=/etc/prometheus/consoles
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - host: 3000
+        container: 3000
+    env:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - host: ./data/grafana
+        container: /var/lib/grafana
+    depends_on:
+      - prometheus
