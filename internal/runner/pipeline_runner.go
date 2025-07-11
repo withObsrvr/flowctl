@@ -106,8 +106,11 @@ func (r *PipelineRunner) Run() error {
 		return fmt.Errorf("failed to start control plane: %w", err)
 	}
 
-	// Wait a moment for control plane to be ready
-	time.Sleep(2 * time.Second)
+	// Wait for control plane to be ready
+	if err := r.waitForControlPlaneReady(); err != nil {
+		r.controlPlane.Stop()
+		return fmt.Errorf("control plane not ready: %w", err)
+	}
 
 	// Start components in dependency order
 	if err := r.startComponents(); err != nil {
@@ -342,4 +345,30 @@ func (r *PipelineRunner) IsHealthy() bool {
 	}
 
 	return true
+}
+
+// waitForControlPlaneReady waits for the control plane to be ready
+func (r *PipelineRunner) waitForControlPlaneReady() error {
+	timeout := time.After(30 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	logger.Debug("Waiting for control plane to be ready...")
+
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("timeout waiting for control plane to be ready")
+		case <-ticker.C:
+			if r.controlPlane.IsStarted() {
+				// Try a simple health check by getting service list
+				_, err := r.controlPlane.GetServiceList()
+				if err == nil {
+					logger.Debug("Control plane is ready")
+					return nil
+				}
+				logger.Debug("Control plane not ready yet", zap.Error(err))
+			}
+		}
+	}
 }

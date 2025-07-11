@@ -207,8 +207,11 @@ func (r *PipelineRunner) RunWithIntegratedMonitoring() error {
 		return fmt.Errorf("failed to start control plane: %w", err)
 	}
 
-	// Wait a moment for control plane to be ready
-	time.Sleep(2 * time.Second)
+	// Wait for control plane to be ready
+	if err := r.waitForControlPlaneReady(); err != nil {
+		r.controlPlane.Stop()
+		return fmt.Errorf("control plane not ready: %w", err)
+	}
 
 	// Start components
 	if err := r.startComponents(); err != nil {

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 
 	"github.com/withobsrvr/flowctl/internal/interfaces"
 	"github.com/withobsrvr/flowctl/internal/model"
@@ -76,7 +75,7 @@ func (p *YAMLParser) Parse(data []byte) (*model.Pipeline, error) {
 
 // ParseReader parses YAML from an io.Reader
 func (p *YAMLParser) ParseReader(r io.Reader) (*model.Pipeline, error) {
-	data, err := ioutil.ReadAll(r)
+	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read input: %w", err)
 	}
@@ -155,7 +154,7 @@ func (p *JSONParser) Parse(data []byte) (*model.Pipeline, error) {
 
 // ParseReader parses JSON from an io.Reader
 func (p *JSONParser) ParseReader(r io.Reader) (*model.Pipeline, error) {
-	data, err := ioutil.ReadAll(r)
+	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read input: %w", err)
 	}

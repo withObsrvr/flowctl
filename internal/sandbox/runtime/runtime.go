@@ -624,7 +624,12 @@ func (r *Runtime) DisplayConnectionInfo(services map[string]config.ServiceConfig
 	
 	for name, service := range services {
 		var info strings.Builder
-		info.WriteString(fmt.Sprintf("  ✅ %s", strings.Title(name)))
+		// Simple title case - capitalize first letter
+		titleName := name
+		if len(name) > 0 {
+			titleName = strings.ToUpper(string(name[0])) + name[1:]
+		}
+		info.WriteString(fmt.Sprintf("  ✅ %s", titleName))
 		
 		// Add connection details based on service type
 		switch name {
