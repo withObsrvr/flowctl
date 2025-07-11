@@ -1,0 +1,37 @@
+apiVersion: flowctl.withobsrvr.com/v1
+kind: Pipeline
+metadata:
+  name: sandbox-example
+  namespace: default
+spec:
+  sources:
+    - name: redis-source
+      type: redis
+      config:
+        host: redis:6379
+        key: "events"
+        
+  processors:
+    - name: transform
+      type: json-transform
+      config:
+        transform: |
+          {
+            "id": .id,
+            "timestamp": now,
+            "data": .payload | fromjson
+          }
+          
+  sinks:
+    - name: clickhouse-sink
+      type: clickhouse
+      config:
+        host: clickhouse:9000
+        database: flow
+        table: events
+        
+  flow:
+    - from: redis-source
+      to: transform
+    - from: transform
+      to: clickhouse-sink

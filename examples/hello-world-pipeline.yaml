@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Pipeline
+metadata:
+  name: hello-world-pipeline
+  labels:
+    environment: local
+    execution: process
+spec:
+  description: Hello World pipeline to test embedded control plane
+  sources:
+    - id: hello-source
+      type: hello-source
+      command: ["echo"]
+      args: ["Hello, World!"]
+      env:
+        SOURCE_ID: "hello-source"
+        FLOWCTL_SERVICE_TYPE: "source"
+      outputEventTypes:
+        - greeting.event
+
+  processors:
+    - id: uppercase-processor
+      type: uppercase-processor
+      command: ["tr"]
+      args: ["[:lower:]", "[:upper:]"]
+      inputs:
+        - hello-source
+      inputEventTypes:
+        - greeting.event
+      outputEventTypes:
+        - greeting.upper
+      env:
+        PROCESSOR_ID: "uppercase-processor"
+        FLOWCTL_SERVICE_TYPE: "processor"
+
+  sinks:
+    - id: output-sink
+      type: output-sink
+      command: ["cat"]
+      inputs:
+        - uppercase-processor
+      inputEventTypes:
+        - greeting.upper
+      env:
+        SINK_ID: "output-sink"
+        FLOWCTL_SERVICE_TYPE: "sink"

@@ -14,7 +14,8 @@ import (
 )
 
 var (
-	endpoint string
+	endpoint     string
+	waitForServer bool
 )
 
 // NewCommand creates the list command
@@ -22,12 +23,19 @@ func NewCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List registered services",
-		Long:  `List all services registered with the control plane.`,
+		Long: `List all services registered with the control plane.
+If a pipeline is running, it will connect to the embedded control plane automatically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// If endpoint is default, check if embedded control plane is running
+			if endpoint == "localhost:8080" && waitForServer {
+				fmt.Println("Checking for embedded control plane...")
+				time.Sleep(2 * time.Second)
+			}
+
 			// Connect to control plane
 			conn, err := grpc.Dial(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
-				return fmt.Errorf("failed to connect: %w", err)
+				return fmt.Errorf("failed to connect to control plane at %s: %w\nHint: Make sure 'flowctl run' is running or start 'flowctl server'", endpoint, err)
 			}
 			defer conn.Close()
 
@@ -45,20 +53,33 @@ func NewCommand() *cobra.Command {
 			}
 
 			// Print services
-			fmt.Println("Registered Services:")
-			fmt.Println("------------------")
+			if len(resp.Services) == 0 {
+				fmt.Println("No services registered with the control plane.")
+				return nil
+			}
+
+			fmt.Printf("Registered Services (%d):\n", len(resp.Services))
+			fmt.Println("========================")
 			for _, service := range resp.Services {
+				status := "🔴 UNHEALTHY"
+				if service.IsHealthy {
+					status = "🟢 HEALTHY"
+				}
+
 				fmt.Printf("ID: %s\n", service.ServiceId)
 				fmt.Printf("Type: %s\n", service.ServiceType)
-				fmt.Printf("Healthy: %v\n", service.IsHealthy)
+				fmt.Printf("Status: %s\n", status)
 				if service.LastHeartbeat != nil {
 					fmt.Printf("Last Heartbeat: %s\n", service.LastHeartbeat.AsTime().Format(time.RFC3339))
 				}
-				fmt.Println("Metrics:")
-				for k, v := range service.Metrics {
-					fmt.Printf("  %s: %v\n", k, v)
+				
+				if len(service.Metrics) > 0 {
+					fmt.Println("Metrics:")
+					for k, v := range service.Metrics {
+						fmt.Printf("  %s: %.2f\n", k, v)
+					}
 				}
-				fmt.Println("------------------")
+				fmt.Println("------------------------")
 			}
 
 			return nil
@@ -67,6 +88,7 @@ func NewCommand() *cobra.Command {
 
 	// Add flags
 	cmd.Flags().StringVarP(&endpoint, "endpoint", "e", "localhost:8080", "Control plane endpoint")
+	cmd.Flags().BoolVar(&waitForServer, "wait", true, "Wait briefly for embedded control plane")
 
 	return cmd
 }

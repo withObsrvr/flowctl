@@ -1,0 +1,67 @@
+# Flowctl Sandbox Demo for Stellar Developers
+# This demonstrates processing real Stellar testnet data with flowctl
+
+apiVersion: flowctl/v1
+kind: Pipeline
+metadata:
+  name: stellar-testnet-demo
+spec:
+  description: Real-time Stellar testnet event processing
+  sources:
+    - id: stellar-source
+      type: source
+      # Using mock source for demo - replace with real Stellar source
+      image: ghcr.io/withobsrvr/mock-source:latest
+      config:
+        # Simulates Stellar ledger closes
+        interval_ms: 5000
+        event_type: "stellar_ledger"
+        data_schema: |
+          {
+            "sequence": integer,
+            "hash": string,
+            "close_time": timestamp,
+            "transaction_count": integer,
+            "operation_count": integer,
+            "successful_transaction_count": integer,
+            "base_fee": integer,
+            "base_reserve": integer,
+            "protocol_version": integer
+          }
+        
+  processors:
+    - id: ledger-stats
+      image: ghcr.io/withobsrvr/stats-processor:latest
+      inputs: [stellar-source]
+      config:
+        metrics:
+          - name: "tx_per_ledger"
+            field: "transaction_count"
+            type: "gauge"
+          - name: "ops_per_ledger"
+            field: "operation_count"
+            type: "gauge"
+          - name: "success_rate"
+            expression: "successful_transaction_count / transaction_count"
+            type: "gauge"
+            
+    - id: alert-processor
+      image: ghcr.io/withobsrvr/alert-processor:latest
+      inputs: [ledger-stats]
+      config:
+        rules:
+          - name: "high_activity"
+            condition: "transaction_count > 100"
+            message: "High transaction volume detected: {{ .transaction_count }} txs"
+          - name: "low_success_rate"
+            condition: "success_rate < 0.95"
+            message: "Low success rate: {{ .success_rate | percent }}"
+            
+  sinks:
+    - id: console-output
+      image: ghcr.io/withobsrvr/console-sink:latest
+      inputs: [alert-processor]
+      config:
+        format: "pretty"
+        show_timestamp: true
+        emoji_mode: true

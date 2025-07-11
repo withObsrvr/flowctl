@@ -19,6 +19,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `make run-example` - Build and run the example pipeline
 - `./scripts/generate.sh` - Generate Go code from proto files
 
+### Sandbox Commands
+The sandbox provides a local containerized environment for development:
+
+```bash
+# Start sandbox (requires Docker or nerdctl installed)
+./bin/flowctl sandbox start --use-system-runtime --pipeline examples/sandbox-pipeline.yaml --services examples/sandbox.yaml
+
+# Check status
+./bin/flowctl sandbox status
+
+# View logs
+./bin/flowctl sandbox logs
+
+# Stop sandbox
+./bin/flowctl sandbox stop
+```
+
+**Important**: Always use `--use-system-runtime` flag as the bundled runtime download is not yet implemented. NixOS users must use this flag due to binary path handling.
+
 ### Running a Single Test
 ```bash
 go test -v ./internal/core -run TestPipelineDAG

@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: Pipeline
+metadata:
+  name: local-process-pipeline
+  labels:
+    environment: local
+    execution: process
+spec:
+  description: Local process pipeline for development and testing
+  sources:
+    - id: mock-source
+      type: mock-source
+      # For local processes, we use command instead of image
+      command: ["echo"]
+      args: ["Mock source data"]
+      env:
+        SOURCE_ID: "mock-source"
+        OUTPUT_INTERVAL: "5"
+        MESSAGE_COUNT: "10"
+      outputEventTypes:
+        - test.event
+    
+    - id: file-source
+      type: file-source
+      command: ["cat"]
+      args: ["/tmp/test-input.txt"]
+      env:
+        SOURCE_ID: "file-source"
+        WATCH_FILE: "/tmp/test-input.txt"
+      outputEventTypes:
+        - file.line
+
+  processors:
+    - id: uppercase-processor
+      type: uppercase-processor
+      command: ["tr"]
+      args: ["[:lower:]", "[:upper:]"]
+      inputs:
+        - mock-source
+        - file-source
+      inputEventTypes:
+        - test.event
+        - file.line
+      outputEventTypes:
+        - test.processed
+      env:
+        PROCESSOR_ID: "uppercase-processor"
+        
+    - id: json-processor
+      type: json-processor
+      command: ["jq"]
+      args: ["."]
+      inputs:
+        - uppercase-processor
+      inputEventTypes:
+        - test.processed
+      outputEventTypes:
+        - test.json
+      env:
+        PROCESSOR_ID: "json-processor"
+
+  sinks:
+    - id: stdout-sink
+      type: stdout-sink
+      command: ["tee"]
+      args: ["/tmp/pipeline-output.txt"]
+      inputs:
+        - json-processor
+      inputEventTypes:
+        - test.json
+      env:
+        SINK_ID: "stdout-sink"
+        OUTPUT_FORMAT: "json"
+        
+    - id: file-sink
+      type: file-sink
+      command: ["tee"]
+      args: ["-a", "/tmp/pipeline-results.log"]
+      inputs:
+        - uppercase-processor
+      inputEventTypes:
+        - test.processed
+      env:
+        SINK_ID: "file-sink"
+        APPEND_MODE: "true"

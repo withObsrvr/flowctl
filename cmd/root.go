@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/withobsrvr/flowctl/cmd/apply"
 	"github.com/withobsrvr/flowctl/cmd/list"
+	"github.com/withobsrvr/flowctl/cmd/sandbox"
 	"github.com/withobsrvr/flowctl/cmd/server"
 	"github.com/withobsrvr/flowctl/cmd/translate"
 	"github.com/withobsrvr/flowctl/cmd/version"
@@ -63,9 +64,14 @@ func init() {
 	// Add commands
 	rootCmd.AddCommand(apply.NewCommand())
 	rootCmd.AddCommand(list.NewCommand())
+	rootCmd.AddCommand(sandbox.NewCommand())
 	rootCmd.AddCommand(translate.NewCommand())
-	rootCmd.AddCommand(server.NewCommand())
 	rootCmd.AddCommand(version.NewCommand())
+	
+	// Add hidden server command (for backward compatibility)
+	serverCmd := server.NewCommand()
+	serverCmd.Hidden = true
+	rootCmd.AddCommand(serverCmd)
 }
 
 // initConfig reads in config file and ENV variables if set.
