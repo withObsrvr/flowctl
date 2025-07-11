@@ -464,20 +464,20 @@ class DataEnricher:
 ┌─────────────────────────────────────────────────────────────┐
 │                Native Execution Engine                      │
 ├─────────────────────────────────────────────────────────────┤
-│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌────────┐  │
-│  │Go Source │    │TS Proc   │    │Py Proc   │    │Go Sink │  │
-│  │:50051    │    │:50052    │    │:50053    │    │:50054  │  │
-│  └────┬─────┘    └─────┬────┘    └─────┬────┘    └───┬────┘  │
-│       │                │                │            │       │
-├───────┼────────────────┼────────────────┼────────────┼───────┤
-│       │          Protocol Abstraction Layer          │       │
-│  ┌────▼──────────────────▼──────────────▼────────────▼────┐  │
-│  │ • gRPC local routing (preserves existing protocols)   │  │
-│  │ • Kafka embedded broker (in-memory for development)   │  │
-│  │ • HTTP local proxy (maintain REST communication)     │  │
-│  │ • Direct channels (optional optimization)            │  │
-│  │ • Protocol bridging (gRPC ↔ Kafka ↔ HTTP ↔ channels)│  │
-│  └────────────────────────────────────────────────────────┘  │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌────────┐ │
+│  │Go Source │    │TS Proc   │    │Py Proc   │    │Go Sink │ │
+│  │:50051    │    │:50052    │    │:50053    │    │:50054  │ │
+│  └────┬─────┘    └─────┬────┘    └─────┬────┘    └───┬────┘ │
+│       │                │                │            │      │
+├───────┼────────────────┼────────────────┼────────────┼──────┤
+│       │          Protocol Abstraction Layer          │      │
+│  ┌────▼──────────────────▼──────────────▼────────────▼────┐ │
+│  │ • gRPC local routing (preserves existing protocols)    │ │
+│  │ • Kafka embedded broker (in-memory for development)    │ │
+│  │ • HTTP local proxy (maintain REST communication)       │ │
+│  │ • Direct channels (optional optimization)              │ │
+│  │ • Protocol bridging (gRPC ↔ Kafka ↔ HTTP ↔ channels)   │ │
+│  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 

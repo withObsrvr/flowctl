@@ -13,3 +13,4 @@ bin/
 **/.claude/settings.local.json
 flowctl
 flowctl.md
+logs/

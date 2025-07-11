@@ -65,9 +65,13 @@ func init() {
 	rootCmd.AddCommand(apply.NewCommand())
 	rootCmd.AddCommand(list.NewCommand())
 	rootCmd.AddCommand(sandbox.NewCommand())
-	rootCmd.AddCommand(server.NewCommand())
 	rootCmd.AddCommand(translate.NewCommand())
 	rootCmd.AddCommand(version.NewCommand())
+	
+	// Add hidden server command (for backward compatibility)
+	serverCmd := server.NewCommand()
+	serverCmd.Hidden = true
+	rootCmd.AddCommand(serverCmd)
 }
 
 // initConfig reads in config file and ENV variables if set.
