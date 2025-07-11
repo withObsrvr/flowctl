@@ -211,6 +211,39 @@ The bash script generator creates:
 4. Health check monitoring
 5. Process supervision with automatic restart
 
+## Troubleshooting
+
+### Docker Permission Errors
+
+If you encounter permission errors when running flowctl sandbox commands, the tool will provide platform-specific guidance. Common solutions include:
+
+#### Linux
+- Run with sudo: `sudo flowctl sandbox start --use-system-runtime ...`
+- Add your user to the docker group: `sudo usermod -aG docker $USER` (then log out and back in)
+- Check if Docker service is running: `sudo systemctl status docker`
+
+#### macOS
+- Ensure Docker Desktop is running
+- Check Docker Desktop permissions in System Preferences
+- Try restarting Docker Desktop
+
+#### NixOS
+- See detailed setup guide: [docs/nixos-docker-setup.md](docs/nixos-docker-setup.md)
+- Quick fix: Run with sudo
+- Permanent fix: Add user to docker group in configuration.nix
+
+### Container Runtime Not Found
+
+If flowctl cannot find Docker or nerdctl:
+
+1. Install Docker: https://docs.docker.com/get-docker/
+2. Or install nerdctl: https://github.com/containerd/nerdctl
+3. Always use the `--use-system-runtime` flag (bundled runtime is not yet available)
+
+### Sandbox Issues
+
+For sandbox-specific issues, refer to [docs/sandbox.md](docs/sandbox.md) for detailed troubleshooting steps.
+
 ## Development
 
 ### Building

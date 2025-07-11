@@ -1,0 +1,31 @@
+apiVersion: flowctl.withobsrvr.com/v1
+kind: Pipeline
+metadata:
+  name: sandbox-minimal-host
+  namespace: default
+spec:
+  sources:
+    - name: redis-source
+      type: redis
+      config:
+        host: localhost:6379
+        key: "test-events"
+        
+  sinks:
+    - name: stdout-sink
+      type: stdout
+      config:
+        pretty: true
+        
+  flow:
+    - from: redis-source
+      to: stdout-sink
+
+---
+# Minimal pipeline for testing sandbox services
+# This connects to Redis and outputs to stdout for easy testing
+#
+# Usage:
+# 1. Start sandbox: flowctl sandbox start --services-only --use-system-runtime --services examples/sandbox.yaml
+# 2. Add test data to Redis: redis-cli lpush test-events '{"message": "hello world"}'
+# 3. Run pipeline: ./bin/flowctl run examples/sandbox-minimal-host.yaml

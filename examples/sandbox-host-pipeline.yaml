@@ -1,0 +1,74 @@
+apiVersion: flowctl.withobsrvr.com/v1
+kind: Pipeline
+metadata:
+  name: sandbox-host-example
+  namespace: default
+  annotations:
+    description: "Example pipeline configured to run on host against sandbox services"
+spec:
+  sources:
+    - name: redis-source
+      type: redis
+      config:
+        # Use localhost instead of redis service name
+        host: localhost:6379
+        key: "events"
+        
+  processors:
+    - name: transform
+      type: json-transform
+      config:
+        transform: |
+          {
+            "id": .id,
+            "timestamp": now,
+            "data": .payload | fromjson,
+            "processed_at": now
+          }
+          
+  sinks:
+    - name: clickhouse-sink
+      type: clickhouse
+      config:
+        # Use localhost instead of clickhouse service name
+        host: localhost:9000
+        database: flow
+        table: events
+        user: flowctl
+        password: flowctl123
+        
+    - name: postgres-sink
+      type: postgres
+      config:
+        # Use localhost instead of postgres service name
+        host: localhost:5432
+        database: flowctl
+        user: flowctl
+        password: flowctl123
+        table: events
+        
+  flow:
+    - from: redis-source
+      to: transform
+    - from: transform
+      to: clickhouse-sink
+    - from: transform
+      to: postgres-sink
+
+---
+# Configuration for connecting to sandbox services from host
+# This configuration uses localhost endpoints to connect to 
+# containerized services started by the flowctl sandbox.
+#
+# Service endpoints when running sandbox:
+# - Redis: localhost:6379
+# - ClickHouse HTTP: localhost:8123
+# - ClickHouse Native: localhost:9000  
+# - PostgreSQL: localhost:5432
+# - Kafka: localhost:9092
+# - Prometheus: localhost:9090
+# - Grafana: localhost:3000
+#
+# Usage:
+# 1. Start sandbox services: flowctl sandbox start --services-only --use-system-runtime --services examples/sandbox.yaml
+# 2. Run this pipeline: ./bin/flowctl run examples/sandbox-host-pipeline.yaml

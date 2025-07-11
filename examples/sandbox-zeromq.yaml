@@ -1,0 +1,6 @@
+services:
+  redis:
+    image: apollographql/apollo-runtime:latest
+    ports:
+      - host: 4000
+        container: 4000

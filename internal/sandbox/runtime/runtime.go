@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -103,8 +104,13 @@ func NewRuntime(cfg *Config) (*Runtime, error) {
 	// Ensure bundled runtime is available if needed
 	if !cfg.UseSystemRuntime {
 		if err := rt.ensureBundledRuntime(); err != nil {
-			return nil, fmt.Errorf("failed to setup bundled runtime: %w", err)
+			return nil, fmt.Errorf("failed to setup bundled runtime: %w\n\nThe bundled runtime feature is not yet implemented. Please use the --use-system-runtime flag to use your system's Docker or nerdctl instead.\n\nExample: flowctl sandbox start --use-system-runtime --pipeline pipeline.yaml --services sandbox.yaml", err)
 		}
+	}
+
+	// Perform pre-flight checks
+	if err := rt.performPreflightChecks(); err != nil {
+		return nil, fmt.Errorf("pre-flight checks failed: %w", err)
 	}
 
 	// Create network
@@ -138,7 +144,7 @@ func (r *Runtime) getContainerCommand() (string, error) {
 		if _, err := exec.LookPath("nerdctl"); err == nil {
 			return "nerdctl", nil
 		}
-		return "", fmt.Errorf("no system container runtime found (docker or nerdctl)")
+		return "", fmt.Errorf("no system container runtime found (docker or nerdctl).\n\nPlease install either Docker or nerdctl:\n- Docker: https://docs.docker.com/get-docker/\n- nerdctl: https://github.com/containerd/nerdctl\n\nFor NixOS users, add to your configuration.nix:\n  environment.systemPackages = with pkgs; [ docker ];")
 	}
 
 	// Use bundled nerdctl
@@ -175,22 +181,95 @@ func (r *Runtime) ensureBundledRuntime() error {
 
 // downloadBundledRuntime downloads the bundled runtime
 func (r *Runtime) downloadBundledRuntime(binDir string) error {
-	// This is a placeholder implementation
-	// In a real implementation, this would download nerdctl and containerd binaries
+	// TODO: This is a placeholder implementation
+	// The actual implementation will download nerdctl and containerd binaries
 	logger.Info("Downloading bundled runtime binaries")
 	
-	// For demonstration, create a placeholder script
-	nerdctlPath := filepath.Join(binDir, "nerdctl")
-	content := `#!/bin/bash
-echo "Bundled nerdctl placeholder - would execute actual nerdctl commands"
-echo "Args: $@"
-`
-	
-	if err := os.WriteFile(nerdctlPath, []byte(content), 0755); err != nil {
-		return fmt.Errorf("failed to create nerdctl placeholder: %w", err)
-	}
+	// For now, return an error indicating this feature is not yet available
+	return fmt.Errorf("bundled runtime download is not yet implemented. Please use --use-system-runtime flag with your system's Docker or nerdctl")
+}
 
+// performPreflightChecks validates that we can access the container runtime
+func (r *Runtime) performPreflightChecks() error {
+	logger.Info("Performing pre-flight checks", zap.String("command", r.containerCmd))
+	
+	// Try a simple version command to test access
+	cmd := exec.Command(r.containerCmd, "version", "--format", "json")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		errMsg := string(output)
+		
+		// Check for permission errors
+		if strings.Contains(errMsg, "permission denied") || strings.Contains(errMsg, "docker.sock") {
+			return r.handlePermissionError(errMsg)
+		}
+		
+		// Check for daemon not running
+		if strings.Contains(errMsg, "Cannot connect to the Docker daemon") || strings.Contains(errMsg, "Is the docker daemon running") {
+			return fmt.Errorf("Docker daemon is not running. Please start Docker and try again.\n\nOriginal error: %s", errMsg)
+		}
+		
+		// Check for command not found
+		if strings.Contains(err.Error(), "executable file not found") {
+			cmdName := filepath.Base(r.containerCmd)
+			return fmt.Errorf("%s not found. Please install Docker or nerdctl, or use --use-system-runtime flag with your system's container runtime", cmdName)
+		}
+		
+		return fmt.Errorf("failed to access container runtime: %s", errMsg)
+	}
+	
+	logger.Info("Pre-flight checks passed")
 	return nil
+}
+
+// handlePermissionError provides platform-specific guidance for permission errors
+func (r *Runtime) handlePermissionError(originalError string) error {
+	var guidance strings.Builder
+	
+	guidance.WriteString("Permission denied accessing Docker. ")
+	
+	// Detect if running on NixOS
+	if _, err := os.Stat("/etc/NIXOS"); err == nil {
+		guidance.WriteString("NixOS specific solutions:\n\n")
+		guidance.WriteString("1. Run with sudo:\n")
+		guidance.WriteString("   sudo flowctl sandbox start --use-system-runtime ...\n\n")
+		guidance.WriteString("2. Add your user to the docker group in /etc/nixos/configuration.nix:\n")
+		guidance.WriteString("   users.users.YOUR_USERNAME = {\n")
+		guidance.WriteString("     extraGroups = [ \"docker\" ];\n")
+		guidance.WriteString("   };\n")
+		guidance.WriteString("   Then run: sudo nixos-rebuild switch\n")
+		guidance.WriteString("   And log out/in for group changes to take effect\n\n")
+		guidance.WriteString("3. Enable rootless Docker (recommended):\n")
+		guidance.WriteString("   See: docs/nixos-docker-setup.md\n")
+	} else {
+		// Generic Linux/macOS guidance
+		switch runtime.GOOS {
+		case "linux":
+			guidance.WriteString("Linux solutions:\n\n")
+			guidance.WriteString("1. Run with sudo:\n")
+			guidance.WriteString("   sudo flowctl sandbox start --use-system-runtime ...\n\n")
+			guidance.WriteString("2. Add your user to the docker group:\n")
+			guidance.WriteString("   sudo usermod -aG docker $USER\n")
+			guidance.WriteString("   Then log out and back in\n\n")
+			guidance.WriteString("3. Check if Docker service is running:\n")
+			guidance.WriteString("   sudo systemctl status docker\n")
+		case "darwin":
+			guidance.WriteString("macOS solutions:\n\n")
+			guidance.WriteString("1. Ensure Docker Desktop is running\n")
+			guidance.WriteString("2. Check Docker Desktop permissions in System Preferences\n")
+			guidance.WriteString("3. Try restarting Docker Desktop\n")
+		default:
+			guidance.WriteString("General solutions:\n\n")
+			guidance.WriteString("1. Run with elevated permissions (sudo)\n")
+			guidance.WriteString("2. Ensure your user has access to Docker\n")
+			guidance.WriteString("3. Check if Docker is properly installed and running\n")
+		}
+	}
+	
+	guidance.WriteString("\nOriginal error: ")
+	guidance.WriteString(originalError)
+	
+	return fmt.Errorf(guidance.String())
 }
 
 // createNetwork creates the sandbox network
@@ -199,9 +278,26 @@ func (r *Runtime) createNetwork() error {
 
 	// Check if network already exists
 	cmd := exec.Command(r.containerCmd, "network", "ls", "--format", "{{.Name}}")
-	output, err := cmd.Output()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to list networks: %w", err)
+		errMsg := string(output)
+		
+		// Check for permission denied errors
+		if strings.Contains(errMsg, "permission denied") || strings.Contains(errMsg, "docker.sock") {
+			return r.handlePermissionError(errMsg)
+		}
+		
+		// Check for daemon not running
+		if strings.Contains(errMsg, "Cannot connect to the Docker daemon") || strings.Contains(errMsg, "Is the docker daemon running") {
+			return fmt.Errorf("Docker daemon is not running. Please start Docker and try again.\n\nOriginal error: %s", errMsg)
+		}
+		
+		// Check for command not found
+		if !r.config.UseSystemRuntime && strings.Contains(err.Error(), "no such file or directory") {
+			return fmt.Errorf("failed to list networks: %w\n\nThis error often occurs when the bundled runtime is not properly set up. Please use the --use-system-runtime flag instead.", err)
+		}
+		
+		return fmt.Errorf("failed to list networks: %s", errMsg)
 	}
 
 	networks := strings.Split(string(output), "\n")
@@ -214,8 +310,16 @@ func (r *Runtime) createNetwork() error {
 
 	// Create network
 	cmd = exec.Command(r.containerCmd, "network", "create", r.network)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to create network: %w", err)
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		errMsg := string(output)
+		
+		// Check for permission errors on create as well
+		if strings.Contains(errMsg, "permission denied") || strings.Contains(errMsg, "docker.sock") {
+			return r.handlePermissionError(errMsg)
+		}
+		
+		return fmt.Errorf("failed to create network: %s", errMsg)
 	}
 
 	logger.Info("Network created successfully", zap.String("network", r.network))
@@ -296,8 +400,16 @@ func (r *Runtime) startService(name string, service config.ServiceConfig) error 
 	}
 
 	cmd := exec.Command(r.containerCmd, args...)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to start container: %w", err)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		errMsg := string(output)
+		
+		// Check for permission errors when starting containers
+		if strings.Contains(errMsg, "permission denied") || strings.Contains(errMsg, "docker.sock") {
+			return r.handlePermissionError(errMsg)
+		}
+		
+		return fmt.Errorf("failed to start container: %s", errMsg)
 	}
 
 	logger.Info("Service started", zap.String("name", name))
@@ -319,8 +431,16 @@ func (r *Runtime) StartPipeline(pipelinePath string) error {
 	}
 
 	cmd := exec.Command(r.containerCmd, args...)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to start pipeline: %w", err)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		errMsg := string(output)
+		
+		// Check for permission errors when starting pipeline
+		if strings.Contains(errMsg, "permission denied") || strings.Contains(errMsg, "docker.sock") {
+			return r.handlePermissionError(errMsg)
+		}
+		
+		return fmt.Errorf("failed to start pipeline: %s", errMsg)
 	}
 
 	logger.Info("Pipeline started")
@@ -495,6 +615,71 @@ func (r *Runtime) StopAll(opts *StopOptions) error {
 	runtimeMutex.Unlock()
 
 	return nil
+}
+
+// DisplayConnectionInfo shows connection information for running services
+func (r *Runtime) DisplayConnectionInfo(services map[string]config.ServiceConfig) {
+	logger.Info("🚀 Infrastructure services started successfully:")
+	logger.Info("")
+	
+	for name, service := range services {
+		var info strings.Builder
+		info.WriteString(fmt.Sprintf("  ✅ %s", strings.Title(name)))
+		
+		// Add connection details based on service type
+		switch name {
+		case "redis":
+			info.WriteString(" - localhost:6379")
+			info.WriteString("\n     Connection: redis://localhost:6379")
+		case "clickhouse":
+			for _, port := range service.Ports {
+				if port.Host == 8123 {
+					info.WriteString(" - HTTP: localhost:8123")
+				} else if port.Host == 9000 {
+					info.WriteString(", Native: localhost:9000")
+				}
+			}
+			info.WriteString("\n     HTTP: http://localhost:8123")
+			info.WriteString("\n     Native: clickhouse://localhost:9000")
+		case "postgres", "postgresql":
+			info.WriteString(" - localhost:5432")
+			if db, ok := service.Environment["POSTGRES_DB"]; ok {
+				info.WriteString(fmt.Sprintf("\n     Database: %s", db))
+			}
+			if user, ok := service.Environment["POSTGRES_USER"]; ok {
+				info.WriteString(fmt.Sprintf("\n     User: %s", user))
+			}
+			info.WriteString("\n     Connection: postgresql://localhost:5432")
+		case "kafka":
+			info.WriteString(" - localhost:9092")
+			info.WriteString("\n     Bootstrap servers: localhost:9092")
+		case "zookeeper":
+			info.WriteString(" - localhost:2181")
+		case "prometheus":
+			info.WriteString(" - localhost:9090")
+			info.WriteString("\n     Web UI: http://localhost:9090")
+		case "grafana":
+			info.WriteString(" - localhost:3000")
+			info.WriteString("\n     Web UI: http://localhost:3000 (admin/admin)")
+		default:
+			// Generic port display
+			if len(service.Ports) > 0 {
+				var ports []string
+				for _, port := range service.Ports {
+					ports = append(ports, fmt.Sprintf("%d", port.Host))
+				}
+				info.WriteString(fmt.Sprintf(" - localhost:%s", strings.Join(ports, ", ")))
+			}
+		}
+		
+		logger.Info(info.String())
+	}
+	
+	logger.Info("")
+	logger.Info("📋 Next steps:")
+	logger.Info("  1. Modify your pipeline YAML to use localhost endpoints")
+	logger.Info("  2. Run: ./bin/flowctl run your-pipeline.yaml")
+	logger.Info("")
 }
 
 // UpgradeBundledRuntime upgrades the bundled runtime

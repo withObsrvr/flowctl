@@ -21,6 +21,7 @@ type startOptions struct {
 	logFormat        string
 	network          string
 	useSystemRuntime bool
+	servicesOnly     bool
 }
 
 func newStartCommand() *cobra.Command {
@@ -32,8 +33,11 @@ func newStartCommand() *cobra.Command {
 		Long: `Start a local development environment for Flowctl pipelines with supporting
 infrastructure like Redis, Kafka, ClickHouse, and other dependencies.
 
-The sandbox uses containerized services defined in sandbox.yaml and runs your
-pipeline with hot reload capabilities.`,
+The sandbox can run in two modes:
+1. Services-only (recommended): Start infrastructure services and run pipelines on host
+2. Full mode: Start services and attempt to run pipeline in container (requires flowctl image)
+
+Use --services-only for a better development experience.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runStart(opts)
 		},
@@ -48,19 +52,26 @@ pipeline with hot reload capabilities.`,
 	cmd.Flags().StringVar(&opts.logFormat, "log-format", "plain", "Log output format (plain|json)")
 	cmd.Flags().StringVar(&opts.network, "network", "sandbox_net", "Container network to use for sandbox")
 	cmd.Flags().BoolVar(&opts.useSystemRuntime, "use-system-runtime", false, "Use system-installed container runtime instead of bundled")
+	cmd.Flags().BoolVar(&opts.servicesOnly, "services-only", false, "Start only infrastructure services, skip pipeline execution")
 
 	return cmd
 }
 
 func runStart(opts *startOptions) error {
-	logger.Info("Starting Flowctl sandbox", 
-		zap.String("pipeline", opts.pipeline),
-		zap.String("services", opts.services),
-		zap.String("backend", opts.backend))
-
-	// Validate pipeline file exists
-	if _, err := os.Stat(opts.pipeline); os.IsNotExist(err) {
-		return fmt.Errorf("pipeline file not found: %s", opts.pipeline)
+	if opts.servicesOnly {
+		logger.Info("Starting Flowctl sandbox (services-only mode)", 
+			zap.String("services", opts.services),
+			zap.String("backend", opts.backend))
+	} else {
+		logger.Info("Starting Flowctl sandbox", 
+			zap.String("pipeline", opts.pipeline),
+			zap.String("services", opts.services),
+			zap.String("backend", opts.backend))
+		
+		// Validate pipeline file exists (only when not in services-only mode)
+		if _, err := os.Stat(opts.pipeline); os.IsNotExist(err) {
+			return fmt.Errorf("pipeline file not found: %s", opts.pipeline)
+		}
 	}
 
 	// Load sandbox configuration
@@ -92,27 +103,39 @@ func runStart(opts *startOptions) error {
 		return fmt.Errorf("failed to start services: %w", err)
 	}
 
-	// Start pipeline
-	pipelineAbsPath, err := filepath.Abs(opts.pipeline)
-	if err != nil {
-		return fmt.Errorf("failed to resolve pipeline path: %w", err)
-	}
-
-	if err := rt.StartPipeline(pipelineAbsPath); err != nil {
-		return fmt.Errorf("failed to start pipeline: %w", err)
-	}
-
-	// Setup file watching if requested
-	if opts.watch {
-		if err := rt.StartWatcher(opts.pipeline); err != nil {
-			logger.Warn("Failed to start file watcher", zap.Error(err))
+	if opts.servicesOnly {
+		// Services-only mode: Display connection information
+		rt.DisplayConnectionInfo(cfg.Services)
+		logger.Info("Sandbox services started successfully")
+		logger.Info("To run your pipeline against these services:")
+		logger.Info("  1. Create or modify your pipeline YAML to use localhost endpoints")
+		logger.Info("  2. Run: ./bin/flowctl run your-pipeline.yaml")
+		logger.Info("Use 'flowctl sandbox status' to check service status")
+		logger.Info("Use 'flowctl sandbox logs' to view logs")
+		logger.Info("Use 'flowctl sandbox stop' to shutdown")
+	} else {
+		// Full mode: Start pipeline in container
+		pipelineAbsPath, err := filepath.Abs(opts.pipeline)
+		if err != nil {
+			return fmt.Errorf("failed to resolve pipeline path: %w", err)
 		}
-	}
 
-	logger.Info("Sandbox started successfully")
-	logger.Info("Use 'flowctl sandbox status' to check service status")
-	logger.Info("Use 'flowctl sandbox logs' to view logs")
-	logger.Info("Use 'flowctl sandbox stop' to shutdown")
+		if err := rt.StartPipeline(pipelineAbsPath); err != nil {
+			return fmt.Errorf("failed to start pipeline: %w", err)
+		}
+
+		// Setup file watching if requested
+		if opts.watch {
+			if err := rt.StartWatcher(opts.pipeline); err != nil {
+				logger.Warn("Failed to start file watcher", zap.Error(err))
+			}
+		}
+
+		logger.Info("Sandbox started successfully")
+		logger.Info("Use 'flowctl sandbox status' to check service status")
+		logger.Info("Use 'flowctl sandbox logs' to view logs")
+		logger.Info("Use 'flowctl sandbox stop' to shutdown")
+	}
 
 	return nil
 }

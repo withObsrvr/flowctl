@@ -58,7 +58,7 @@ services:
       - host: 9090
         container: 9090
     volumes:
-      - host: ./config/prometheus.yml
+      - host: ./examples/config/prometheus.yml
         container: /etc/prometheus/prometheus.yml
         readonly: true
     command:
