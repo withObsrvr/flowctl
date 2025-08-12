@@ -12,7 +12,7 @@
         pkgs = nixpkgs.legacyPackages.${system};
         
         # Go version to use
-        go = pkgs.go_1_22;
+        go = pkgs.go_1_23;
         
         # Build dependencies
         buildInputs = with pkgs; [
