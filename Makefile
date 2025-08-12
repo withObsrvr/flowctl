@@ -16,7 +16,7 @@ proto:
 # Build the binary
 build:
 	@echo "Building flowctl..."
-	@go build -o bin/flowctl ./cmd/flowctl
+	@go build -o bin/flowctl 
 	@echo "Binary built at bin/flowctl"
 
 # Run tests

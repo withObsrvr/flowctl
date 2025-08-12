@@ -10,7 +10,6 @@ import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
-	_ "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -88,7 +87,7 @@ var File_proto_sink_proto protoreflect.FileDescriptor
 
 const file_proto_sink_proto_rawDesc = "" +
 	"\n" +
-	"\x10proto/sink.proto\x12\aflowctl\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x12proto/common.proto\"\xb2\x01\n" +
+	"\x10proto/sink.proto\x12\aflowctl\x1a\x1bgoogle/protobuf/empty.proto\x1a\x12proto/common.proto\"\xb2\x01\n" +
 	"\aSinkAck\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12:\n" +
