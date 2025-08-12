@@ -22,10 +22,10 @@ func main() {
 
 	client := pb.NewControlPlaneClient(conn)
 
-	// Register a CDP pipeline service
+	// Register a Flow pipeline service
 	info := &pb.ServiceInfo{
-		ServiceId:      "cdp-pipeline-001",
-		ServiceType:    pb.ServiceType(4), // SERVICE_TYPE_PIPELINE
+		ServiceId:      "flow-pipeline-001",
+		ServiceType:    pb.ServiceType_SERVICE_TYPE_PIPELINE, // SERVICE_TYPE_PIPELINE
 		HealthEndpoint: "http://localhost:9090/metrics",
 		MaxInflight:    100,
 		Metadata: map[string]string{
