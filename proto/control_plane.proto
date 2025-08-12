@@ -12,6 +12,7 @@ enum ServiceType {
   SERVICE_TYPE_SOURCE = 1;
   SERVICE_TYPE_PROCESSOR = 2;
   SERVICE_TYPE_SINK = 3;
+  SERVICE_TYPE_PIPELINE = 4;  // Composite service containing source, processors, and sinks
 }
 
 // Service registration information

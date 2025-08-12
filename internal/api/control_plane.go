@@ -234,6 +234,13 @@ func (s *ControlPlaneServer) Register(ctx context.Context, info *pb.ServiceInfo)
 		for _, eventType := range info.OutputEventTypes {
 			topicNames = append(topicNames, fmt.Sprintf("%s.v1", eventType))
 		}
+	case pb.ServiceType_SERVICE_TYPE_PIPELINE:
+		// Pipelines are composite services that manage their own internal communication
+		// They don't need external topics since all components run within the pipeline
+		logger.Info("Registered pipeline service",
+			zap.String("pipeline_id", info.ServiceId),
+			zap.Any("metadata", info.Metadata),
+		)
 	}
 
 	// Return registration acknowledgment
