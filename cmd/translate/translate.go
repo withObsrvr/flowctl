@@ -29,7 +29,7 @@ func NewCommand() *cobra.Command {
 		Use:   "translate -f <file> -o <format>",
 		Short: "Translate pipeline to different deployment formats",
 		Long: `Translate a pipeline specification into different deployment formats
-such as Docker Compose, Kubernetes, Nomad, or for local execution.
+such as Docker Compose, Kubernetes, or for local execution.
 
 Examples:
   # Translate to Docker Compose and print to stdout
@@ -45,7 +45,7 @@ Examples:
 
 	// Add flags
 	cmd.Flags().StringVarP(&opts.InputFile, "file", "f", "", "input pipeline specification file")
-	cmd.Flags().StringVarP(&opts.OutputFormat, "output", "o", "", "output format (docker-compose, kubernetes, nomad, local)")
+	cmd.Flags().StringVarP(&opts.OutputFormat, "output", "o", "", "output format (docker-compose, kubernetes, local)")
 	cmd.Flags().StringVar(&opts.OutputFile, "to-file", "", "write output to file instead of stdout")
 	cmd.Flags().StringVar(&opts.ResourcePrefix, "prefix", "", "prefix for resource names")
 	cmd.Flags().StringVar(&opts.RegistryPrefix, "registry", "", "container registry prefix")

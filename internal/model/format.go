@@ -8,8 +8,6 @@ const (
 	DockerCompose Format = "docker-compose"
 	// Kubernetes format generates Kubernetes manifests
 	Kubernetes Format = "kubernetes"
-	// Nomad format generates Nomad job specifications
-	Nomad Format = "nomad"
 	// Local format for local execution (no container orchestration)
 	Local Format = "local"
 )

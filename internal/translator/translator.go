@@ -46,7 +46,6 @@ func (t *translatorImpl) registerParsersAndGenerators() {
 	// Register generators - we'll implement factory functions in separate files
 	t.generators[model.DockerCompose] = NewDockerComposeGenerator()
 	t.generators[model.Kubernetes] = NewKubernetesGenerator()
-	t.generators[model.Nomad] = NewNomadGenerator()
 	t.generators[model.Local] = NewLocalGenerator()
 
 	// Set validator
