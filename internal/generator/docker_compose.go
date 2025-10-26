@@ -342,16 +342,19 @@ func (g *DockerComposeGenerator) Generate(pipeline *model.Pipeline, opts model.T
 				volString := ""
 				if v.HostPath != "" {
 					volString = fmt.Sprintf("%s:%s", v.HostPath, v.ContainerPath)
-				} else if v.MountPath != "" {
-					volString = fmt.Sprintf("%s:%s", v.Name, v.MountPath)
-				} else if v.ContainerPath != "" {
-					volString = fmt.Sprintf("%s:%s", v.Name, v.ContainerPath)
+				} else if v.MountPath != "" || v.ContainerPath != "" {
+					// Use MountPath if set, otherwise ContainerPath
+					targetPath := v.MountPath
+					if targetPath == "" {
+						targetPath = v.ContainerPath
+					}
+					volString = fmt.Sprintf("%s:%s", v.Name, targetPath)
 				}
-				
+
 				if v.ReadOnly {
 					volString += ":ro"
 				}
-				
+
 				if volString != "" {
 					service.Volumes[i] = volString
 				}
@@ -496,7 +499,7 @@ func getRestartPolicy(policy string, componentType string) string {
 	}
 	// Default restart policies
 	if componentType == "pipeline" {
-		return "no"  // Pipelines typically run to completion
+		return "no"  // Pipelines typically run to completion: after the container finishes, it exits and remains stopped; no automatic cleanup or restart occurs
 	}
 	return "unless-stopped"  // Other components should restart
 }
