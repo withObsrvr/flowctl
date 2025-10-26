@@ -285,6 +285,93 @@ func (g *DockerComposeGenerator) Generate(pipeline *model.Pipeline, opts model.T
 		composeConfig.Services[serviceName] = service
 	}
 
+	// Add pipelines as services
+	for _, pipelineComp := range pipeline.Spec.Pipelines {
+		serviceName := sanitizeServiceName(pipelineComp.ID)
+		service := DockerComposeService{
+			Image:         getImageRef(pipelineComp.Image, opts.RegistryPrefix),
+			ContainerName: fmt.Sprintf("%s-%s", opts.ResourcePrefix, serviceName),
+			Command:       pipelineComp.Command,
+			Environment:   mergeEnvs(pipelineComp.Env, opts.EnvVars),
+			Networks:      []string{"pipeline"},
+			Restart:       getRestartPolicy(pipelineComp.RestartPolicy, "pipeline"),
+			Labels: map[string]string{
+				"com.obsrvr.component": "pipeline",
+				"com.obsrvr.pipeline": pipeline.Metadata.Name,
+			},
+		}
+
+		// Add args to command if specified
+		if len(pipelineComp.Args) > 0 {
+			if service.Command == nil {
+				service.Command = pipelineComp.Args
+			} else {
+				service.Command = append(service.Command, pipelineComp.Args...)
+			}
+		}
+
+		// Set dependencies based on DependsOn field
+		if len(pipelineComp.DependsOn) > 0 {
+			service.DependsOn = make([]string, len(pipelineComp.DependsOn))
+			for i, dep := range pipelineComp.DependsOn {
+				service.DependsOn[i] = sanitizeServiceName(dep)
+			}
+		}
+
+		// Add labels from pipeline metadata
+		for k, v := range pipeline.Metadata.Labels {
+			service.Labels[k] = v
+		}
+
+		// Add ports
+		if len(pipelineComp.Ports) > 0 {
+			service.Ports = make([]string, len(pipelineComp.Ports))
+			for i, p := range pipelineComp.Ports {
+				if p.HostPort > 0 {
+					service.Ports[i] = fmt.Sprintf("%d:%d", p.HostPort, p.ContainerPort)
+				} else {
+					service.Ports[i] = fmt.Sprintf("%d:%d", p.ContainerPort, p.ContainerPort)
+				}
+			}
+		}
+
+		// Add volumes
+		if len(pipelineComp.Volumes) > 0 {
+			service.Volumes = make([]string, len(pipelineComp.Volumes))
+			for i, v := range pipelineComp.Volumes {
+				volString := ""
+				if v.HostPath != "" {
+					volString = fmt.Sprintf("%s:%s", v.HostPath, v.ContainerPath)
+				} else if v.MountPath != "" {
+					volString = fmt.Sprintf("%s:%s", v.Name, v.MountPath)
+				} else if v.ContainerPath != "" {
+					volString = fmt.Sprintf("%s:%s", v.Name, v.ContainerPath)
+				}
+				
+				if v.ReadOnly {
+					volString += ":ro"
+				}
+				
+				if volString != "" {
+					service.Volumes[i] = volString
+				}
+			}
+		}
+
+		// Add health check
+		if pipelineComp.HealthCheck != "" {
+			service.HealthCheck = &DockerHealthCheck{
+				Test:        []string{"CMD", "wget", "--quiet", "--tries=1", "--spider", pipelineComp.HealthCheck},
+				Interval:    "10s",
+				Timeout:     "5s",
+				Retries:     3,
+				StartPeriod: "5s",
+			}
+		}
+
+		composeConfig.Services[serviceName] = service
+	}
+
 	// Marshal the configuration to YAML
 	data, err := yaml.Marshal(composeConfig)
 	if err != nil {
@@ -307,8 +394,9 @@ func (g *DockerComposeGenerator) Validate(pipeline *model.Pipeline) error {
 		return fmt.Errorf("kind must be 'Pipeline'")
 	}
 
-	if len(pipeline.Spec.Sources) == 0 {
-		return fmt.Errorf("at least one source is required")
+	// At least one component is required (source or pipeline)
+	if len(pipeline.Spec.Sources) == 0 && len(pipeline.Spec.Pipelines) == 0 {
+		return fmt.Errorf("at least one source or pipeline component is required")
 	}
 
 	// Check that all components have required fields
@@ -336,6 +424,16 @@ func (g *DockerComposeGenerator) Validate(pipeline *model.Pipeline) error {
 		}
 		if sink.Image == "" {
 			return fmt.Errorf("sink image is required for %s", sink.ID)
+		}
+	}
+
+	// Check pipeline components
+	for _, pipelineComp := range pipeline.Spec.Pipelines {
+		if pipelineComp.ID == "" {
+			return fmt.Errorf("pipeline id is required")
+		}
+		if pipelineComp.Image == "" {
+			return fmt.Errorf("pipeline image is required for %s", pipelineComp.ID)
 		}
 	}
 
@@ -389,4 +487,16 @@ func mergeEnvs(componentEnv, globalEnv map[string]string) map[string]string {
 	}
 
 	return merged
+}
+
+// getRestartPolicy returns the appropriate restart policy for a component
+func getRestartPolicy(policy string, componentType string) string {
+	if policy != "" {
+		return policy
+	}
+	// Default restart policies
+	if componentType == "pipeline" {
+		return "no"  // Pipelines typically run to completion
+	}
+	return "unless-stopped"  // Other components should restart
 }

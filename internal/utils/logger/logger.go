@@ -10,6 +10,15 @@ import (
 var log *zap.Logger
 var sugar *zap.SugaredLogger
 
+// GetLogger returns the global logger instance
+func GetLogger() *zap.Logger {
+	if log == nil {
+		// Initialize with default config if not initialized
+		Init("info")
+	}
+	return log
+}
+
 // Init initializes the logger with the specified level
 func Init(level string) error {
 	zapLevel, err := parseLevel(level)

@@ -1,0 +1,50 @@
+apiVersion: flowctl/v1
+kind: Pipeline
+metadata:
+  name: cdp-latest-ledger-pipeline
+  namespace: stellar
+  labels:
+    pipeline: cdp
+    network: mainnet
+  annotations:
+    description: "CDP Pipeline for processing latest ledgers from GCS"
+
+spec:
+  description: "Runs obsrvr-flow-pipeline to process latest ledgers from GCS"
+  driver: docker
+  
+  # Empty sources/sinks to satisfy schema requirements
+  sources: []
+  sinks: []
+  
+  
+  # The actual CDP pipeline
+  pipelines:
+    - id: cdp-latest-ledger
+      type: pipeline
+      image: docker.io/withobsrvr/obsrvr-flow-pipeline:0.1.20
+      
+      # Command and arguments matching your docker run
+      command: ["/app/cdp-pipeline-workflow", "run", "/app/config/base/latest_ledger_gcs.secret.yaml"]
+      args: []
+      
+      # Environment variables
+      env:
+        GOOGLE_APPLICATION_CREDENTIALS: /.config/gcp/credentials.json
+      
+      # Volume mounts matching your docker run
+      volumes:
+        # GCP credentials - read-only mount
+        - name: gcp-credentials
+          host_path: "$HOME/.config/gcloud/application_default_credentials.json"
+          container_path: "/.config/gcp/credentials.json"
+          readonly: true
+          
+        # Config directory mount
+        - name: config
+          host_path: "$PWD/examples/config"  # Absolute path to config directory
+          container_path: "/app/config"
+          readonly: false  # Not specified as readonly in your command
+      
+      # Network mode is set to host by default in Docker orchestrator
+      restart_policy: "no"  # Don't restart when the pipeline completes

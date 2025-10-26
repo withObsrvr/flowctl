@@ -140,7 +140,7 @@ func (e *EmbeddedControlPlane) Stop() error {
 
 // GetEndpoint returns the control plane endpoint URL
 func (e *EmbeddedControlPlane) GetEndpoint() string {
-	return fmt.Sprintf("http://%s:%d", e.address, e.port)
+	return fmt.Sprintf("%s:%d", e.address, e.port)
 }
 
 // GetServiceList retrieves the list of registered services

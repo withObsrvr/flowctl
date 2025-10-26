@@ -8,17 +8,26 @@ import (
 
 // Component represents a pipeline component that can be orchestrated
 type Component struct {
-	ID           string            `json:"id"`
-	Type         string            `json:"type"`
-	Name         string            `json:"name"`
-	Image        string            `json:"image,omitempty"`
-	Command      []string          `json:"command,omitempty"`
-	Args         []string          `json:"args,omitempty"`
-	Environment  map[string]string `json:"environment,omitempty"`
-	WorkingDir   string            `json:"working_dir,omitempty"`
-	Ports        []Port            `json:"ports,omitempty"`
-	HealthCheck  *HealthCheck      `json:"health_check,omitempty"`
-	Dependencies []string          `json:"dependencies,omitempty"`
+	ID            string            `json:"id"`
+	Type          string            `json:"type"`
+	Name          string            `json:"name"`
+	Image         string            `json:"image,omitempty"`
+	Command       []string          `json:"command,omitempty"`
+	Args          []string          `json:"args,omitempty"`
+	Environment   map[string]string `json:"environment,omitempty"`
+	WorkingDir    string            `json:"working_dir,omitempty"`
+	Ports         []Port            `json:"ports,omitempty"`
+	Volumes       []VolumeMount     `json:"volumes,omitempty"`
+	HealthCheck   *HealthCheck      `json:"health_check,omitempty"`
+	Dependencies  []string          `json:"dependencies,omitempty"`
+	RestartPolicy string            `json:"restart_policy,omitempty"`
+}
+
+// VolumeMount represents a volume mount for a component
+type VolumeMount struct {
+	HostPath      string `json:"host_path"`
+	ContainerPath string `json:"container_path"`
+	ReadOnly      bool   `json:"readonly"`
 }
 
 // Port represents a port mapping for a component

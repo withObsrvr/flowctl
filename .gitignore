@@ -21,3 +21,6 @@ logs/
 flake.lock
 result
 result-*
+
+# Docs
+ai-docs/

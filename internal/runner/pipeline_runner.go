@@ -77,7 +77,12 @@ func NewPipelineRunner(pipeline *model.Pipeline, config Config) (*PipelineRunner
 	case "process":
 		orch = orchestrator.NewProcessOrchestrator(controlPlaneAddr)
 	case "container", "docker":
-		return nil, fmt.Errorf("container orchestrator not yet implemented")
+		// Create Docker orchestrator
+		dockerOrch, err := orchestrator.NewDockerOrchestrator(controlPlaneAddr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Docker orchestrator: %w", err)
+		}
+		orch = dockerOrch
 	default:
 		return nil, fmt.Errorf("unknown orchestrator type: %s", config.OrchestratorType)
 	}
@@ -188,19 +193,70 @@ func (r *PipelineRunner) startComponents() error {
 		logger.Info("Started sink component", zap.String("id", sink.ID))
 	}
 
+	// Start pipeline components (new)
+	if len(r.pipeline.Spec.Pipelines) > 0 {
+		logger.Info("Starting pipeline components", zap.Int("count", len(r.pipeline.Spec.Pipelines)))
+		
+		// Handle dependencies between pipelines
+		started := make(map[string]bool)
+		
+		// Helper function to start a pipeline component
+		var startPipeline func(pipeline model.Component) error
+		startPipeline = func(pipeline model.Component) error {
+			// Skip if already started
+			if started[pipeline.ID] {
+				return nil
+			}
+			
+			// Start dependencies first
+			for _, dep := range pipeline.DependsOn {
+				// Find the dependency
+				for _, p := range r.pipeline.Spec.Pipelines {
+					if p.ID == dep && !started[p.ID] {
+						if err := startPipeline(p); err != nil {
+							return err
+						}
+					}
+				}
+			}
+			
+			// Start the pipeline component
+			component := r.convertToOrchestratorComponent(pipeline, "pipeline")
+			if err := r.orchestrator.StartComponent(r.ctx, component); err != nil {
+				return fmt.Errorf("failed to start pipeline %s: %w", pipeline.ID, err)
+			}
+			
+			logger.Info("Started pipeline component", 
+				zap.String("id", pipeline.ID),
+				zap.String("image", pipeline.Image))
+			
+			started[pipeline.ID] = true
+			return nil
+		}
+		
+		// Start all pipelines respecting dependencies
+		for _, pipeline := range r.pipeline.Spec.Pipelines {
+			if err := startPipeline(pipeline); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
 // convertToOrchestratorComponent converts a model.Component to orchestrator.Component
 func (r *PipelineRunner) convertToOrchestratorComponent(modelComp model.Component, componentType string) *orchestrator.Component {
 	orchComp := &orchestrator.Component{
-		ID:           modelComp.ID,
-		Type:         modelComp.Type,
-		Name:         modelComp.ID,
-		Image:        modelComp.Image,
-		Command:      modelComp.Command,
-		Environment:  modelComp.Env,
-		Dependencies: modelComp.Inputs,
+		ID:            modelComp.ID,
+		Type:          modelComp.Type,
+		Name:          modelComp.ID,
+		Image:         modelComp.Image,
+		Command:       modelComp.Command,
+		Args:          modelComp.Args,
+		Environment:   modelComp.Env,
+		Dependencies:  modelComp.Inputs,
+		RestartPolicy: modelComp.RestartPolicy,
 	}
 
 	// Convert ports
@@ -209,6 +265,15 @@ func (r *PipelineRunner) convertToOrchestratorComponent(modelComp model.Componen
 			Name:     port.Name,
 			Port:     port.ContainerPort,
 			Protocol: port.Protocol,
+		})
+	}
+	
+	// Convert volumes
+	for _, vol := range modelComp.Volumes {
+		orchComp.Volumes = append(orchComp.Volumes, orchestrator.VolumeMount{
+			HostPath:      vol.HostPath,
+			ContainerPath: vol.ContainerPath,
+			ReadOnly:      vol.ReadOnly,
 		})
 	}
 
@@ -301,13 +366,17 @@ func (r *PipelineRunner) logPipelineStatus() {
 func (r *PipelineRunner) shutdown() error {
 	logger.Info("Shutting down pipeline and control plane")
 
-	// Cancel context to stop monitoring
-	r.cancel()
+	// Create a new context for shutdown operations with timeout
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
 
 	// Stop orchestrator (this will stop all components)
-	if err := r.orchestrator.StopAll(r.ctx); err != nil {
+	if err := r.orchestrator.StopAll(shutdownCtx); err != nil {
 		logger.Error("Error stopping orchestrator", zap.Error(err))
 	}
+
+	// Cancel the main context after stopping containers
+	r.cancel()
 
 	// Give components time to deregister
 	time.Sleep(2 * time.Second)

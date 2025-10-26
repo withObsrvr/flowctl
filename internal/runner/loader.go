@@ -33,7 +33,8 @@ func LoadPipelineFromFile(filePath string) (*model.Pipeline, error) {
 		zap.String("name", pipeline.Metadata.Name),
 		zap.Int("sources", len(pipeline.Spec.Sources)),
 		zap.Int("processors", len(pipeline.Spec.Processors)),
-		zap.Int("sinks", len(pipeline.Spec.Sinks)))
+		zap.Int("sinks", len(pipeline.Spec.Sinks)),
+		zap.Int("pipelines", len(pipeline.Spec.Pipelines)))
 
 	return &pipeline, nil
 }
@@ -53,9 +54,9 @@ func validatePipeline(pipeline *model.Pipeline) error {
 		return fmt.Errorf("metadata.name is required")
 	}
 
-	// Check that we have at least one source
-	if len(pipeline.Spec.Sources) == 0 {
-		return fmt.Errorf("at least one source is required")
+	// Check that we have at least one component (source or pipeline)
+	if len(pipeline.Spec.Sources) == 0 && len(pipeline.Spec.Pipelines) == 0 {
+		return fmt.Errorf("at least one source or pipeline component is required")
 	}
 
 	// Validate component IDs are unique
@@ -120,6 +121,22 @@ func validatePipeline(pipeline *model.Pipeline) error {
 			if !componentIDs[input] {
 				return fmt.Errorf("sink %s references unknown input %s", sink.ID, input)
 			}
+		}
+	}
+
+	// Validate pipelines
+	for _, pipeline := range pipeline.Spec.Pipelines {
+		if pipeline.ID == "" {
+			return fmt.Errorf("pipeline id is required")
+		}
+		if componentIDs[pipeline.ID] {
+			return fmt.Errorf("duplicate component id: %s", pipeline.ID)
+		}
+		componentIDs[pipeline.ID] = true
+
+		// Pipelines must have an image
+		if pipeline.Image == "" {
+			return fmt.Errorf("pipeline %s must have an image specified", pipeline.ID)
 		}
 	}
 

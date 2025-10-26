@@ -32,9 +32,9 @@ func (v *BasicValidator) Validate(pipeline *model.Pipeline) error {
 		return fmt.Errorf("metadata.name is required")
 	}
 	
-	// Check components
-	if len(pipeline.Spec.Sources) == 0 {
-		return fmt.Errorf("at least one source is required")
+	// Check components - at least one source or pipeline component is required
+	if len(pipeline.Spec.Sources) == 0 && len(pipeline.Spec.Pipelines) == 0 {
+		return fmt.Errorf("at least one source or pipeline component is required")
 	}
 	
 	// Validate that each component has required fields
@@ -56,6 +56,13 @@ func (v *BasicValidator) Validate(pipeline *model.Pipeline) error {
 		}
 	}
 	
+	// Validate pipeline components
+	for _, pipelineComp := range pipeline.Spec.Pipelines {
+		if err := v.ValidatePipeline(pipelineComp); err != nil {
+			return err
+		}
+	}
+	
 	// Validate connections between components
 	// (Check that all input references exist)
 	componentIDs := make(map[string]bool)
@@ -63,6 +70,9 @@ func (v *BasicValidator) Validate(pipeline *model.Pipeline) error {
 	// Collect all component IDs
 	for _, src := range pipeline.Spec.Sources {
 		componentIDs[src.ID] = true
+	}
+	for _, pipelineComp := range pipeline.Spec.Pipelines {
+		componentIDs[pipelineComp.ID] = true
 	}
 	
 	// Check processor inputs
@@ -155,6 +165,38 @@ func (v *BasicValidator) ValidateSink(sink model.Component) error {
 	// Sink-specific validations can go here
 	if sink.Replicas < 0 {
 		return fmt.Errorf("sink %s replicas cannot be negative", sink.ID)
+	}
+
+	return nil
+}
+
+// ValidatePipeline validates a pipeline component
+func (v *BasicValidator) ValidatePipeline(pipeline model.Component) error {
+	if pipeline.ID == "" {
+		return fmt.Errorf("pipeline id is required")
+	}
+	if pipeline.Image == "" {
+		return fmt.Errorf("pipeline image is required for %s", pipeline.ID)
+	}
+	
+	// Pipeline-specific validations
+	if pipeline.Type != "" && pipeline.Type != "pipeline" {
+		return fmt.Errorf("pipeline %s has invalid type: %s", pipeline.ID, pipeline.Type)
+	}
+
+	// Validate restart policy if specified
+	if pipeline.RestartPolicy != "" {
+		validPolicies := []string{"no", "always", "on-failure", "unless-stopped"}
+		isValid := false
+		for _, p := range validPolicies {
+			if pipeline.RestartPolicy == p {
+				isValid = true
+				break
+			}
+		}
+		if !isValid {
+			return fmt.Errorf("pipeline %s has invalid restart policy: %s", pipeline.ID, pipeline.RestartPolicy)
+		}
 	}
 
 	return nil
