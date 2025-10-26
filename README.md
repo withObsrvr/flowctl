@@ -11,7 +11,7 @@ flowctl is a CLI-driven event-stream engine that ingests Stellar ledger data, tr
 - Structured logging with Uber's Zap
 - Built-in health monitoring
 - Prometheus metrics
-- Multi-platform deployment (Docker, Kubernetes, Nomad)
+- Docker Compose deployment
 - DAG-based processor chaining with buffered channels
 - Flexible pipeline topologies with fan-out/fan-in support
 - Secure communication with TLS and mutual TLS support
@@ -109,8 +109,6 @@ flowctl supports translating pipeline configurations to different deployment for
 
 Supported output formats:
 - `docker-compose`: Docker Compose YAML
-- `kubernetes`: Kubernetes manifests (coming soon)
-- `nomad`: Nomad job specifications (coming soon)
 - `local`: Local execution configuration (Docker Compose or bash script)
 
 ## Advanced Features

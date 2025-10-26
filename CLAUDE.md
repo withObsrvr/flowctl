@@ -22,9 +22,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Sandbox Commands
 The sandbox provides a local containerized environment for development:
 
+**Prerequisites**: Docker or nerdctl must be installed on your system.
+
 ```bash
-# Start sandbox (requires Docker or nerdctl installed)
-./bin/flowctl sandbox start --use-system-runtime --pipeline examples/sandbox-pipeline.yaml --services examples/sandbox.yaml
+# Start sandbox
+./bin/flowctl sandbox start --pipeline examples/sandbox-pipeline.yaml --services examples/sandbox.yaml
 
 # Check status
 ./bin/flowctl sandbox status
@@ -36,7 +38,7 @@ The sandbox provides a local containerized environment for development:
 ./bin/flowctl sandbox stop
 ```
 
-**Important**: Always use `--use-system-runtime` flag as the bundled runtime download is not yet implemented. NixOS users must use this flag due to binary path handling.
+**Note**: The `--use-system-runtime` flag is still supported but no longer required (it's now the default behavior).
 
 ### Running a Single Test
 ```bash
