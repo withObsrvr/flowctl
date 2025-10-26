@@ -39,17 +39,24 @@ package pipeline
 	// Optional driver for deployment
 	driver?: "docker" | "kubernetes" | "k8s" | "nomad" | "local"
 	
-	// At least one source is required - use SourceComponent to enforce source-specific rules
-	sources: [...#SourceComponent] & [_, ...] 
+	// Sources - can be empty if pipelines are present
+	sources: [...#SourceComponent]
 	
 	// Optional list of processors - use ProcessorComponent to enforce processor-specific rules
 	processors?: [...#ProcessorComponent]
 	
-	// At least one sink is required - use SinkComponent to enforce sink-specific rules
-	sinks: [...#SinkComponent] & [_, ...]
+	// Sinks - can be empty if pipelines are present
+	sinks: [...#SinkComponent]
+	
+	// Optional list of complete pipelines as components
+	pipelines?: [...#PipelineComponent]
 	
 	// Optional configuration parameters
 	config?: [string]: _
+	
+	// Validation: must have at least one source or pipeline component
+	_hasComponents: len(sources) > 0 || (pipelines != _|_ && len(pipelines) > 0)
+	_hasComponents: true
 }
 
 // Base component definition with common fields
@@ -119,6 +126,21 @@ package pipeline
 	inputs: [...string] & [_, ...] 
 }
 
+// Pipeline component (complete pipelines that run as black boxes)
+#PipelineComponent: #BaseComponent & {
+	// Pipeline type must be "pipeline"
+	type: "pipeline"
+	
+	// Optional command arguments
+	args?: [...string]
+	
+	// Optional dependencies on other pipelines
+	depends_on?: [...string]
+	
+	// Optional restart policy
+	restart_policy?: "no" | "always" | "on-failure" | "unless-stopped"
+}
+
 // Volume represents a volume mount in a component
 #Volume: {
 	// Name of the volume
@@ -129,6 +151,12 @@ package pipeline
 	
 	// Optional host path for the volume
 	hostPath?: string
+	
+	// Alternative container path (takes precedence over mountPath)
+	container_path?: string
+	
+	// Optional read-only flag
+	readonly?: bool
 }
 
 // Port represents a port exposed by a component

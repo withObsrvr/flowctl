@@ -92,6 +92,16 @@ func (p *DAGPipeline) buildPipelineGraph() error {
 		p.dag.AddSinkChannel(sinkConfig.ID)
 	}
 
+	// Register all pipeline components (new)
+	for _, pipelineConfig := range p.pipeline.Spec.Pipelines {
+		// Pipeline components are managed separately by the orchestrator
+		// They don't participate in the DAG event flow
+		logger.Info("Pipeline component registered",
+			zap.String("id", pipelineConfig.ID),
+			zap.String("image", pipelineConfig.Image),
+			zap.String("type", pipelineConfig.Type))
+	}
+
 	// Pre-index sources and processors by ID for direct lookup
 	sourceMap := make(map[string]model.Component)
 	for _, src := range p.pipeline.Spec.Sources {

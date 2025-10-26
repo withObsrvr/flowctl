@@ -1,18 +1,40 @@
-version: 0.1
-log_level: info
+apiVersion: flowctl/v1
+kind: Pipeline
+metadata:
+  name: minimal-pipeline
+  namespace: default
+  annotations:
+    description: "A minimal pipeline example demonstrating basic source->processor->sink flow"
 
-source:
-  type: mock
-  params:
-    interval_ms: 1000
-
-processors:
-  - name: mock_processor
-    plugin: mock
-    params:
-      pass_through: true
-
-sink:
-  type: stdout
-  params:
-    pretty: true 
+spec:
+  description: "Minimal pipeline with mock components"
+  driver: local
+  
+  sources:
+    - id: mock-source
+      type: source
+      image: alpine:latest
+      command: ["sh", "-c"]
+      args: ["while true; do echo '{\"timestamp\": \"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'\", \"value\": \"'$RANDOM'\"}'; sleep 1; done"]
+      env:
+        LOG_LEVEL: "info"
+  
+  processors:
+    - id: pass-through
+      type: processor
+      image: alpine:latest
+      command: ["sh", "-c"]
+      args: ["while read line; do echo \"[PROCESSED] $line\"; done"]
+      inputs: ["mock-source"]
+      env:
+        LOG_LEVEL: "info"
+  
+  sinks:
+    - id: stdout-sink
+      type: sink
+      image: alpine:latest
+      command: ["sh", "-c"]
+      args: ["while read line; do echo \"[OUTPUT] $line\"; done"]
+      inputs: ["pass-through"]
+      env:
+        LOG_LEVEL: "info"

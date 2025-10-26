@@ -1,89 +1,117 @@
 apiVersion: flowctl/v1
 kind: Pipeline
 metadata:
-  name: dag-example-pipeline
-  namespace: default
+  name: dag-pipeline
+  namespace: analytics
   labels:
-    environment: test
-    version: "1.0"
+    topology: dag
+    pattern: fan-out-fan-in
+  annotations:
+    description: "DAG topology example with parallel processing paths"
+
 spec:
-  description: "Example pipeline using the DAG-based executor"
-  driver: dag
+  description: "Demonstrates DAG processing with fan-out to multiple processors and fan-in aggregation"
+  driver: docker
   
   sources:
-    - id: stellar-source
-      image: stellar-source:latest
-      command: ["stellar-source", "--network=testnet"]
-      output_event_types: ["stellar.ledger", "stellar.transaction"]
-      health_check: "/health"
-      health_port: 8080
+    - id: ledger-source
+      type: source
+      image: alpine:latest
+      command: ["sh", "-c"]
+      args: |
+        counter=1
+        while true; do
+          echo "{
+            \"ledger_seq\": $counter,
+            \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+            \"operations\": [
+              {\"type\": \"payment\", \"amount\": $((RANDOM % 1000)), \"asset\": \"XLM\"},
+              {\"type\": \"create_account\", \"starting_balance\": 100},
+              {\"type\": \"path_payment\", \"amount\": $((RANDOM % 500)), \"path\": [\"USD\", \"EUR\", \"XLM\"]}
+            ],
+            \"fee\": 100,
+            \"success\": true
+          }"
+          counter=$((counter + 1))
+          sleep 3
+        done
       env:
-        STELLAR_NETWORK: "testnet"
-        HORIZON_URL: "https://horizon-testnet.stellar.org"
-      ports:
-        - containerPort: 8080
-          hostPort: 18080
-      resources:
-        requests:
-          cpu: "0.1"
-          memory: "128Mi"
-        limits:
-          cpu: "0.5"
-          memory: "256Mi"
+        NETWORK: "public"
   
   processors:
-    - id: token-transfer-processor
-      image: token-transfer-processor:latest
-      command: ["token-transfer-processor"]
-      inputs: ["stellar-source"]
-      input_event_types: ["stellar.transaction"]
-      output_event_types: ["token.transfer"]
-      health_check: "/health"
-      health_port: 8081
+    # Fan-out: Three parallel processors handle different aspects
+    - id: payment-extractor
+      type: processor
+      image: alpine:latest
+      command: ["sh", "-c"]
+      args: |
+        while read ledger; do
+          # Extract payment operations
+          echo "$ledger" | sed 's/.*/{\"processor\": \"payment\", \"extracted\": \"payment_ops\", \"ledger\": &}/'
+        done
+      inputs: ["ledger-source"]
       env:
-        LOG_LEVEL: "info"
-        PROCESSOR_ID: "token-transfer"
-        
-    - id: account-processor
-      image: account-processor:latest
-      command: ["account-processor"]
-      inputs: ["stellar-source"]
-      input_event_types: ["stellar.transaction"]
-      output_event_types: ["account.activity"]
-      health_check: "/health"
-      health_port: 8082
+        PROCESSOR_TYPE: "payment"
+    
+    - id: account-extractor
+      type: processor
+      image: alpine:latest
+      command: ["sh", "-c"]
+      args: |
+        while read ledger; do
+          # Extract account operations
+          echo "$ledger" | sed 's/.*/{\"processor\": \"account\", \"extracted\": \"account_ops\", \"ledger\": &}/'
+        done
+      inputs: ["ledger-source"]
       env:
-        LOG_LEVEL: "info"
-        PROCESSOR_ID: "account-activity"
-        
-    - id: alert-processor
-      image: alert-processor:latest
-      command: ["alert-processor"]
-      inputs: ["token-transfer-processor", "account-processor"]
-      input_event_types: ["token.transfer", "account.activity"]
-      output_event_types: ["alert.notification"]
-      health_check: "/health"
-      health_port: 8083
+        PROCESSOR_TYPE: "account"
+    
+    - id: path-payment-extractor
+      type: processor
+      image: alpine:latest
+      command: ["sh", "-c"]
+      args: |
+        while read ledger; do
+          # Extract path payment operations
+          echo "$ledger" | sed 's/.*/{\"processor\": \"path_payment\", \"extracted\": \"path_ops\", \"ledger\": &}/'
+        done
+      inputs: ["ledger-source"]
       env:
-        LOG_LEVEL: "info"
-        THRESHOLD: "1000"
+        PROCESSOR_TYPE: "path_payment"
+    
+    # Fan-in: Aggregator combines results from all extractors
+    - id: aggregator
+      type: processor
+      image: alpine:latest
+      command: ["sh", "-c"]
+      args: |
+        # Simple aggregator that collects from all inputs
+        while true; do
+          # In a real implementation, this would properly merge streams
+          while read -t 1 data; do
+            echo "{\"aggregated\": true, \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"data\": $data}"
+          done
+          sleep 0.1
+        done
+      inputs: 
+        - "payment-extractor"
+        - "account-extractor" 
+        - "path-payment-extractor"
+      env:
+        AGGREGATION_WINDOW: "10s"
+        MERGE_STRATEGY: "combine"
   
   sinks:
-    - id: kafka-sink
-      image: kafka-sink:latest
-      command: ["kafka-sink"]
-      inputs: ["token-transfer-processor", "account-processor", "alert-processor"]
-      health_check: "/health"
-      health_port: 8084
+    - id: analytics-sink
+      type: sink
+      image: alpine:latest
+      command: ["sh", "-c"]
+      args: |
+        while read data; do
+          echo "[ANALYTICS] Processed ledger data: $data"
+          # In production, this would write to analytics database
+        done
+      inputs: ["aggregator"]
       env:
-        KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
-        KAFKA_TOPIC_PREFIX: "stellar-events"
-
-    - id: metrics-sink
-      image: metrics-sink:latest
-      command: ["metrics-sink"]
-      inputs: ["alert-processor"]
-      health_check: "/health"
-      health_port: 8085
-      env:
-        PROMETHEUS_ENDPOINT: "http://prometheus:9090/api/v1/write"
+        DESTINATION: "analytics_db"
+        BATCH_MODE: "true"

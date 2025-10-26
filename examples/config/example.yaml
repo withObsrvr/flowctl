@@ -1,0 +1,59 @@
+# Example configuration file for pipelines
+# This file demonstrates configuration structure for pipeline components
+
+# Common settings
+common:
+  log_level: info
+  metrics_enabled: true
+  health_check_interval: 30s
+
+# Source configurations
+sources:
+  kafka:
+    brokers:
+      - localhost:9092
+    topics:
+      - events
+      - transactions
+    consumer_group: flowctl-pipeline
+    
+  file:
+    watch_directory: /data/input
+    file_pattern: "*.json"
+    poll_interval: 5s
+
+# Processor configurations  
+processors:
+  transformer:
+    rules:
+      - type: filter
+        condition: "amount > 100"
+      - type: enrich
+        fields:
+          processed_at: "now()"
+          processor_version: "1.0"
+    
+  validator:
+    schema: /schemas/event.json
+    strict_mode: true
+
+# Sink configurations
+sinks:
+  database:
+    type: postgresql
+    connection_string: "postgres://user:pass@localhost/db"
+    table: processed_events
+    batch_size: 100
+    
+  file:
+    output_directory: /data/output
+    format: jsonl
+    compression: gzip
+
+# Pipeline-specific settings
+pipeline:
+  checkpoint_interval: 60s
+  error_handling:
+    strategy: retry
+    max_retries: 3
+    backoff: exponential

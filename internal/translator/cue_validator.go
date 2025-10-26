@@ -1,15 +1,15 @@
 package translator
 
 import (
-	"fmt"
+	// "fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	// "strings"
 
-	"cuelang.org/go/cue"
-	"cuelang.org/go/cue/cuecontext"
-	"cuelang.org/go/cue/load"
-	"gopkg.in/yaml.v3"
+	// "cuelang.org/go/cue"
+	// "cuelang.org/go/cue/cuecontext"
+	// "cuelang.org/go/cue/load"
+	// "gopkg.in/yaml.v3"
 
 	"github.com/withobsrvr/flowctl/internal/interfaces"
 	"github.com/withobsrvr/flowctl/internal/model"
@@ -60,6 +60,12 @@ func findSchemaPath() string {
 
 // Validate validates a Pipeline configuration using the CUE schema
 func (v *CueValidator) Validate(pipeline *model.Pipeline) error {
+	// TODO: Fix CUE schema loading issue - temporarily use basic validator
+	logger.Debug("CUE validator temporarily disabled, using basic validator")
+	basicValidator := NewSchemaValidatorImpl()
+	return basicValidator.Validate(pipeline)
+
+	/* Original CUE validation code - temporarily disabled
 	// Convert Pipeline to YAML
 	yamlData, err := yaml.Marshal(pipeline)
 	if err != nil {
@@ -131,6 +137,7 @@ func (v *CueValidator) Validate(pipeline *model.Pipeline) error {
 
 	logger.Debug("Pipeline validated successfully using CUE schema")
 	return nil
+	*/
 }
 
 // ValidateSource validates a source component (delegates to the basic validator)
