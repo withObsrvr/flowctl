@@ -77,7 +77,7 @@ func (g *DockerComposeGenerator) Generate(pipeline *model.Pipeline, opts model.T
 		serviceName := sanitizeServiceName(src.ID)
 		service := DockerComposeService{
 			Image:         getImageRef(src.Image, opts.RegistryPrefix),
-			ContainerName: fmt.Sprintf("%s-%s", opts.ResourcePrefix, serviceName),
+			ContainerName: getContainerName(serviceName, opts.ResourcePrefix),
 			Command:       src.Command,
 			Environment:   mergeEnvs(src.Env, opts.EnvVars),
 			Networks:      []string{"pipeline"},
@@ -136,7 +136,7 @@ func (g *DockerComposeGenerator) Generate(pipeline *model.Pipeline, opts model.T
 		serviceName := sanitizeServiceName(proc.ID)
 		service := DockerComposeService{
 			Image:         getImageRef(proc.Image, opts.RegistryPrefix),
-			ContainerName: fmt.Sprintf("%s-%s", opts.ResourcePrefix, serviceName),
+			ContainerName: getContainerName(serviceName, opts.ResourcePrefix),
 			Command:       proc.Command,
 			Environment:   mergeEnvs(proc.Env, opts.EnvVars),
 			Networks:      []string{"pipeline"},
@@ -210,7 +210,7 @@ func (g *DockerComposeGenerator) Generate(pipeline *model.Pipeline, opts model.T
 		serviceName := sanitizeServiceName(sink.ID)
 		service := DockerComposeService{
 			Image:         getImageRef(sink.Image, opts.RegistryPrefix),
-			ContainerName: fmt.Sprintf("%s-%s", opts.ResourcePrefix, serviceName),
+			ContainerName: getContainerName(serviceName, opts.ResourcePrefix),
 			Command:       sink.Command,
 			Environment:   mergeEnvs(sink.Env, opts.EnvVars),
 			Networks:      []string{"pipeline"},
@@ -290,7 +290,7 @@ func (g *DockerComposeGenerator) Generate(pipeline *model.Pipeline, opts model.T
 		serviceName := sanitizeServiceName(pipelineComp.ID)
 		service := DockerComposeService{
 			Image:         getImageRef(pipelineComp.Image, opts.RegistryPrefix),
-			ContainerName: fmt.Sprintf("%s-%s", opts.ResourcePrefix, serviceName),
+			ContainerName: getContainerName(serviceName, opts.ResourcePrefix),
 			Command:       pipelineComp.Command,
 			Environment:   mergeEnvs(pipelineComp.Env, opts.EnvVars),
 			Networks:      []string{"pipeline"},
@@ -341,9 +341,14 @@ func (g *DockerComposeGenerator) Generate(pipeline *model.Pipeline, opts model.T
 			for i, v := range pipelineComp.Volumes {
 				volString := ""
 				if v.HostPath != "" {
-					volString = fmt.Sprintf("%s:%s", v.HostPath, v.ContainerPath)
+					// Bind mount: prefer ContainerPath, fall back to MountPath
+					targetPath := v.ContainerPath
+					if targetPath == "" {
+						targetPath = v.MountPath
+					}
+					volString = fmt.Sprintf("%s:%s", v.HostPath, targetPath)
 				} else if v.MountPath != "" || v.ContainerPath != "" {
-					// Use MountPath if set, otherwise ContainerPath
+					// Named volume: prefer MountPath, fall back to ContainerPath
 					targetPath := v.MountPath
 					if targetPath == "" {
 						targetPath = v.ContainerPath
@@ -469,6 +474,14 @@ func getImageRef(image string, registryPrefix string) string {
 		return image
 	}
 	return registryPrefix + "/" + image
+}
+
+// getContainerName builds the container name with optional prefix
+func getContainerName(serviceName string, prefix string) string {
+	if prefix == "" {
+		return serviceName
+	}
+	return fmt.Sprintf("%s-%s", prefix, serviceName)
 }
 
 // mergeEnvs merges component-specific and global environment variables
