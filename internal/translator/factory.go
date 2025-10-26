@@ -21,11 +21,6 @@ func NewDockerComposeGenerator() interfaces.Generator {
 	return generator.NewDockerComposeGenerator()
 }
 
-// NewKubernetesGenerator creates a Kubernetes generator
-func NewKubernetesGenerator() interfaces.Generator {
-	return generator.NewKubernetesGenerator()
-}
-
 // NewLocalGenerator creates a local execution generator based on configuration
 func NewLocalGenerator() interfaces.Generator {
 	// Load global config to determine which generator to use
