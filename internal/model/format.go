@@ -6,10 +6,6 @@ type Format string
 const (
 	// DockerCompose format generates Docker Compose YAML
 	DockerCompose Format = "docker-compose"
-	// Kubernetes format generates Kubernetes manifests
-	Kubernetes Format = "kubernetes"
-	// Nomad format generates Nomad job specifications
-	Nomad Format = "nomad"
 	// Local format for local execution (no container orchestration)
 	Local Format = "local"
 )

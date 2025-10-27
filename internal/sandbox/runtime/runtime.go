@@ -94,18 +94,11 @@ func NewRuntime(cfg *Config) (*Runtime, error) {
 		containers: make(map[string]*Container),
 	}
 
-	// Determine container command
+	// Determine container command (always uses system runtime)
 	var err error
 	rt.containerCmd, err = rt.getContainerCommand()
 	if err != nil {
 		return nil, fmt.Errorf("failed to determine container command: %w", err)
-	}
-
-	// Ensure bundled runtime is available if needed
-	if !cfg.UseSystemRuntime {
-		if err := rt.ensureBundledRuntime(); err != nil {
-			return nil, fmt.Errorf("failed to setup bundled runtime: %w\n\nThe bundled runtime feature is not yet implemented. Please use the --use-system-runtime flag to use your system's Docker or nerdctl instead.\n\nExample: flowctl sandbox start --use-system-runtime --pipeline pipeline.yaml --services sandbox.yaml", err)
-		}
 	}
 
 	// Perform pre-flight checks
@@ -135,58 +128,17 @@ func GetExistingRuntime() (*Runtime, error) {
 }
 
 // getContainerCommand determines the container command to use
+// Always requires a system-installed Docker or nerdctl
 func (r *Runtime) getContainerCommand() (string, error) {
-	if r.config.UseSystemRuntime {
-		// Try docker first, then nerdctl
-		if _, err := exec.LookPath("docker"); err == nil {
-			return "docker", nil
-		}
-		if _, err := exec.LookPath("nerdctl"); err == nil {
-			return "nerdctl", nil
-		}
-		return "", fmt.Errorf("no system container runtime found (docker or nerdctl).\n\nPlease install either Docker or nerdctl:\n- Docker: https://docs.docker.com/get-docker/\n- nerdctl: https://github.com/containerd/nerdctl\n\nFor NixOS users, add to your configuration.nix:\n  environment.systemPackages = with pkgs; [ docker ];")
+	// Try docker first, then nerdctl
+	if _, err := exec.LookPath("docker"); err == nil {
+		return "docker", nil
+	}
+	if _, err := exec.LookPath("nerdctl"); err == nil {
+		return "nerdctl", nil
 	}
 
-	// Use bundled nerdctl
-	bundledPath := filepath.Join(os.Getenv("HOME"), ".flowctl", "runtime", "bin", "nerdctl")
-	return bundledPath, nil
-}
-
-// ensureBundledRuntime ensures the bundled runtime is available
-func (r *Runtime) ensureBundledRuntime() error {
-	runtimeDir := filepath.Join(os.Getenv("HOME"), ".flowctl", "runtime")
-	binDir := filepath.Join(runtimeDir, "bin")
-	nerdctlPath := filepath.Join(binDir, "nerdctl")
-
-	// Check if already exists
-	if _, err := os.Stat(nerdctlPath); err == nil {
-		return nil
-	}
-
-	logger.Info("Setting up bundled container runtime")
-
-	// Create directories
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		return fmt.Errorf("failed to create runtime directory: %w", err)
-	}
-
-	// Download and extract runtime (simplified - in real implementation, would download actual binaries)
-	// For now, create a placeholder
-	if err := r.downloadBundledRuntime(binDir); err != nil {
-		return fmt.Errorf("failed to download bundled runtime: %w", err)
-	}
-
-	return nil
-}
-
-// downloadBundledRuntime downloads the bundled runtime
-func (r *Runtime) downloadBundledRuntime(binDir string) error {
-	// TODO: This is a placeholder implementation
-	// The actual implementation will download nerdctl and containerd binaries
-	logger.Info("Downloading bundled runtime binaries")
-	
-	// For now, return an error indicating this feature is not yet available
-	return fmt.Errorf("bundled runtime download is not yet implemented. Please use --use-system-runtime flag with your system's Docker or nerdctl")
+	return "", fmt.Errorf("no container runtime found (docker or nerdctl).\n\nPlease install either Docker or nerdctl:\n- Docker: https://docs.docker.com/get-docker/\n- nerdctl: https://github.com/containerd/nerdctl\n\nFor NixOS users, add to your configuration.nix:\n  environment.systemPackages = with pkgs; [ docker ];")
 }
 
 // performPreflightChecks validates that we can access the container runtime

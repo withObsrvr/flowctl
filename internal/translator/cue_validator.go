@@ -1,15 +1,8 @@
 package translator
 
 import (
-	// "fmt"
 	"os"
 	"path/filepath"
-	// "strings"
-
-	// "cuelang.org/go/cue"
-	// "cuelang.org/go/cue/cuecontext"
-	// "cuelang.org/go/cue/load"
-	// "gopkg.in/yaml.v3"
 
 	"github.com/withobsrvr/flowctl/internal/interfaces"
 	"github.com/withobsrvr/flowctl/internal/model"
@@ -58,86 +51,12 @@ func findSchemaPath() string {
 	return possiblePaths[0]
 }
 
-// Validate validates a Pipeline configuration using the CUE schema
+// Validate validates a Pipeline configuration
+// Currently uses basic YAML validation. CUE schema validation may be added in the future.
 func (v *CueValidator) Validate(pipeline *model.Pipeline) error {
-	// TODO: Fix CUE schema loading issue - temporarily use basic validator
-	logger.Debug("CUE validator temporarily disabled, using basic validator")
+	logger.Debug("Using basic YAML validator")
 	basicValidator := NewSchemaValidatorImpl()
 	return basicValidator.Validate(pipeline)
-
-	/* Original CUE validation code - temporarily disabled
-	// Convert Pipeline to YAML
-	yamlData, err := yaml.Marshal(pipeline)
-	if err != nil {
-		return fmt.Errorf("failed to marshal pipeline to YAML: %w", err)
-	}
-
-	// Create CUE context
-	ctx := cuecontext.New()
-
-	// Load CUE schema using absolute path to schema file
-	schemaFile := filepath.Join(v.schemaPath, "schema.cue")
-	
-	loadConfig := &load.Config{
-		ModuleRoot: v.schemaPath,
-		Module:     "github.com/withobsrvr/flowctl/schemas/cue",
-	}
-
-	entrypoints := []string{
-		schemaFile,
-	}
-
-	buildInstances := load.Instances(entrypoints, loadConfig)
-	if len(buildInstances) == 0 {
-		logger.Warn("Failed to load CUE schema, falling back to basic validator", 
-			zap.String("path", v.schemaPath))
-		// Fall back to basic validator
-		basicValidator := NewSchemaValidatorImpl()
-		return basicValidator.Validate(pipeline)
-	}
-
-	schemaInstance := buildInstances[0]
-	if schemaInstance.Err != nil {
-		return fmt.Errorf("CUE schema error: %w", schemaInstance.Err)
-	}
-
-	// Build the CUE value from the schema
-	schemaValue := ctx.BuildInstance(schemaInstance)
-	if schemaValue.Err() != nil {
-		return fmt.Errorf("failed to build CUE schema: %w", schemaValue.Err())
-	}
-
-	// Parse the YAML data into CUE
-	dataValue := ctx.CompileBytes(yamlData)
-	if dataValue.Err() != nil {
-		return fmt.Errorf("failed to compile pipeline data: %w", dataValue.Err())
-	}
-
-	// Validate the YAML data against the schema
-	unified := schemaValue.Unify(dataValue)
-	if err := unified.Validate(cue.Concrete(true)); err != nil {
-		// Improve error messages
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "#Pipeline") {
-			errMsg = strings.Replace(errMsg, "#Pipeline", "Pipeline", -1)
-		}
-		if strings.Contains(errMsg, "field not allowed") {
-			errMsg = strings.Replace(errMsg, "field not allowed", "unexpected field provided", -1)
-		}
-		
-		// Format the error more clearly
-		lines := strings.Split(errMsg, "\n")
-		if len(lines) > 0 {
-			mainError := lines[0]
-			return fmt.Errorf("pipeline validation error: %s", mainError)
-		}
-		
-		return fmt.Errorf("pipeline validation error: %v", err)
-	}
-
-	logger.Debug("Pipeline validated successfully using CUE schema")
-	return nil
-	*/
 }
 
 // ValidateSource validates a source component (delegates to the basic validator)
