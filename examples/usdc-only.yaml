@@ -1,0 +1,27 @@
+apiVersion: flowctl.io/v1alpha1
+kind: QuickstartPipeline
+metadata:
+  name: usdc-indexer
+  description: Index only USDC balances on Stellar testnet
+
+spec:
+  source:
+    type: stellar-live-source-datalake
+    network: testnet
+    ledgers:
+      start: 3
+      end: 100000
+
+  filters:
+    assets:
+      - code: USDC
+        issuer: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+
+  processor:
+    type: account-balance
+    batchSize: 5000
+
+  consumer:
+    type: duckdb
+    database:
+      path: ./usdc_balances.duckdb

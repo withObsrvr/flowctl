@@ -1,0 +1,25 @@
+apiVersion: flowctl.io/v1alpha1
+kind: QuickstartPipeline
+metadata:
+  name: all-assets-indexer
+  description: Index ALL asset balances on Stellar testnet
+
+spec:
+  source:
+    type: stellar-live-source-datalake
+    network: testnet
+    ledgers:
+      start: 3
+      end: 10000  # Small range for testing
+
+  filters:
+    indexAll: true  # No filtering, index everything
+
+  processor:
+    type: account-balance
+    batchSize: 5000
+
+  consumer:
+    type: duckdb
+    database:
+      path: ./all_balances.duckdb

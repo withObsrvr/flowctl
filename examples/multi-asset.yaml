@@ -1,0 +1,36 @@
+apiVersion: flowctl.io/v1alpha1
+kind: QuickstartPipeline
+metadata:
+  name: multi-asset-indexer
+  description: Index multiple specific assets (USDC, AQUA, yXLM)
+
+spec:
+  source:
+    type: stellar-live-source-datalake
+    network: testnet
+    ledgers:
+      start: 3
+      end: 100000
+
+  filters:
+    assets:
+      - code: USDC
+        issuer: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+        description: "Circle USDC"
+
+      - code: AQUA
+        issuer: GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA
+        description: "Aquarius token"
+
+      - code: yXLM
+        issuer: GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55
+        description: "Ultra Stellar yXLM"
+
+  processor:
+    type: account-balance
+    batchSize: 5000
+
+  consumer:
+    type: duckdb
+    database:
+      path: ./multi_asset_balances.duckdb
