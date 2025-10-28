@@ -81,6 +81,13 @@ cd ttp-processor-demo/stellar-live-source-datalake && make build && cd ../..
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/service-account-key.json"
 ```
 
+**Optional:** If you cloned the repositories to a non-standard location:
+```bash
+export TTP_PROCESSOR_DEMO_DIR="/custom/path/to/ttp-processor-demo"
+```
+
+**Note:** By default, `flowctl` looks for binaries in `../ttp-processor-demo` (sibling directory). The environment variable is only needed for custom setups.
+
 ### 3. Create Configuration
 
 Create `quickstart.yaml`:

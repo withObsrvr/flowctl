@@ -256,8 +256,26 @@ type binaries struct {
 }
 
 func findBinaries() (*binaries, error) {
-	// Look for binaries in common locations
-	baseDir := "/home/tillman/Documents/ttp-processor-demo"
+	// Look for binaries in configurable location
+	// Priority: 1. Environment variable, 2. Sibling directory, 3. Current directory
+	baseDir := os.Getenv("TTP_PROCESSOR_DEMO_DIR")
+
+	if baseDir == "" {
+		// Try sibling directory (common when both repos are cloned side-by-side)
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get working directory: %w", err)
+		}
+
+		// Try ../ttp-processor-demo (sibling directory)
+		siblingDir := filepath.Join(filepath.Dir(cwd), "ttp-processor-demo")
+		if _, err := os.Stat(siblingDir); err == nil {
+			baseDir = siblingDir
+		} else {
+			// Fall back to current directory
+			baseDir = cwd
+		}
+	}
 
 	bins := &binaries{
 		source:    filepath.Join(baseDir, "stellar-live-source-datalake/go/stellar-live-source-datalake"),
@@ -265,15 +283,30 @@ func findBinaries() (*binaries, error) {
 		consumer:  filepath.Join(baseDir, "duckdb-consumer/bin/duckdb-consumer"),
 	}
 
-	// Verify all binaries exist
+	// Verify all binaries exist with helpful error messages
 	if _, err := os.Stat(bins.source); err != nil {
-		return nil, fmt.Errorf("stellar-live-source-datalake binary not found at %s: %w", bins.source, err)
+		return nil, fmt.Errorf("stellar-live-source-datalake binary not found at %s\n\n"+
+			"Please ensure:\n"+
+			"  1. The ttp-processor-demo repository is cloned\n"+
+			"  2. Binaries are built (cd stellar-live-source-datalake && make build)\n"+
+			"  3. Set TTP_PROCESSOR_DEMO_DIR environment variable if needed\n\n"+
+			"Error: %w", bins.source, err)
 	}
 	if _, err := os.Stat(bins.processor); err != nil {
-		return nil, fmt.Errorf("account-balance-processor binary not found at %s: %w", bins.processor, err)
+		return nil, fmt.Errorf("account-balance-processor binary not found at %s\n\n"+
+			"Please ensure:\n"+
+			"  1. The ttp-processor-demo repository is cloned\n"+
+			"  2. Binary is built (cd account-balance-processor && make build)\n"+
+			"  3. Set TTP_PROCESSOR_DEMO_DIR environment variable if needed\n\n"+
+			"Error: %w", bins.processor, err)
 	}
 	if _, err := os.Stat(bins.consumer); err != nil {
-		return nil, fmt.Errorf("duckdb-consumer binary not found at %s: %w", bins.consumer, err)
+		return nil, fmt.Errorf("duckdb-consumer binary not found at %s\n\n"+
+			"Please ensure:\n"+
+			"  1. The ttp-processor-demo repository is cloned\n"+
+			"  2. Binary is built (cd duckdb-consumer && make build)\n"+
+			"  3. Set TTP_PROCESSOR_DEMO_DIR environment variable if needed\n\n"+
+			"Error: %w", bins.consumer, err)
 	}
 
 	return bins, nil
