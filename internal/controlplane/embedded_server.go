@@ -175,7 +175,28 @@ func (e *EmbeddedControlPlane) WaitForComponent(componentID string, timeout time
 		}
 
 		for _, service := range services {
-			if service.ServiceId == componentID && service.IsHealthy {
+			// FIXED: Check component_id field (from pipeline YAML) instead of service_id
+			// Backward compatibility: if component_id is empty, fall back to service_id matching
+			matched := false
+			if service.ComponentId != "" {
+				// New behavior: match by component_id
+				matched = service.ComponentId == componentID
+			} else {
+				// Legacy behavior: match by service_id when component_id not set
+				matched = service.ServiceId == componentID
+			}
+
+			if matched && service.IsHealthy {
+				logger.Debug("Found registered component",
+					zap.String("component_id", service.ComponentId),
+					zap.String("service_id", service.ServiceId),
+					zap.String("match_mode", func() string {
+						if service.ComponentId != "" {
+							return "component_id"
+						}
+						return "service_id (legacy)"
+					}()),
+					zap.Bool("is_healthy", service.IsHealthy))
 				return nil
 			}
 		}
@@ -183,7 +204,21 @@ func (e *EmbeddedControlPlane) WaitForComponent(componentID string, timeout time
 		time.Sleep(1 * time.Second)
 	}
 
-	return fmt.Errorf("timeout waiting for component %s to register", componentID)
+	// Better error message: show what we actually found
+	registeredComponents := []string{}
+	services, _ := e.GetServiceList()
+	for _, service := range services {
+		if service.ComponentId != "" {
+			registeredComponents = append(registeredComponents,
+				fmt.Sprintf("%s (component_id, healthy=%v)", service.ComponentId, service.IsHealthy))
+		} else {
+			registeredComponents = append(registeredComponents,
+				fmt.Sprintf("%s (service_id/legacy, healthy=%v)", service.ServiceId, service.IsHealthy))
+		}
+	}
+
+	return fmt.Errorf("timeout waiting for component %s to register (found: %v)",
+		componentID, registeredComponents)
 }
 
 // IsStarted returns true if the control plane is started

@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>flowctl - Build trustworthy data pipelines for Stellar</title>
+    <meta name="description" content="Production-grade data pipeline orchestration for Stellar blockchain with Obsrvr Data Culture principles. Query Stellar data with SQL.">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .code-box {
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 1.5rem;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+        }
+        .copy-btn {
+            transition: all 0.2s;
+        }
+        .copy-btn:hover {
+            transform: translateY(-1px);
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Header -->
+    <header class="bg-white shadow-sm">
+        <div class="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+                <svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span class="text-xl font-bold text-gray-900">flowctl</span>
+            </div>
+            <nav class="flex space-x-6 text-sm">
+                <a href="#install" class="text-gray-600 hover:text-gray-900">Install</a>
+                <a href="#quickstarts" class="text-gray-600 hover:text-gray-900">Quickstarts</a>
+                <a href="https://github.com/withobsrvr/flowctl" class="text-gray-600 hover:text-gray-900">GitHub</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="gradient-bg text-white py-20">
+        <div class="max-w-4xl mx-auto px-4 text-center">
+            <h1 class="text-5xl font-bold mb-6">
+                Build Trustworthy Data Pipelines<br>for Stellar
+            </h1>
+            <p class="text-xl text-purple-100 mb-12">
+                Production-grade pipeline orchestration with Obsrvr Data Culture principles.<br>
+                Query Stellar data with SQL. Own your data infrastructure.
+            </p>
+
+            <!-- Install Command Box -->
+            <div id="install" class="bg-white/10 backdrop-blur-lg rounded-lg p-8 max-w-2xl mx-auto">
+                <div class="flex justify-center space-x-4 mb-6">
+                    <button onclick="switchPlatform('linux')" id="tab-linux" class="px-4 py-2 rounded-lg font-medium transition tab-button">
+                        Linux
+                    </button>
+                    <button onclick="switchPlatform('macos')" id="tab-macos" class="px-4 py-2 rounded-lg font-medium transition tab-button">
+                        macOS
+                    </button>
+                </div>
+
+                <div id="install-linux" class="install-content">
+                    <div class="code-box text-left relative">
+                        <code class="text-green-400 text-sm">
+                            <span class="text-gray-500"># Install Go 1.21+ first, then:</span><br>
+                            go install github.com/withobsrvr/flowctl@latest
+                        </code>
+                        <button onclick="copyToClipboard('go install github.com/withobsrvr/flowctl@latest')"
+                                class="copy-btn absolute top-4 right-4 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded text-sm font-medium">
+                            Copy
+                        </button>
+                    </div>
+                </div>
+
+                <div id="install-macos" class="install-content hidden">
+                    <div class="code-box text-left relative">
+                        <code class="text-green-400 text-sm">
+                            <span class="text-gray-500"># Install Go 1.21+ first, then:</span><br>
+                            go install github.com/withobsrvr/flowctl@latest
+                        </code>
+                        <button onclick="copyToClipboard('go install github.com/withobsrvr/flowctl@latest')"
+                                class="copy-btn absolute top-4 right-4 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded text-sm font-medium">
+                            Copy
+                        </button>
+                    </div>
+                </div>
+
+                <p class="text-purple-100 text-sm mt-4">
+                    Requires <a href="https://go.dev/doc/install" class="underline hover:text-white">Go 1.21+</a> ·
+                    <a href="https://github.com/withobsrvr/flowctl#building-from-source" class="underline hover:text-white">Build from source</a>
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Obsrvr Data Culture -->
+    <section class="py-16 bg-white">
+        <div class="max-w-4xl mx-auto px-4">
+            <h2 class="text-3xl font-bold text-center mb-4 text-gray-900">Obsrvr Data Culture</h2>
+            <p class="text-center text-gray-600 mb-12">Data systems that humans can trust and understand</p>
+
+            <div class="grid md:grid-cols-2 gap-8 max-w-3xl mx-auto">
+                <div class="text-center p-6 bg-purple-50 rounded-lg">
+                    <div class="text-2xl mb-2">🔍</div>
+                    <h3 class="font-semibold mb-2">Provenance over Performance</h3>
+                    <p class="text-gray-600 text-sm">Track where data came from, how it was transformed, and who changed it.</p>
+                </div>
+
+                <div class="text-center p-6 bg-purple-50 rounded-lg">
+                    <div class="text-2xl mb-2">📐</div>
+                    <h3 class="font-semibold mb-2">Clarity over Complexity</h3>
+                    <p class="text-gray-600 text-sm">Explicit schemas, intentional design, human-readable tables.</p>
+                </div>
+
+                <div class="text-center p-6 bg-purple-50 rounded-lg">
+                    <div class="text-2xl mb-2">🔄</div>
+                    <h3 class="font-semibold mb-2">Reproducibility over Convenience</h3>
+                    <p class="text-gray-600 text-sm">Same input → same output. Every time. Deterministic processing.</p>
+                </div>
+
+                <div class="text-center p-6 bg-purple-50 rounded-lg">
+                    <div class="text-2xl mb-2">✅</div>
+                    <h3 class="font-semibold mb-2">Trust, not Throughput</h3>
+                    <p class="text-gray-600 text-sm">Quality checks, validation, and correctness over raw speed.</p>
+                </div>
+            </div>
+
+            <div class="text-center mt-8">
+                <a href="https://github.com/withobsrvr/ttp-processor-demo/blob/main/ducklake-ingestion-processor/docs/OBSRVR_DATA_CULTURE.md"
+                   class="text-purple-600 hover:text-purple-700 font-medium">
+                    Read the full Data Culture Playbook →
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Quickstarts -->
+    <section id="quickstarts" class="py-16 bg-gray-50">
+        <div class="max-w-4xl mx-auto px-4">
+            <h2 class="text-3xl font-bold text-center mb-4 text-gray-900">Production-Ready Quickstarts</h2>
+            <p class="text-center text-gray-600 mb-12">Pre-built pipelines you can run in minutes</p>
+
+            <div class="grid md:grid-cols-3 gap-6">
+                <!-- Asset Balance Indexer -->
+                <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 hover:border-purple-300 transition">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="font-semibold text-lg">Asset Balance Indexer</h3>
+                        <span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">Ready</span>
+                    </div>
+                    <p class="text-gray-600 text-sm mb-4">
+                        Index any Stellar asset (USDC, AQUA, etc.) and query balances with SQL.
+                    </p>
+                    <div class="text-xs text-gray-500 mb-4">
+                        <div>✓ DuckDB storage</div>
+                        <div>✓ Testnet & Mainnet</div>
+                        <div>✓ Filter by asset/issuer</div>
+                    </div>
+                    <a href="https://github.com/withobsrvr/flowctl/tree/main/examples"
+                       class="text-purple-600 hover:text-purple-700 text-sm font-medium">
+                        View Guide →
+                    </a>
+                </div>
+
+                <!-- Contract Data Processor -->
+                <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 hover:border-purple-300 transition">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="font-semibold text-lg">Contract Data Processor</h3>
+                        <span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">Available</span>
+                    </div>
+                    <p class="text-gray-600 text-sm mb-4">
+                        Process Soroban smart contract data with full lineage tracking.
+                    </p>
+                    <div class="text-xs text-gray-500 mb-4">
+                        <div>✓ Contract invocations</div>
+                        <div>✓ Storage changes</div>
+                        <div>✓ Event streaming</div>
+                    </div>
+                    <a href="https://github.com/withobsrvr/ttp-processor-demo/tree/main/contract-data-processor"
+                       class="text-purple-600 hover:text-purple-700 text-sm font-medium">
+                        View Docs →
+                    </a>
+                </div>
+
+                <!-- DuckLake Ingestion -->
+                <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 hover:border-purple-300 transition">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="font-semibold text-lg">DuckLake Ingestion</h3>
+                        <span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">Production</span>
+                    </div>
+                    <p class="text-gray-600 text-sm mb-4">
+                        Full-featured data lakehouse with metadata, quality checks, and lineage.
+                    </p>
+                    <div class="text-xs text-gray-500 mb-4">
+                        <div>✓ 19 quality checks</div>
+                        <div>✓ Metadata infrastructure</div>
+                        <div>✓ Schema versioning</div>
+                    </div>
+                    <a href="https://github.com/withobsrvr/ttp-processor-demo/tree/main/ducklake-ingestion-obsrvr"
+                       class="text-purple-600 hover:text-purple-700 text-sm font-medium">
+                        View Docs →
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Example: Asset Balance Quickstart -->
+    <section class="py-16 bg-white">
+        <div class="max-w-4xl mx-auto px-4">
+            <h2 class="text-3xl font-bold text-center mb-4 text-gray-900">Example: Asset Balance Indexer</h2>
+            <p class="text-center text-gray-600 mb-12">One command to index USDC balances and query with SQL</p>
+
+            <div class="grid md:grid-cols-2 gap-6">
+                <!-- Config Example -->
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3">1. Create quickstart.yaml</h3>
+                    <div class="code-box text-xs">
+                        <code class="text-gray-300">
+<span class="text-blue-400">spec:</span><br>
+  <span class="text-blue-400">source:</span><br>
+    <span class="text-green-400">network:</span> testnet<br>
+    <span class="text-green-400">ledgers:</span><br>
+      <span class="text-green-400">start:</span> 3<br>
+      <span class="text-green-400">end:</span> 10000<br>
+<br>
+  <span class="text-blue-400">filters:</span><br>
+    <span class="text-green-400">assets:</span><br>
+      - <span class="text-green-400">code:</span> USDC<br>
+        <span class="text-green-400">issuer:</span> GBBD47IF6...
+                        </code>
+                    </div>
+                </div>
+
+                <!-- Run Command -->
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3">2. Run the pipeline</h3>
+                    <div class="code-box text-xs mb-4">
+                        <code class="text-green-400">
+$ flowctl quickstart run<br>
+<span class="text-gray-400">Starting pipeline...</span><br>
+<span class="text-green-400">✓</span> Source ready<br>
+<span class="text-green-400">✓</span> Processor ready<br>
+<span class="text-green-400">✓</span> Consumer ready<br>
+<span class="text-gray-400">Processing 10,000 ledgers...</span>
+                        </code>
+                    </div>
+
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3">3. Query the results</h3>
+                    <div class="code-box text-xs">
+                        <code class="text-blue-400">
+SELECT account_id, balance<br>
+FROM account_balances<br>
+WHERE asset_code = 'USDC'<br>
+ORDER BY balance DESC;
+                        </code>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Architecture & Components -->
+    <section class="py-16 bg-gray-50">
+        <div class="max-w-4xl mx-auto px-4">
+            <h2 class="text-3xl font-bold text-center mb-12 text-gray-900">How It Works</h2>
+
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="flex flex-col items-center text-center">
+                    <div class="w-16 h-16 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center text-2xl mb-4">
+                        📡
+                    </div>
+                    <h3 class="font-semibold mb-2">Data Sources</h3>
+                    <p class="text-gray-600 text-sm">
+                        Stream from Stellar RPC, GCS data lakes, or local files. Backfill historical data.
+                    </p>
+                </div>
+
+                <div class="flex flex-col items-center text-center">
+                    <div class="w-16 h-16 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center text-2xl mb-4">
+                        ⚙️
+                    </div>
+                    <h3 class="font-semibold mb-2">Processors</h3>
+                    <p class="text-gray-600 text-sm">
+                        Extract balances, contracts, operations, or build custom processors. Composable pipeline stages.
+                    </p>
+                </div>
+
+                <div class="flex flex-col items-center text-center">
+                    <div class="w-16 h-16 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center text-2xl mb-4">
+                        💾
+                    </div>
+                    <h3 class="font-semibold mb-2">Consumers</h3>
+                    <p class="text-gray-600 text-sm">
+                        Write to DuckDB, PostgreSQL, Parquet, or custom destinations. Query with SQL.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section class="py-16 bg-white">
+        <div class="max-w-4xl mx-auto px-4">
+            <h2 class="text-3xl font-bold text-center mb-12 text-gray-900">Why flowctl?</h2>
+
+            <div class="grid md:grid-cols-2 gap-8">
+                <div class="flex space-x-4">
+                    <svg class="w-6 h-6 text-purple-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                    <div>
+                        <h3 class="font-semibold mb-2">Production Ready</h3>
+                        <p class="text-gray-600 text-sm">Health checks, graceful shutdown, comprehensive error handling. Tested with 1M+ ledgers.</p>
+                    </div>
+                </div>
+
+                <div class="flex space-x-4">
+                    <svg class="w-6 h-6 text-purple-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    <div>
+                        <h3 class="font-semibold mb-2">Fast & Reliable</h3>
+                        <p class="text-gray-600 text-sm">Process millions of ledgers in hours. 44+ ledgers/sec with automatic backpressure handling.</p>
+                    </div>
+                </div>
+
+                <div class="flex space-x-4">
+                    <svg class="w-6 h-6 text-purple-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                    </svg>
+                    <div>
+                        <h3 class="font-semibold mb-2">Fully Observable</h3>
+                        <p class="text-gray-600 text-sm">Metadata tables track datasets, quality checks, lineage, and schema changes. Full audit trail.</p>
+                    </div>
+                </div>
+
+                <div class="flex space-x-4">
+                    <svg class="w-6 h-6 text-purple-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+                    </svg>
+                    <div>
+                        <h3 class="font-semibold mb-2">Own Your Data</h3>
+                        <p class="text-gray-600 text-sm">Run locally or in your cloud. Export to Parquet, PostgreSQL, or any SQL database.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="gradient-bg text-white py-16">
+        <div class="max-w-4xl mx-auto px-4 text-center">
+            <h2 class="text-3xl font-bold mb-4">Ready to build?</h2>
+            <p class="text-purple-100 mb-8">Start with a quickstart or explore the full documentation.</p>
+            <div class="flex justify-center space-x-4">
+                <a href="https://github.com/withobsrvr/flowctl/tree/main/examples"
+                   class="inline-block bg-white text-purple-600 px-8 py-3 rounded-lg font-semibold hover:bg-purple-50 transition">
+                    View Quickstarts
+                </a>
+                <a href="https://github.com/withobsrvr/ttp-processor-demo/blob/main/ducklake-ingestion-processor/docs/OBSRVR_DATA_CULTURE.md"
+                   class="inline-block bg-purple-700 hover:bg-purple-800 text-white px-8 py-3 rounded-lg font-semibold transition">
+                    Read Data Culture
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-gray-900 text-gray-400 py-8">
+        <div class="max-w-4xl mx-auto px-4">
+            <div class="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
+                <div class="text-sm">
+                    © 2025 flowctl · Open Source · Apache 2.0 License
+                </div>
+                <div class="flex space-x-6 text-sm">
+                    <a href="https://github.com/withobsrvr/flowctl" class="hover:text-white">GitHub</a>
+                    <a href="https://github.com/withobsrvr/flowctl/tree/main/examples" class="hover:text-white">Quickstarts</a>
+                    <a href="https://github.com/withobsrvr/ttp-processor-demo" class="hover:text-white">Processors</a>
+                    <a href="https://github.com/withobsrvr/flowctl/issues" class="hover:text-white">Issues</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Platform switching
+        function switchPlatform(platform) {
+            // Hide all content
+            document.querySelectorAll('.install-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-button').forEach(el => {
+                el.classList.remove('bg-white/20', 'text-white');
+                el.classList.add('text-purple-200', 'hover:text-white');
+            });
+
+            // Show selected
+            document.getElementById('install-' + platform).classList.remove('hidden');
+            const tab = document.getElementById('tab-' + platform);
+            tab.classList.add('bg-white/20', 'text-white');
+            tab.classList.remove('text-purple-200', 'hover:text-white');
+        }
+
+        // Copy to clipboard
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                // Show feedback
+                const buttons = document.querySelectorAll('.copy-btn');
+                buttons.forEach(btn => {
+                    const originalText = btn.textContent;
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('bg-green-600');
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                        btn.classList.remove('bg-green-600');
+                    }, 2000);
+                });
+            });
+        }
+
+        // Initialize with Linux selected
+        switchPlatform('linux');
+    </script>
+</body>
+</html>

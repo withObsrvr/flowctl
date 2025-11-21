@@ -189,6 +189,7 @@ func (s *ControlPlaneServer) Register(ctx context.Context, info *pb.ServiceInfo)
 			ServiceType:   info.ServiceType,
 			IsHealthy:     true,
 			LastHeartbeat: timestamppb.New(now),
+			ComponentId:   info.ComponentId, // Copy component_id to status
 		},
 		LastSeen: now,
 	}
@@ -213,9 +214,16 @@ func (s *ControlPlaneServer) Register(ctx context.Context, info *pb.ServiceInfo)
 		}
 	}
 
+	// Log warning if component_id is missing (backward compatibility)
+	if info.ComponentId == "" {
+		logger.Warn("Service registered without component_id (legacy mode)",
+			zap.String("service_id", info.ServiceId))
+	}
+
 	// Log service registration
 	logger.Info("Service registered",
 		zap.String("service_id", info.ServiceId),
+		zap.String("component_id", info.ComponentId),
 		zap.String("service_type", info.ServiceType.String()),
 		zap.String("health_endpoint", info.HealthEndpoint),
 		zap.Strings("input_event_types", info.InputEventTypes),

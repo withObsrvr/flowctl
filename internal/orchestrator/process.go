@@ -357,6 +357,7 @@ func (p *ProcessOrchestrator) buildEnvironment(component *Component) []string {
 		fmt.Sprintf("FLOWCTL_ENDPOINT=%s", p.controlPlaneEndpoint),
 		"FLOWCTL_HEARTBEAT_INTERVAL=10s",
 		fmt.Sprintf("FLOWCTL_SERVICE_ID=%s", component.ID),
+		fmt.Sprintf("FLOWCTL_COMPONENT_ID=%s", component.ID), // Component ID for registration matching
 	)
 
 	// Add component-specific environment variables
