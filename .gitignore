@@ -31,3 +31,10 @@ examples/continuous.yaml
 # DB files
 *.duckdb
 *.duckdb.wal
+docs/component-distribution-analysis.md
+docs/shapes/bugfix-component-registration.md
+docs/shapes/phase1-oci-registry-support.md
+docs/shapes/phase2-publishing-automation.md
+.gitignore
+docs/shapes/phase4-discovery-management.md
+docs/shapes/phase3-development-mode.md

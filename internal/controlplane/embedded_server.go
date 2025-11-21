@@ -175,7 +175,12 @@ func (e *EmbeddedControlPlane) WaitForComponent(componentID string, timeout time
 		}
 
 		for _, service := range services {
-			if service.ServiceId == componentID && service.IsHealthy {
+			// FIXED: Check component_id field (from pipeline YAML) instead of service_id
+			if service.ComponentId == componentID && service.IsHealthy {
+				logger.Debug("Found registered component",
+					zap.String("component_id", componentID),
+					zap.String("service_id", service.ServiceId),
+					zap.Bool("is_healthy", service.IsHealthy))
 				return nil
 			}
 		}
@@ -183,7 +188,18 @@ func (e *EmbeddedControlPlane) WaitForComponent(componentID string, timeout time
 		time.Sleep(1 * time.Second)
 	}
 
-	return fmt.Errorf("timeout waiting for component %s to register", componentID)
+	// Better error message: show what we actually found
+	registeredComponents := []string{}
+	services, _ := e.GetServiceList()
+	for _, service := range services {
+		if service.ComponentId != "" {
+			registeredComponents = append(registeredComponents,
+				fmt.Sprintf("%s (healthy=%v)", service.ComponentId, service.IsHealthy))
+		}
+	}
+
+	return fmt.Errorf("timeout waiting for component %s to register (found: %v)",
+		componentID, registeredComponents)
 }
 
 // IsStarted returns true if the control plane is started
