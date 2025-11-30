@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -20,7 +21,8 @@ type Client struct {
 	sessionID     string
 	webhookSecret string
 	httpClient    *http.Client
-	ledgerCount   int64 // Atomic counter
+	ledgerCount   int64      // Atomic counter
+	logger        *log.Logger // Logger for heartbeat messages
 }
 
 // HeartbeatPayload is sent to console API
@@ -40,7 +42,13 @@ func NewClient(consoleURL, pipelineID, sessionID, webhookSecret string) *Client 
 		webhookSecret: webhookSecret,
 		httpClient:    &http.Client{Timeout: 10 * time.Second},
 		ledgerCount:   0,
+		logger:        log.New(log.Writer(), "[heartbeat] ", log.LstdFlags),
 	}
+}
+
+// SetLogger allows customizing the logger used by the heartbeat client
+func (c *Client) SetLogger(logger *log.Logger) {
+	c.logger = logger
 }
 
 // SetLedgerCount atomically updates the ledger counter
@@ -113,9 +121,9 @@ func (c *Client) StartHeartbeatLoop(ctx context.Context, interval time.Duration)
 		case <-ticker.C:
 			if err := c.SendHeartbeat(ctx, nil); err != nil {
 				// Log but don't crash - next heartbeat in N minutes
-				fmt.Printf("Heartbeat error: %v\n", err)
+				c.logger.Printf("Heartbeat error: %v", err)
 			} else {
-				fmt.Printf("Heartbeat sent: %d ledgers processed\n", c.GetLedgerCount())
+				c.logger.Printf("Heartbeat sent: %d ledgers processed", c.GetLedgerCount())
 			}
 		}
 	}

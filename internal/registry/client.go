@@ -218,6 +218,38 @@ func extractTar(r io.Reader, dest string) error {
 			return fmt.Errorf("invalid path in tar: %s", header.Name)
 		}
 
+		// Handle OCI whiteout files (deletions in upper layers)
+		// Reference: https://github.com/opencontainers/image-spec/blob/main/layer.md#whiteouts
+		baseName := filepath.Base(header.Name)
+		dirName := filepath.Dir(header.Name)
+
+		// Check for whiteout prefix (.wh.)
+		if strings.HasPrefix(baseName, ".wh.") {
+			// Handle opaque whiteout (.wh..wh..opq) - delete all files in directory
+			if baseName == ".wh..wh..opq" {
+				opaqueDir := filepath.Join(dest, dirName)
+				// Remove all contents of the directory
+				if err := os.RemoveAll(opaqueDir); err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("failed to apply opaque whiteout to %s: %w", opaqueDir, err)
+				}
+				// Recreate the directory
+				if err := os.MkdirAll(opaqueDir, 0755); err != nil {
+					return fmt.Errorf("failed to recreate directory after opaque whiteout %s: %w", opaqueDir, err)
+				}
+				continue
+			}
+
+			// Regular whiteout - delete the specific file
+			targetName := strings.TrimPrefix(baseName, ".wh.")
+			targetPath := filepath.Join(dest, dirName, targetName)
+
+			// Remove the file/directory indicated by the whiteout
+			if err := os.RemoveAll(targetPath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("failed to apply whiteout to %s: %w", targetPath, err)
+			}
+			continue
+		}
+
 		// Handle different file types
 		switch header.Typeflag {
 		case tar.TypeDir:
@@ -241,13 +273,25 @@ func extractTar(r io.Reader, dest string) error {
 
 			// Copy file contents
 			if _, err := io.Copy(outFile, tr); err != nil {
-				outFile.Close()
+				closeErr := outFile.Close()
+				if closeErr != nil {
+					return fmt.Errorf("failed to write file %s: %v; additionally, failed to close file: %w", target, err, closeErr)
+				}
 				return fmt.Errorf("failed to write file %s: %w", target, err)
 			}
-			outFile.Close()
+			if err := outFile.Close(); err != nil {
+				return fmt.Errorf("failed to close file %s: %w", target, err)
+			}
 
 		case tar.TypeSymlink:
 			// Create symlink
+			// Validate symlink target doesn't escape extraction directory
+			linkTarget := filepath.Join(filepath.Dir(target), header.Linkname)
+			cleanLinkTarget := filepath.Clean(linkTarget)
+			if !strings.HasPrefix(cleanLinkTarget, cleanDest+string(os.PathSeparator)) && cleanLinkTarget != cleanDest {
+				return fmt.Errorf("symlink target escapes extraction directory: %s -> %s", header.Name, header.Linkname)
+			}
+
 			// Ensure parent directory exists
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 				return fmt.Errorf("failed to create parent directory for symlink %s: %w", target, err)
@@ -264,6 +308,12 @@ func extractTar(r io.Reader, dest string) error {
 		case tar.TypeLink:
 			// Create hard link
 			linkTarget := filepath.Join(dest, header.Linkname)
+
+			// Validate hard link target doesn't escape extraction directory
+			cleanLinkTarget := filepath.Clean(linkTarget)
+			if !strings.HasPrefix(cleanLinkTarget, cleanDest+string(os.PathSeparator)) && cleanLinkTarget != cleanDest {
+				return fmt.Errorf("hard link target escapes extraction directory: %s -> %s", header.Name, header.Linkname)
+			}
 
 			// Ensure parent directory exists
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {

@@ -77,9 +77,7 @@ package pipeline
 	args?: [...string]
 
 	// Validation: must have either image or command (but not both)
-	_hasImage: image != _|_
-	_hasCommand: command != _|_
-	_validExecution: (_hasImage && !_hasCommand) || (!_hasImage && _hasCommand)
+	_validExecution: (image != _|_ && command == _|_) || (image == _|_ && command != _|_)
 	_validExecution: true
 
 	// Optional configuration parameters

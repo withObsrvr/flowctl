@@ -18,7 +18,7 @@
 ###############################################################################
 # Stage 1: Build the component binary
 ###############################################################################
-FROM golang:1.21-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Install build dependencies (if needed)
 # RUN apk add --no-cache git
@@ -39,7 +39,7 @@ ARG COMPONENT_NAME=your-component
 ARG VERSION=dev
 ARG COMMIT_SHA=unknown
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
     -ldflags="-s -w -X main.Version=${VERSION} -X main.CommitSHA=${COMMIT_SHA}" \
     -o ${COMPONENT_NAME} \
     ./cmd/${COMPONENT_NAME}
@@ -95,7 +95,7 @@ WORKDIR /app
 
 # Entrypoint - dynamically set based on build arg
 ARG COMPONENT_NAME=your-component
-ENTRYPOINT ["/app/${COMPONENT_NAME}"]
+ENTRYPOINT /app/${COMPONENT_NAME}
 
 # Default command arguments (can be overridden)
 CMD []

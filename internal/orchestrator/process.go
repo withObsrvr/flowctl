@@ -78,7 +78,7 @@ func (p *ProcessOrchestrator) StartComponent(ctx context.Context, component *Com
 	}
 
 	// Build command based on component type
-	cmd, err := p.buildCommand(component)
+	cmd, err := p.buildCommand(ctx, component)
 	if err != nil {
 		return fmt.Errorf("failed to build command for component %s: %w", component.ID, err)
 	}
@@ -325,12 +325,12 @@ func (p *ProcessOrchestrator) GetLogs(ctx context.Context, componentID string, f
 }
 
 // buildCommand builds the exec.Cmd for a component
-func (p *ProcessOrchestrator) buildCommand(component *Component) (*exec.Cmd, error) {
+func (p *ProcessOrchestrator) buildCommand(ctx context.Context, component *Component) (*exec.Cmd, error) {
 	var cmd *exec.Cmd
 
 	// If image is specified, pull and extract it
 	if component.Image != "" {
-		binaryPath, err := p.prepareImageBinary(context.Background(), component)
+		binaryPath, err := p.prepareImageBinary(ctx, component)
 		if err != nil {
 			return nil, fmt.Errorf("failed to prepare image: %w", err)
 		}
