@@ -38,3 +38,8 @@ docs/shapes/phase2-publishing-automation.md
 .gitignore
 docs/shapes/phase4-discovery-management.md
 docs/shapes/phase3-development-mode.md
+docs/internal-principles.md
+docs/component-image-spec.md
+docs/component-publishing-guide.md
+docs/shape-up-metrics-reporting.md
+docs/handoffs/component-registration-bugfix-handoff.md

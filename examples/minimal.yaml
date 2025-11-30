@@ -13,18 +13,14 @@ spec:
   sources:
     - id: mock-source
       type: source
-      image: alpine:latest
-      command: ["sh", "-c"]
-      args: ["while true; do echo '{\"timestamp\": \"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'\", \"value\": \"'$RANDOM'\"}'; sleep 1; done"]
+      command: ["sh", "-c", "while true; do echo '{\"timestamp\": \"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'\", \"value\": \"'$RANDOM'\"}'; sleep 1; done"]
       env:
         LOG_LEVEL: "info"
   
   processors:
     - id: pass-through
       type: processor
-      image: alpine:latest
-      command: ["sh", "-c"]
-      args: ["while read line; do echo \"[PROCESSED] $line\"; done"]
+      command: ["sh", "-c", "while read line; do echo \"[PROCESSED] $line\"; done"]
       inputs: ["mock-source"]
       env:
         LOG_LEVEL: "info"
@@ -32,9 +28,7 @@ spec:
   sinks:
     - id: stdout-sink
       type: sink
-      image: alpine:latest
-      command: ["sh", "-c"]
-      args: ["while read line; do echo \"[OUTPUT] $line\"; done"]
+      command: ["sh", "-c", "while read line; do echo \"[OUTPUT] $line\"; done"]
       inputs: ["pass-through"]
       env:
         LOG_LEVEL: "info"

@@ -63,16 +63,23 @@ package pipeline
 #BaseComponent: {
 	// Unique identifier for the component
 	id: string & !=""
-	
+
 	// Optional type of the component
 	type?: string
-	
-	// Container image for the component
-	image: string & !=""
-	
-	// Optional command to run in the container
-	command?: [...string]
-	
+
+	// Container image for the component (alternative to command)
+	image?: string & !=""
+
+	// Command to run (alternative to image)
+	command?: [...string] & [_, ...]
+
+	// Optional arguments (used with both image and command)
+	args?: [...string]
+
+	// Validation: must have either image or command (but not both)
+	_validExecution: (image != _|_ && command == _|_) || (image == _|_ && command != _|_)
+	_validExecution: true
+
 	// Optional configuration parameters
 	config?: [string]: _
 	
