@@ -75,7 +75,11 @@ func NewPipelineRunner(pipeline *model.Pipeline, config Config) (*PipelineRunner
 
 	switch config.OrchestratorType {
 	case "process":
-		orch = orchestrator.NewProcessOrchestrator(controlPlaneAddr)
+		processOrch, err := orchestrator.NewProcessOrchestrator(controlPlaneAddr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create process orchestrator: %w", err)
+		}
+		orch = processOrch
 	case "container", "docker":
 		// Create Docker orchestrator
 		dockerOrch, err := orchestrator.NewDockerOrchestrator(controlPlaneAddr)

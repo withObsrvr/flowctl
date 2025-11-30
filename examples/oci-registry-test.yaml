@@ -1,0 +1,18 @@
+apiVersion: flowctl/v1
+kind: Pipeline
+metadata:
+  name: oci-registry-test
+  namespace: default
+  annotations:
+    description: "Test pipeline demonstrating OCI registry support"
+
+spec:
+  description: "Simple pipeline using publicly available images from registries"
+  driver: local
+
+  sources:
+    - id: hello-source
+      type: hello-world
+      image: docker.io/library/hello-world:latest
+      env:
+        LOG_LEVEL: "info"

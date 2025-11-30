@@ -32,9 +32,9 @@ type Spec struct {
 type Component struct {
 	ID              string                 `yaml:"id" json:"id"`
 	Type            string                 `yaml:"type,omitempty" json:"type,omitempty"`
-	Image           string                 `yaml:"image" json:"image"`
-	Command         []string               `yaml:"command,omitempty" json:"command,omitempty"`
-	Args            []string               `yaml:"args,omitempty" json:"args,omitempty"`                  // New: arguments for pipeline commands
+	Image           string                 `yaml:"image,omitempty" json:"image,omitempty"` // OCI image reference (alternative to Command)
+	Command         []string               `yaml:"command,omitempty" json:"command,omitempty"` // Local binary path (alternative to Image)
+	Args            []string               `yaml:"args,omitempty" json:"args,omitempty"`                  // Arguments for image/command
 	Inputs          []string               `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 	InputEventTypes []string               `yaml:"input_event_types,omitempty" json:"input_event_types,omitempty"`
 	OutputEventTypes []string              `yaml:"output_event_types,omitempty" json:"output_event_types,omitempty"`
