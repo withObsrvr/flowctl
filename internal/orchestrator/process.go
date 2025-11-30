@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/withobsrvr/flowctl/internal/registry"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
 )
@@ -20,6 +23,7 @@ type ProcessOrchestrator struct {
 	processes            map[string]*ProcessInfo
 	mu                   sync.RWMutex
 	logDir               string
+	registryClient       *registry.Client
 }
 
 // ProcessInfo holds information about a running process
@@ -41,12 +45,19 @@ type ProcessLogStream struct {
 }
 
 // NewProcessOrchestrator creates a new process orchestrator
-func NewProcessOrchestrator(controlPlaneEndpoint string) *ProcessOrchestrator {
+func NewProcessOrchestrator(controlPlaneEndpoint string) (*ProcessOrchestrator, error) {
+	// Initialize registry client with default cache directory
+	registryClient, err := registry.NewClient("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create registry client: %w", err)
+	}
+
 	return &ProcessOrchestrator{
 		controlPlaneEndpoint: controlPlaneEndpoint,
 		processes:            make(map[string]*ProcessInfo),
 		logDir:               "logs",
-	}
+		registryClient:       registryClient,
+	}, nil
 }
 
 // GetType returns the orchestrator type
@@ -317,6 +328,22 @@ func (p *ProcessOrchestrator) GetLogs(ctx context.Context, componentID string, f
 func (p *ProcessOrchestrator) buildCommand(component *Component) (*exec.Cmd, error) {
 	var cmd *exec.Cmd
 
+	// If image is specified, pull and extract it
+	if component.Image != "" {
+		binaryPath, err := p.prepareImageBinary(context.Background(), component)
+		if err != nil {
+			return nil, fmt.Errorf("failed to prepare image: %w", err)
+		}
+
+		// Run the extracted binary with args
+		if len(component.Args) > 0 {
+			cmd = exec.Command(binaryPath, component.Args...)
+		} else {
+			cmd = exec.Command(binaryPath)
+		}
+		return cmd, nil
+	}
+
 	// If command is explicitly specified, use it
 	if len(component.Command) > 0 {
 		if len(component.Args) > 0 {
@@ -327,7 +354,7 @@ func (p *ProcessOrchestrator) buildCommand(component *Component) (*exec.Cmd, err
 		return cmd, nil
 	}
 
-	// Build command based on component type
+	// Build command based on component type (legacy fallback)
 	switch component.Type {
 	case "stellar-live-source-datalake":
 		cmd = exec.Command("./bin/stellar-live-source-datalake")
@@ -345,6 +372,59 @@ func (p *ProcessOrchestrator) buildCommand(component *Component) (*exec.Cmd, err
 	}
 
 	return cmd, nil
+}
+
+// prepareImageBinary pulls and extracts an OCI image, returning the path to the binary
+func (p *ProcessOrchestrator) prepareImageBinary(ctx context.Context, component *Component) (string, error) {
+	// Parse image reference
+	ref, err := registry.ParseImageReference(component.Image)
+	if err != nil {
+		return "", fmt.Errorf("invalid image reference %q: %w", component.Image, err)
+	}
+
+	logger.Info("Pulling image", zap.String("image", ref.String()))
+
+	// Pull image (uses cache if already present)
+	if _, err := p.registryClient.Pull(ctx, ref); err != nil {
+		return "", fmt.Errorf("failed to pull image: %w", err)
+	}
+
+	logger.Info("Extracting image", zap.String("image", ref.String()))
+
+	// Extract image filesystem
+	extractedPath, err := p.registryClient.Extract(ctx, ref)
+	if err != nil {
+		return "", fmt.Errorf("failed to extract image: %w", err)
+	}
+
+	// Look for binary in common locations following flowctl component image spec
+	// Priority order: /app/ (recommended), /bin/, /usr/bin/, /usr/local/bin/
+	// Binary name is derived from component type, or ID as fallback
+	binaryName := component.Type
+	if binaryName == "" {
+		binaryName = component.ID
+	}
+
+	possiblePaths := []string{
+		filepath.Join(extractedPath, "app", binaryName),         // /app/ (Component Image Spec)
+		filepath.Join(extractedPath, "bin", binaryName),          // /bin/ (common)
+		filepath.Join(extractedPath, "usr", "bin", binaryName),   // /usr/bin/ (system)
+		filepath.Join(extractedPath, "usr", "local", "bin", binaryName), // /usr/local/bin/
+		filepath.Join(extractedPath, binaryName),                 // Root (fallback)
+	}
+
+	for _, path := range possiblePaths {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			logger.Info("Found binary", zap.String("path", path))
+			// Make sure it's executable
+			if err := os.Chmod(path, 0755); err != nil {
+				logger.Warn("Failed to make binary executable", zap.String("path", path), zap.Error(err))
+			}
+			return path, nil
+		}
+	}
+
+	return "", fmt.Errorf("binary not found in image (searched: %v)", possiblePaths)
 }
 
 // buildEnvironment builds the environment variables for a component
@@ -412,7 +492,20 @@ func (p *ProcessOrchestrator) monitorProcess(componentID string, info *ProcessIn
 
 // Read implements io.Reader for ProcessLogStream
 func (p *ProcessLogStream) Read(buf []byte) (int, error) {
-	return p.reader.Read(buf)
+	for {
+		n, err := p.reader.Read(buf)
+		if err == nil || n > 0 {
+			return n, err
+		}
+
+		// If we got EOF and follow is enabled, wait and retry
+		if err == io.EOF && p.follow {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		return n, err
+	}
 }
 
 // Close implements io.Closer for ProcessLogStream

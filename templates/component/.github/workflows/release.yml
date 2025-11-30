@@ -1,0 +1,142 @@
+name: Release Component
+
+# Trigger on version tags (v1.0.0, v1.2.3, etc.)
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Required permissions for the workflow
+permissions:
+  contents: write      # Create GitHub releases
+  packages: write      # Push to GitHub Container Registry (GHCR)
+  id-token: write     # For provenance/SBOM (optional)
+
+env:
+  # Change this to your component's binary name
+  COMPONENT_NAME: your-component
+  # Registry to push to (GHCR recommended)
+  REGISTRY: ghcr.io
+  # Image name will be: ghcr.io/OWNER/REPO
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      ##########################################################################
+      # Step 1: Checkout the repository
+      ##########################################################################
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full git history for changelog generation
+
+      ##########################################################################
+      # Step 2: Set up Docker Buildx (multi-platform builds)
+      ##########################################################################
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      ##########################################################################
+      # Step 3: Log in to GitHub Container Registry
+      ##########################################################################
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      ##########################################################################
+      # Step 4: Extract metadata (tags, labels) for Docker
+      ##########################################################################
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # Semantic versioning tags
+            type=semver,pattern={{version}}        # v1.2.3
+            type=semver,pattern={{major}}.{{minor}} # v1.2
+            type=semver,pattern={{major}}           # v1
+            # SHA tag (for CI/CD tracking)
+            type=sha,prefix={{branch}}-
+            # Latest tag for default branch
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=${{ env.COMPONENT_NAME }}
+            org.opencontainers.image.vendor=${{ github.repository_owner }}
+            io.flowctl.component.type=source
+            io.flowctl.component.api-version=v1
+
+      ##########################################################################
+      # Step 5: Build and push Docker image (multi-platform)
+      ##########################################################################
+      - name: Build and push multi-platform image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Build arguments
+          build-args: |
+            COMPONENT_NAME=${{ env.COMPONENT_NAME }}
+            VERSION=${{ github.ref_name }}
+            COMMIT_SHA=${{ github.sha }}
+          # Cache configuration for faster builds
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Provenance attestation (optional, for supply chain security)
+          provenance: true
+          sbom: true
+
+      ##########################################################################
+      # Step 6: Create GitHub Release with auto-generated notes
+      ##########################################################################
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          body: |
+            ## Container Images
+
+            This release is available as a container image:
+
+            **Multi-platform (recommended):**
+            ```bash
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+            ```
+
+            **Specific platforms:**
+            ```bash
+            # AMD64 (x86_64)
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} --platform linux/amd64
+
+            # ARM64 (aarch64)
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} --platform linux/arm64
+            ```
+
+            **Use in flowctl pipeline:**
+            ```yaml
+            sources:
+              - id: my-source
+                type: ${{ env.COMPONENT_NAME }}
+                image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+            ```
+
+            ---
+
+            🤖 *Generated with [Flowctl](https://github.com/withobsrvr/flowctl)*
+
+      ##########################################################################
+      # Step 7: Output build information
+      ##########################################################################
+      - name: Image digest
+        run: echo "Image digest: ${{ steps.build.outputs.digest }}"
