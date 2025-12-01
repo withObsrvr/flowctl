@@ -84,12 +84,13 @@ func (c *ControlPlaneClientImpl) IsServiceRegistered(ctx context.Context, servic
 	}
 	
 	// Check if our service is in the list
+	// Match by component_id (preferred) or service_id (legacy)
 	for _, svc := range serviceList.Services {
-		if svc.ServiceId == serviceID && svc.ServiceType == pb.ServiceType_SERVICE_TYPE_PIPELINE {
+		if svc.ComponentId == serviceID || svc.ServiceId == serviceID {
 			return true, nil
 		}
 	}
-	
+
 	return false, nil
 }
 
