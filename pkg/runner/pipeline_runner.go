@@ -47,7 +47,18 @@ func (r *PipelineRunner) Start(ctx context.Context) error {
 		zap.String("id", r.Pipeline.ID),
 		zap.String("image", r.Pipeline.Image),
 		zap.String("type", r.Pipeline.Type))
-	
+
+	// Inject component ID for self-registering services BEFORE building container config
+	if _, hasFlowctlEndpoint := r.Pipeline.Env["FLOWCTL_ENDPOINT"]; hasFlowctlEndpoint {
+		if r.Pipeline.Env == nil {
+			r.Pipeline.Env = make(map[string]string)
+		}
+		r.Pipeline.Env["FLOWCTL_COMPONENT_ID"] = r.Pipeline.ID
+		r.logger.Info("Injecting component ID for self-registering service",
+			zap.String("id", r.Pipeline.ID),
+			zap.String("component_id", r.Pipeline.ID))
+	}
+
 	// Build container configuration
 	config := r.buildContainerConfig()
 	if config == nil {
@@ -265,13 +276,8 @@ func (r *PipelineRunner) buildContainerConfig() *ContainerConfig {
 func (r *PipelineRunner) handleRegistration(ctx context.Context) error {
 	// Check if pipeline will self-register
 	if _, hasFlowctlEndpoint := r.Pipeline.Env["FLOWCTL_ENDPOINT"]; hasFlowctlEndpoint {
-		// Pipeline will self-register, pass component ID so it can register properly
-		if r.Pipeline.Env == nil {
-			r.Pipeline.Env = make(map[string]string)
-		}
-		r.Pipeline.Env["FLOWCTL_COMPONENT_ID"] = r.Pipeline.ID
-
-		r.logger.Info("Pipeline will self-register with control plane",
+		// Pipeline will self-register (component ID already injected in Start())
+		r.logger.Info("Waiting for pipeline to self-register with control plane",
 			zap.String("id", r.Pipeline.ID),
 			zap.String("component_id", r.Pipeline.ID))
 		return r.waitForPipelineRegistration(ctx, 30*time.Second)
