@@ -281,6 +281,19 @@ func (r *PipelineRunner) convertToOrchestratorComponent(modelComp model.Componen
 		})
 	}
 
+	// Convert secrets to volume mounts (secrets are read-only by nature)
+	for _, secret := range modelComp.Secrets {
+		// Only process file/dir type secrets as volume mounts
+		// env type secrets would be handled separately (but not yet implemented)
+		if secret.Type == "file" || secret.Type == "dir" {
+			orchComp.Volumes = append(orchComp.Volumes, orchestrator.VolumeMount{
+				HostPath:      secret.HostPath,
+				ContainerPath: secret.ContainerPath,
+				ReadOnly:      true, // Secrets are always read-only
+			})
+		}
+	}
+
 	// If no type is specified, use the component type from pipeline structure
 	if orchComp.Type == "" {
 		orchComp.Type = componentType

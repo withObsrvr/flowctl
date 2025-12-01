@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -78,6 +79,10 @@ func (l *LogAggregator) streamLogs(componentID string, stream io.ReadCloser) {
 	defer stream.Close()
 
 	scanner := bufio.NewScanner(stream)
+	// Use a larger buffer to handle long log lines
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
 	for scanner.Scan() {
 		select {
 		case <-l.quit:
@@ -96,8 +101,8 @@ func (l *LogAggregator) streamLogs(componentID string, stream io.ReadCloser) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		logger.Error("Error reading log stream", 
-			zap.String("component", componentID), 
+		logger.Error("Error reading log stream",
+			zap.String("component", componentID),
 			zap.Error(err))
 	}
 }
@@ -116,6 +121,8 @@ func (l *LogAggregator) PrintLog(entry LogEntry) {
 	} else {
 		fmt.Printf("%-30s %s\n", prefix, entry.Message)
 	}
+	// Force flush stdout to ensure logs appear immediately
+	os.Stdout.Sync()
 }
 
 // StartAggregatedLogging starts aggregated logging for all components

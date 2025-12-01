@@ -9,23 +9,45 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"go.uber.org/zap"
 )
 
-// DockerCLIClient implements DockerClient using Docker CLI commands
+// DockerCLIClient implements DockerClient using Docker CLI commands and API
 type DockerCLIClient struct {
-	logger *zap.Logger
+	logger    *zap.Logger
+	apiClient *client.Client
 }
 
-// NewDockerClient creates a new Docker client using CLI
+// NewDockerClient creates a new Docker client using CLI and API
 func NewDockerClient(logger *zap.Logger) (*DockerCLIClient, error) {
 	// Check if docker command is available
 	if _, err := exec.LookPath("docker"); err != nil {
 		return nil, fmt.Errorf("docker command not found: %w", err)
 	}
-	
+
+	// Initialize Docker API client for log streaming
+	apiClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Docker API client (is Docker daemon running?): %w", err)
+	}
+
+	// Verify Docker API connectivity with a quick ping
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = apiClient.Ping(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to Docker daemon (check DOCKER_HOST and socket permissions): %w", err)
+	}
+
+	logger.Debug("Docker API client initialized successfully")
+
 	return &DockerCLIClient{
-		logger: logger,
+		logger:    logger,
+		apiClient: apiClient,
 	}, nil
 }
 
@@ -210,53 +232,72 @@ func (d *DockerCLIClient) InspectContainer(ctx context.Context, containerID stri
 	return info, nil
 }
 
-// GetLogs retrieves container logs
+// GetLogs retrieves container logs using Docker API for real-time streaming
 func (d *DockerCLIClient) GetLogs(ctx context.Context, containerID string, follow bool) (LogStream, error) {
-	args := []string{"logs"}
-	if follow {
-		args = append(args, "-f")
+	// Use Docker API for unbuffered log streaming
+	options := container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     follow,
+		Timestamps: true,
 	}
-	args = append(args, "--timestamps", containerID)
-	
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	
-	stdout, err := cmd.StdoutPipe()
+
+	reader, err := d.apiClient.ContainerLogs(ctx, containerID, options)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
+		return nil, fmt.Errorf("failed to get container logs via API: %w", err)
 	}
-	
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
-	}
-	
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start docker logs: %w", err)
-	}
-	
-	// Combine stdout and stderr
-	reader := io.MultiReader(stdout, stderr)
-	
-	return &cliLogStream{
-		reader: reader,
-		cmd:    cmd,
+
+	d.logger.Debug("Started streaming logs via Docker API",
+		zap.String("container", containerID[:12]),
+		zap.Bool("follow", follow))
+
+	return &apiLogStream{
+		reader:      reader,
+		containerID: containerID,
+		logger:      d.logger,
 	}, nil
 }
 
-// cliLogStream implements LogStream for CLI-based logs
-type cliLogStream struct {
-	reader io.Reader
-	cmd    *exec.Cmd
+// apiLogStream implements LogStream for Docker API-based logs with demultiplexing
+type apiLogStream struct {
+	reader      io.ReadCloser
+	containerID string
+	logger      *zap.Logger
+	pipeReader  *io.PipeReader
+	pipeWriter  *io.PipeWriter
+	started     bool
 }
 
-func (s *cliLogStream) Read(p []byte) (n int, err error) {
-	return s.reader.Read(p)
+func (s *apiLogStream) Read(p []byte) (n int, err error) {
+	// Lazy initialization of demultiplexer on first read
+	if !s.started {
+		s.started = true
+		s.pipeReader, s.pipeWriter = io.Pipe()
+
+		// Start demultiplexing in background goroutine
+		go func() {
+			defer s.pipeWriter.Close()
+
+			// Docker API returns multiplexed stream - demultiplex stdout/stderr
+			// StdCopy writes both streams to the same writer (combined output)
+			_, err := stdcopy.StdCopy(s.pipeWriter, s.pipeWriter, s.reader)
+			if err != nil && err != io.EOF {
+				s.logger.Debug("Log demultiplexing completed",
+					zap.String("container", s.containerID[:12]),
+					zap.Error(err))
+			}
+		}()
+	}
+
+	return s.pipeReader.Read(p)
 }
 
-func (s *cliLogStream) Close() error {
-	if s.cmd != nil && s.cmd.Process != nil {
-		s.cmd.Process.Kill()
-		s.cmd.Wait()
+func (s *apiLogStream) Close() error {
+	if s.pipeReader != nil {
+		s.pipeReader.Close()
+	}
+	if s.reader != nil {
+		return s.reader.Close()
 	}
 	return nil
 }
