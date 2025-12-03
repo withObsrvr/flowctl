@@ -10,6 +10,7 @@ require (
 	github.com/golang/protobuf v1.5.4
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
+	github.com/withObsrvr/flow-proto v0.1.0
 	go.etcd.io/bbolt v1.4.0
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.72.0
@@ -75,3 +76,6 @@ require (
 	golang.org/x/text v0.22.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250218202821-56aae31c358a // indirect
 )
+
+// Use local flow-proto for development
+replace github.com/withObsrvr/flow-proto => /home/tillman/Documents/flow-proto

@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/api"
 	"github.com/withobsrvr/flowctl/internal/config"
 	"github.com/withobsrvr/flowctl/internal/storage"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
-	pb "github.com/withobsrvr/flowctl/proto"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -141,7 +141,7 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 			}
 			
 			// Register the control plane service
-			pb.RegisterControlPlaneServer(grpcServer, controlPlane)
+			flowctlv1.RegisterControlPlaneServiceServer(grpcServer, controlPlane)
 
 			// Set up signal handling for graceful shutdown
 			ctx, cancel := context.WithCancel(context.Background())

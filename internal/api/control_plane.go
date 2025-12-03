@@ -10,7 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "github.com/withobsrvr/flowctl/proto"
+	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/storage"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
@@ -18,15 +18,15 @@ import (
 
 // Service represents a registered service
 type Service struct {
-	Info     *pb.ServiceInfo
-	Status   *pb.ServiceStatus
+	Info     *flowctlv1.ComponentInfo
+	Status   *flowctlv1.ComponentStatusResponse
 	LastSeen time.Time
 	Conn     *grpc.ClientConn
 }
 
 // ControlPlaneServer implements the control plane gRPC service
 type ControlPlaneServer struct {
-	pb.UnimplementedControlPlaneServer
+	flowctlv1.UnimplementedControlPlaneServiceServer
 	mu               sync.RWMutex
 	services         map[string]*Service // In-memory cache of services
 	storage          storage.ServiceStorage // Persistent storage
@@ -136,7 +136,7 @@ func (s *ControlPlaneServer) loadServices() error {
 			Status:   storedService.Status,
 			LastSeen: storedService.LastSeen,
 		}
-		s.services[service.Info.ServiceId] = service
+		s.services[service.Info.Id] = service
 		count++
 	}
 	
@@ -170,32 +170,38 @@ func (s *ControlPlaneServer) Close() error {
 	return nil
 }
 
-// Register implements the Register RPC
-func (s *ControlPlaneServer) Register(ctx context.Context, info *pb.ServiceInfo) (*pb.RegistrationAck, error) {
+// RegisterComponent implements the RegisterComponent RPC
+func (s *ControlPlaneServer) RegisterComponent(ctx context.Context, req *flowctlv1.RegisterRequest) (*flowctlv1.RegisterResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Generate a unique service ID if not provided
-	if info.ServiceId == "" {
-		info.ServiceId = fmt.Sprintf("%s-%d", info.ServiceType, time.Now().UnixNano())
+	info := req.Component
+
+	// Use component_id from request if provided, otherwise use component.id
+	serviceId := req.ComponentId
+	if serviceId == "" {
+		serviceId = info.Id
+	}
+	if serviceId == "" {
+		serviceId = fmt.Sprintf("%s-%d", info.Type, time.Now().UnixNano())
 	}
 
 	// Create service record
 	now := time.Now()
 	service := &Service{
 		Info: info,
-		Status: &pb.ServiceStatus{
-			ServiceId:     info.ServiceId,
-			ServiceType:   info.ServiceType,
-			IsHealthy:     true,
+		Status: &flowctlv1.ComponentStatusResponse{
+			Component:     info,
+			Status:        flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY,
 			LastHeartbeat: timestamppb.New(now),
-			ComponentId:   info.ComponentId, // Copy component_id to status
+			Metrics:       make(map[string]string),
+			RegisteredAt:  timestamppb.New(now),
 		},
 		LastSeen: now,
 	}
 
 	// Store service in memory
-	s.services[info.ServiceId] = service
+	s.services[serviceId] = service
 
 	// Persist to storage if available
 	if s.storage != nil {
@@ -205,56 +211,42 @@ func (s *ControlPlaneServer) Register(ctx context.Context, info *pb.ServiceInfo)
 			Status:   service.Status,
 			LastSeen: now,
 		}
-		
+
 		if err := s.storage.RegisterService(ctx, serviceInfo); err != nil {
 			logger.Error("Failed to persist service registration",
-				zap.String("service_id", info.ServiceId),
+				zap.String("service_id", serviceId),
 				zap.Error(err))
 			// We continue anyway as the service is registered in memory
 		}
 	}
 
-	// Log warning if component_id is missing (backward compatibility)
-	if info.ComponentId == "" {
-		logger.Warn("Service registered without component_id (legacy mode)",
-			zap.String("service_id", info.ServiceId))
-	}
-
 	// Log service registration
 	logger.Info("Service registered",
-		zap.String("service_id", info.ServiceId),
-		zap.String("component_id", info.ComponentId),
-		zap.String("service_type", info.ServiceType.String()),
-		zap.String("health_endpoint", info.HealthEndpoint),
+		zap.String("service_id", serviceId),
+		zap.String("component_id", info.Id),
+		zap.String("component_type", info.Type.String()),
+		zap.String("endpoint", info.Endpoint),
 		zap.Strings("input_event_types", info.InputEventTypes),
 		zap.Strings("output_event_types", info.OutputEventTypes),
-		zap.Int32("max_inflight", info.MaxInflight),
 	)
 
-	// Generate topic names based on service type and event types
+	// Generate topic names based on component type and event types
 	var topicNames []string
-	switch info.ServiceType {
-	case pb.ServiceType_SERVICE_TYPE_SOURCE:
+	switch info.Type {
+	case flowctlv1.ComponentType_COMPONENT_TYPE_SOURCE:
 		for _, eventType := range info.OutputEventTypes {
 			topicNames = append(topicNames, fmt.Sprintf("%s.v1", eventType))
 		}
-	case pb.ServiceType_SERVICE_TYPE_PROCESSOR:
+	case flowctlv1.ComponentType_COMPONENT_TYPE_PROCESSOR:
 		for _, eventType := range info.OutputEventTypes {
 			topicNames = append(topicNames, fmt.Sprintf("%s.v1", eventType))
 		}
-	case pb.ServiceType_SERVICE_TYPE_PIPELINE:
-		// Pipelines are composite services that manage their own internal communication
-		// They don't need external topics since all components run within the pipeline
-		logger.Info("Registered pipeline service",
-			zap.String("pipeline_id", info.ServiceId),
-			zap.Any("metadata", info.Metadata),
-		)
 	}
 
-	// Return registration acknowledgment
-	return &pb.RegistrationAck{
-		ServiceId:  info.ServiceId,
-		TopicNames: topicNames,
+	// Return registration response
+	return &flowctlv1.RegisterResponse{
+		ServiceId:      serviceId,
+		AssignedTopics: topicNames,
 		ConnectionInfo: map[string]string{
 			"control_plane_endpoint": "localhost:8080",
 		},
@@ -262,34 +254,34 @@ func (s *ControlPlaneServer) Register(ctx context.Context, info *pb.ServiceInfo)
 }
 
 // Heartbeat implements the Heartbeat RPC
-func (s *ControlPlaneServer) Heartbeat(ctx context.Context, hb *pb.ServiceHeartbeat) (*emptypb.Empty, error) {
+func (s *ControlPlaneServer) Heartbeat(ctx context.Context, req *flowctlv1.HeartbeatRequest) (*emptypb.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	service, ok := s.services[hb.ServiceId]
+	service, ok := s.services[req.ServiceId]
 	if !ok {
-		return nil, fmt.Errorf("service %s not found", hb.ServiceId)
+		return nil, fmt.Errorf("service %s not found", req.ServiceId)
 	}
 
 	now := time.Now()
 	service.LastSeen = now
-	service.Status.Metrics = hb.Metrics
-	service.Status.IsHealthy = true
+	service.Status.Metrics = req.Metrics
+	service.Status.Status = req.Status
 	service.Status.LastHeartbeat = timestamppb.New(now)
 
 	// Update in persistent storage if available
 	if s.storage != nil {
-		err := s.storage.UpdateService(ctx, hb.ServiceId, func(storedService *storage.ServiceInfo) error {
+		err := s.storage.UpdateService(ctx, req.ServiceId, func(storedService *storage.ServiceInfo) error {
 			storedService.LastSeen = now
-			storedService.Status.Metrics = hb.Metrics
-			storedService.Status.IsHealthy = true
+			storedService.Status.Metrics = req.Metrics
+			storedService.Status.Status = req.Status
 			storedService.Status.LastHeartbeat = timestamppb.New(now)
 			return nil
 		})
-		
+
 		if err != nil && !storage.IsNotFound(err) {
 			logger.Error("Failed to update service heartbeat in storage",
-				zap.String("service_id", hb.ServiceId),
+				zap.String("service_id", req.ServiceId),
 				zap.Error(err))
 			// Continue anyway as the heartbeat is processed in memory
 		}
@@ -297,38 +289,121 @@ func (s *ControlPlaneServer) Heartbeat(ctx context.Context, hb *pb.ServiceHeartb
 
 	// Log heartbeat receipt
 	logger.Debug("Received heartbeat",
-		zap.String("service_id", hb.ServiceId),
-		zap.String("service_type", service.Info.ServiceType.String()),
-		zap.Any("metrics", hb.Metrics),
+		zap.String("service_id", req.ServiceId),
+		zap.String("component_type", service.Info.Type.String()),
+		zap.Any("metrics", req.Metrics),
 	)
 
 	return &emptypb.Empty{}, nil
 }
 
-// GetServiceStatus implements the GetServiceStatus RPC
-func (s *ControlPlaneServer) GetServiceStatus(ctx context.Context, info *pb.ServiceInfo) (*pb.ServiceStatus, error) {
+// GetComponentStatus implements the GetComponentStatus RPC
+func (s *ControlPlaneServer) GetComponentStatus(ctx context.Context, req *flowctlv1.ComponentStatusRequest) (*flowctlv1.ComponentStatusResponse, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	service, ok := s.services[info.ServiceId]
+	service, ok := s.services[req.ServiceId]
 	if !ok {
-		return nil, fmt.Errorf("service %s not found", info.ServiceId)
+		return nil, fmt.Errorf("service %s not found", req.ServiceId)
 	}
 
 	return service.Status, nil
 }
 
-// ListServices implements the ListServices RPC
-func (s *ControlPlaneServer) ListServices(ctx context.Context, _ *emptypb.Empty) (*pb.ServiceList, error) {
+// ListComponents implements the ListComponents RPC
+func (s *ControlPlaneServer) ListComponents(ctx context.Context, req *flowctlv1.ListComponentsRequest) (*flowctlv1.ListComponentsResponse, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	services := make([]*pb.ServiceStatus, 0, len(s.services))
+	components := make([]*flowctlv1.ComponentStatusResponse, 0, len(s.services))
 	for _, service := range s.services {
-		services = append(services, service.Status)
+		// Filter by type if requested
+		if req.TypeFilter != flowctlv1.ComponentType_COMPONENT_TYPE_UNSPECIFIED && service.Info.Type != req.TypeFilter {
+			continue
+		}
+
+		// Filter unhealthy if not requested
+		if !req.IncludeUnhealthy && service.Status.Status != flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY {
+			continue
+		}
+
+		components = append(components, service.Status)
 	}
 
-	return &pb.ServiceList{Services: services}, nil
+	return &flowctlv1.ListComponentsResponse{Components: components}, nil
+}
+
+// UnregisterComponent implements the UnregisterComponent RPC
+func (s *ControlPlaneServer) UnregisterComponent(ctx context.Context, req *flowctlv1.UnregisterRequest) (*emptypb.Empty, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.services, req.ServiceId)
+
+	if s.storage != nil {
+		// Remove from storage
+		if err := s.storage.UnregisterService(ctx, req.ServiceId); err != nil {
+			logger.Error("Failed to unregister service from storage",
+				zap.String("service_id", req.ServiceId),
+				zap.Error(err))
+		}
+	}
+
+	logger.Info("Service unregistered", zap.String("service_id", req.ServiceId))
+	return &emptypb.Empty{}, nil
+}
+
+// DiscoverComponents implements the DiscoverComponents RPC
+func (s *ControlPlaneServer) DiscoverComponents(ctx context.Context, req *flowctlv1.DiscoveryRequest) (*flowctlv1.DiscoveryResponse, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var matchingComponents []*flowctlv1.ComponentInfo
+
+	for _, service := range s.services {
+		// Filter by type if specified
+		if req.Type != flowctlv1.ComponentType_COMPONENT_TYPE_UNSPECIFIED && service.Info.Type != req.Type {
+			continue
+		}
+
+		// Filter by event types if specified (OR logic)
+		if len(req.EventTypes) > 0 {
+			found := false
+			allEventTypes := append(service.Info.InputEventTypes, service.Info.OutputEventTypes...)
+			for _, requestedType := range req.EventTypes {
+				for _, componentEventType := range allEventTypes {
+					if componentEventType == requestedType {
+						found = true
+						break
+					}
+				}
+				if found {
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+
+		// Filter by metadata (AND logic)
+		if len(req.MetadataFilters) > 0 {
+			matches := true
+			for key, value := range req.MetadataFilters {
+				if service.Info.Metadata == nil || service.Info.Metadata[key] != value {
+					matches = false
+					break
+				}
+			}
+			if !matches {
+				continue
+			}
+		}
+
+		matchingComponents = append(matchingComponents, service.Info)
+	}
+
+	return &flowctlv1.DiscoveryResponse{Components: matchingComponents}, nil
 }
 
 // runJanitor periodically checks for services that haven't sent heartbeats
@@ -367,22 +442,22 @@ func (s *ControlPlaneServer) checkServiceHealth() {
 	for id, service := range s.services {
 		// If the service hasn't sent a heartbeat within the TTL
 		if service.LastSeen.Before(staleThreshold) {
-			if service.Status.IsHealthy {
+			if service.Status.Status == flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY {
 				// Mark it as unhealthy and log the event
-				service.Status.IsHealthy = false
+				service.Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_UNHEALTHY
 				logger.Warn("Service marked unhealthy due to stale heartbeat",
 					zap.String("service_id", id),
-					zap.String("service_type", service.Info.ServiceType.String()),
+					zap.String("component_type", service.Info.Type.String()),
 					zap.Time("last_seen", service.LastSeen),
 					zap.Duration("ttl", s.heartbeatTTL))
-				
+
 				// Update in persistent storage if available
 				if s.storage != nil {
 					err := s.storage.UpdateService(ctx, id, func(storedService *storage.ServiceInfo) error {
-						storedService.Status.IsHealthy = false
+						storedService.Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_UNHEALTHY
 						return nil
 					})
-					
+
 					if err != nil && !storage.IsNotFound(err) {
 						logger.Error("Failed to update service health status in storage",
 							zap.String("service_id", id),
