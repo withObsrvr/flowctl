@@ -124,7 +124,7 @@ func (s *BoltDBStorage) Close() error {
 
 // RegisterService stores a new service in the registry
 func (s *BoltDBStorage) RegisterService(ctx context.Context, service *ServiceInfo) error {
-	logger.Debug("Registering service", zap.String("id", service.Info.ServiceId))
+	logger.Debug("Registering service", zap.String("id", service.Info.Id))
 	return s.db.Update(func(tx *bolt.Tx) error {
 		return s.registerServiceTx(tx, service)
 	})
@@ -144,7 +144,7 @@ func (s *BoltDBStorage) registerServiceTx(tx *bolt.Tx, service *ServiceInfo) err
 	}
 
 	// Store the service
-	key := []byte(service.Info.ServiceId)
+	key := []byte(service.Info.Id)
 	if err := b.Put(key, data); err != nil {
 		return fmt.Errorf("failed to store service: %w", err)
 	}
@@ -276,6 +276,11 @@ func (s *BoltDBStorage) DeleteService(ctx context.Context, serviceID string) err
 	return s.db.Update(func(tx *bolt.Tx) error {
 		return s.deleteServiceTx(tx, serviceID)
 	})
+}
+
+// UnregisterService removes a service from the registry (alias for DeleteService)
+func (s *BoltDBStorage) UnregisterService(ctx context.Context, serviceID string) error {
+	return s.DeleteService(ctx, serviceID)
 }
 
 // deleteServiceTx is the transaction version of DeleteService

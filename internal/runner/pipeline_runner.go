@@ -133,6 +133,13 @@ func (r *PipelineRunner) Run() error {
 		return err
 	}
 
+	// Wire components together for data flow
+	streamOrch := NewStreamOrchestrator(r.ctx, r.controlPlane, r.pipeline)
+	if err := streamOrch.WireAll(); err != nil {
+		r.controlPlane.Stop()
+		return fmt.Errorf("failed to wire components: %w", err)
+	}
+
 	// Start monitoring if enabled
 	if r.config.ShowStatus {
 		go r.monitorPipeline()
@@ -281,6 +288,19 @@ func (r *PipelineRunner) convertToOrchestratorComponent(modelComp model.Componen
 		})
 	}
 
+	// Convert secrets to volume mounts (secrets are read-only by nature)
+	for _, secret := range modelComp.Secrets {
+		// Only process file/dir type secrets as volume mounts
+		// env type secrets would be handled separately (but not yet implemented)
+		if secret.Type == "file" || secret.Type == "dir" {
+			orchComp.Volumes = append(orchComp.Volumes, orchestrator.VolumeMount{
+				HostPath:      secret.HostPath,
+				ContainerPath: secret.ContainerPath,
+				ReadOnly:      true, // Secrets are always read-only
+			})
+		}
+	}
+
 	// If no type is specified, use the component type from pipeline structure
 	if orchComp.Type == "" {
 		orchComp.Type = componentType
@@ -344,10 +364,12 @@ func (r *PipelineRunner) logPipelineStatus() {
 	unhealthyComponents := []string{}
 
 	for _, service := range services {
-		if service.IsHealthy {
+		if service.Status == 2 { // HEALTH_STATUS_HEALTHY (correct value from proto)
 			healthyCount++
 		} else {
-			unhealthyComponents = append(unhealthyComponents, service.ServiceId)
+			if service.Component != nil {
+				unhealthyComponents = append(unhealthyComponents, service.Component.Id)
+			}
 		}
 	}
 
@@ -359,8 +381,12 @@ func (r *PipelineRunner) logPipelineStatus() {
 	// Log component metrics if available
 	for _, service := range services {
 		if len(service.Metrics) > 0 {
+			componentId := "unknown"
+			if service.Component != nil {
+				componentId = service.Component.Id
+			}
 			logger.Debug("Component metrics",
-				zap.String("component", service.ServiceId),
+				zap.String("component", componentId),
 				zap.Any("metrics", service.Metrics))
 		}
 	}
@@ -412,7 +438,7 @@ func (r *PipelineRunner) IsHealthy() bool {
 	}
 
 	for _, service := range services {
-		if !service.IsHealthy {
+		if service.Status != 1 { // Not HEALTH_STATUS_HEALTHY
 			return false
 		}
 	}

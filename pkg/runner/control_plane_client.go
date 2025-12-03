@@ -10,6 +10,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	// Register round_robin load balancer
+	_ "google.golang.org/grpc/balancer/roundrobin"
+
 	pb "github.com/withobsrvr/flowctl/proto"
 )
 
@@ -27,7 +30,12 @@ func NewControlPlaneClient(endpoint string, logger *zap.Logger) (*ControlPlaneCl
 	}
 	
 	// Connect to control plane
-	conn, err := grpc.Dial(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Use WithBlock=false (default) to allow lazy connection, and enable waiting for ready
+	opts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`),
+	}
+	conn, err := grpc.Dial(endpoint, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to control plane: %w", err)
 	}
@@ -59,8 +67,9 @@ func (c *ControlPlaneClientImpl) RegisterPipeline(ctx context.Context, pipelineI
 	
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	
-	ack, err := c.client.Register(ctx, serviceInfo)
+
+	// Use WaitForReady to wait for connection to be established
+	ack, err := c.client.Register(ctx, serviceInfo, grpc.WaitForReady(true))
 	if err != nil {
 		return fmt.Errorf("failed to register pipeline: %w", err)
 	}
@@ -76,9 +85,9 @@ func (c *ControlPlaneClientImpl) RegisterPipeline(ctx context.Context, pipelineI
 func (c *ControlPlaneClientImpl) IsServiceRegistered(ctx context.Context, serviceID string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	
-	// List all services
-	serviceList, err := c.client.ListServices(ctx, &emptypb.Empty{})
+
+	// List all services (use WaitForReady)
+	serviceList, err := c.client.ListServices(ctx, &emptypb.Empty{}, grpc.WaitForReady(true))
 	if err != nil {
 		return false, fmt.Errorf("failed to list services: %w", err)
 	}
@@ -104,8 +113,9 @@ func (c *ControlPlaneClientImpl) SendHeartbeat(ctx context.Context, serviceID st
 	
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	
-	_, err := c.client.Heartbeat(ctx, heartbeat)
+
+	// Use WaitForReady for heartbeat
+	_, err := c.client.Heartbeat(ctx, heartbeat, grpc.WaitForReady(true))
 	if err != nil {
 		return fmt.Errorf("failed to send heartbeat: %w", err)
 	}

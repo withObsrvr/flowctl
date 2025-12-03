@@ -8,12 +8,11 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/types/known/emptypb"
 
+	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/api"
 	"github.com/withobsrvr/flowctl/internal/storage"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
-	pb "github.com/withobsrvr/flowctl/proto"
 	"go.uber.org/zap"
 )
 
@@ -91,7 +90,7 @@ func (e *EmbeddedControlPlane) Start(ctx context.Context) error {
 	}
 
 	// Register the control plane service
-	pb.RegisterControlPlaneServer(e.server, e.controlPlane)
+	flowctlv1.RegisterControlPlaneServiceServer(e.server, e.controlPlane)
 
 	// Start server in background
 	go func() {
@@ -144,7 +143,7 @@ func (e *EmbeddedControlPlane) GetEndpoint() string {
 }
 
 // GetServiceList retrieves the list of registered services
-func (e *EmbeddedControlPlane) GetServiceList() ([]*pb.ServiceStatus, error) {
+func (e *EmbeddedControlPlane) GetServiceList() ([]*flowctlv1.ComponentStatusResponse, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -155,12 +154,12 @@ func (e *EmbeddedControlPlane) GetServiceList() ([]*pb.ServiceStatus, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	resp, err := e.controlPlane.ListServices(ctx, &emptypb.Empty{})
+	resp, err := e.controlPlane.ListComponents(ctx, &flowctlv1.ListComponentsRequest{})
 	if err != nil {
 		return nil, err
 	}
 
-	return resp.Services, nil
+	return resp.Components, nil
 }
 
 // WaitForComponent waits for a specific component to register with the control plane
@@ -175,29 +174,14 @@ func (e *EmbeddedControlPlane) WaitForComponent(componentID string, timeout time
 		}
 
 		for _, service := range services {
-			// FIXED: Check component_id field (from pipeline YAML) instead of service_id
-			// Backward compatibility: if component_id is empty, fall back to service_id matching
-			matched := false
-			if service.ComponentId != "" {
-				// New behavior: match by component_id
-				matched = service.ComponentId == componentID
-			} else {
-				// Legacy behavior: match by service_id when component_id not set
-				matched = service.ServiceId == componentID
-			}
-
-			if matched && service.IsHealthy {
-				logger.Debug("Found registered component",
-					zap.String("component_id", service.ComponentId),
-					zap.String("service_id", service.ServiceId),
-					zap.String("match_mode", func() string {
-						if service.ComponentId != "" {
-							return "component_id"
-						}
-						return "service_id (legacy)"
-					}()),
-					zap.Bool("is_healthy", service.IsHealthy))
-				return nil
+			// FIXED: Check component ID from ComponentInfo
+			if service.Component != nil && service.Component.Id == componentID {
+				if service.Status == flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY {
+					logger.Debug("Found registered component",
+						zap.String("component_id", service.Component.Id),
+						zap.String("status", service.Status.String()))
+					return nil
+				}
 			}
 		}
 
@@ -208,12 +192,9 @@ func (e *EmbeddedControlPlane) WaitForComponent(componentID string, timeout time
 	registeredComponents := []string{}
 	services, _ := e.GetServiceList()
 	for _, service := range services {
-		if service.ComponentId != "" {
+		if service.Component != nil {
 			registeredComponents = append(registeredComponents,
-				fmt.Sprintf("%s (component_id, healthy=%v)", service.ComponentId, service.IsHealthy))
-		} else {
-			registeredComponents = append(registeredComponents,
-				fmt.Sprintf("%s (service_id/legacy, healthy=%v)", service.ServiceId, service.IsHealthy))
+				fmt.Sprintf("%s (status=%v)", service.Component.Id, service.Status.String()))
 		}
 	}
 

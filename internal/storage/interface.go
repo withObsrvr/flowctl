@@ -4,15 +4,15 @@ import (
 	"context"
 	"time"
 
-	pb "github.com/withobsrvr/flowctl/proto"
+	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 )
 
 // ServiceInfo represents the complete information about a registered service
 type ServiceInfo struct {
 	// Service registration information
-	Info *pb.ServiceInfo
+	Info *flowctlv1.ComponentInfo
 	// Current service status
-	Status *pb.ServiceStatus
+	Status *flowctlv1.ComponentStatusResponse
 	// Last time the service was seen (sent a heartbeat)
 	LastSeen time.Time
 }
@@ -39,7 +39,10 @@ type ServiceStorage interface {
 	
 	// DeleteService removes a service from the registry
 	DeleteService(ctx context.Context, serviceID string) error
-	
+
+	// UnregisterService removes a service from the registry (alias for DeleteService)
+	UnregisterService(ctx context.Context, serviceID string) error
+
 	// WithTransaction executes the given function within a transaction
 	// The transaction is committed if the function returns nil, or rolled back if it returns an error
 	WithTransaction(ctx context.Context, fn func(txn Transaction) error) error

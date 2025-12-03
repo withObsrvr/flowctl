@@ -110,7 +110,7 @@ func (m *Monitor) displayStatus() {
 		var status string
 		var statusColor *color.Color
 
-		if service.IsHealthy {
+		if service.Status == 1 { // HEALTH_STATUS_HEALTHY
 			status = "🟢 HEALTHY"
 			statusColor = color.New(color.FgGreen)
 			healthyCount++
@@ -121,7 +121,11 @@ func (m *Monitor) displayStatus() {
 
 		// Component name with color
 		componentColor := color.New(color.FgCyan, color.Bold)
-		componentColor.Printf("%-30s ", service.ServiceId)
+		componentId := "unknown"
+		if service.Component != nil {
+			componentId = service.Component.Id
+		}
+		componentColor.Printf("%-30s ", componentId)
 		statusColor.Printf("%s", status)
 		fmt.Println()
 

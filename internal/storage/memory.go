@@ -38,8 +38,8 @@ func (s *MemoryStorage) RegisterService(ctx context.Context, service *ServiceInf
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	logger.Debug("Registering service in memory", zap.String("id", service.Info.ServiceId))
-	s.services[service.Info.ServiceId] = service
+	logger.Debug("Registering service in memory", zap.String("id", service.Info.Id))
+	s.services[service.Info.Id] = service
 	return nil
 }
 
@@ -95,6 +95,11 @@ func (s *MemoryStorage) DeleteService(ctx context.Context, serviceID string) err
 	return nil
 }
 
+// UnregisterService removes a service from the registry (alias for DeleteService)
+func (s *MemoryStorage) UnregisterService(ctx context.Context, serviceID string) error {
+	return s.DeleteService(ctx, serviceID)
+}
+
 // WithTransaction executes the given function within a transaction
 func (s *MemoryStorage) WithTransaction(ctx context.Context, fn func(txn Transaction) error) error {
 	return fn(&memoryTransaction{storage: s})
@@ -107,7 +112,7 @@ type memoryTransaction struct {
 
 // RegisterService stores a new service in the registry within a transaction
 func (t *memoryTransaction) RegisterService(service *ServiceInfo) error {
-	t.storage.services[service.Info.ServiceId] = service
+	t.storage.services[service.Info.Id] = service
 	return nil
 }
 
