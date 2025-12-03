@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -14,6 +15,14 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"go.uber.org/zap"
 )
+
+// safeContainerIDPrefix safely truncates container ID to 12 chars or less
+func safeContainerIDPrefix(id string) string {
+	if len(id) < 12 {
+		return id
+	}
+	return id[:12]
+}
 
 // DockerCLIClient implements DockerClient using Docker CLI commands and API
 type DockerCLIClient struct {
@@ -49,6 +58,14 @@ func NewDockerClient(logger *zap.Logger) (*DockerCLIClient, error) {
 		logger:    logger,
 		apiClient: apiClient,
 	}, nil
+}
+
+// Close closes the Docker API client connection
+func (d *DockerCLIClient) Close() error {
+	if d.apiClient != nil {
+		return d.apiClient.Close()
+	}
+	return nil
 }
 
 // CreateContainer creates a new container using docker create
@@ -140,9 +157,9 @@ func (d *DockerCLIClient) CreateContainer(ctx context.Context, config *Container
 	
 	// Extract container ID from output
 	containerID := strings.TrimSpace(string(output))
-	
+
 	d.logger.Info("Created container",
-		zap.String("id", containerID[:12]),
+		zap.String("id", safeContainerIDPrefix(containerID)),
 		zap.String("image", config.Image))
 	
 	return containerID, nil
@@ -155,15 +172,15 @@ func (d *DockerCLIClient) StartContainer(ctx context.Context, containerID string
 	if err != nil {
 		return fmt.Errorf("failed to start container: %w, output: %s", err, string(output))
 	}
-	
-	d.logger.Info("Started container", zap.String("id", containerID[:12]))
+
+	d.logger.Info("Started container", zap.String("id", safeContainerIDPrefix(containerID)))
 	return nil
 }
 
 // StopContainer stops a running container
 func (d *DockerCLIClient) StopContainer(ctx context.Context, containerID string) error {
-	d.logger.Info("Stopping container", zap.String("id", containerID[:12]))
-	
+	d.logger.Info("Stopping container", zap.String("id", safeContainerIDPrefix(containerID)))
+
 	cmd := exec.CommandContext(ctx, "docker", "stop", "--time", "10", containerID)
 	if err := cmd.Run(); err != nil {
 		// Check if container is already stopped
@@ -171,17 +188,17 @@ func (d *DockerCLIClient) StopContainer(ctx context.Context, containerID string)
 			return fmt.Errorf("failed to stop container: %w", err)
 		}
 	}
-	
-	d.logger.Info("Container stopped", zap.String("id", containerID[:12]))
-	
+
+	d.logger.Info("Container stopped", zap.String("id", safeContainerIDPrefix(containerID)))
+
 	// Remove container
 	removeCmd := exec.CommandContext(ctx, "docker", "rm", "-f", containerID)
 	if err := removeCmd.Run(); err != nil {
 		d.logger.Warn("Failed to remove container", zap.Error(err))
 	} else {
-		d.logger.Info("Container removed", zap.String("id", containerID[:12]))
+		d.logger.Info("Container removed", zap.String("id", safeContainerIDPrefix(containerID)))
 	}
-	
+
 	return nil
 }
 
@@ -248,7 +265,7 @@ func (d *DockerCLIClient) GetLogs(ctx context.Context, containerID string, follo
 	}
 
 	d.logger.Debug("Started streaming logs via Docker API",
-		zap.String("container", containerID[:12]),
+		zap.String("container", safeContainerIDPrefix(containerID)),
 		zap.Bool("follow", follow))
 
 	return &apiLogStream{
@@ -265,39 +282,54 @@ type apiLogStream struct {
 	logger      *zap.Logger
 	pipeReader  *io.PipeReader
 	pipeWriter  *io.PipeWriter
-	started     bool
+	initOnce    sync.Once
 }
 
 func (s *apiLogStream) Read(p []byte) (n int, err error) {
-	// Lazy initialization of demultiplexer on first read
-	if !s.started {
-		s.started = true
+	// Thread-safe lazy initialization of demultiplexer on first read
+	s.initOnce.Do(func() {
 		s.pipeReader, s.pipeWriter = io.Pipe()
 
 		// Start demultiplexing in background goroutine
 		go func() {
 			defer s.pipeWriter.Close()
+			defer s.reader.Close()
 
 			// Docker API returns multiplexed stream - demultiplex stdout/stderr
 			// StdCopy writes both streams to the same writer (combined output)
 			_, err := stdcopy.StdCopy(s.pipeWriter, s.pipeWriter, s.reader)
 			if err != nil && err != io.EOF {
-				s.logger.Debug("Log demultiplexing completed",
-					zap.String("container", s.containerID[:12]),
+				s.logger.Error("Log demultiplexing failed",
+					zap.String("container", safeContainerIDPrefix(s.containerID)),
 					zap.Error(err))
 			}
 		}()
+	})
+
+	if s.pipeReader == nil {
+		return 0, io.ErrClosedPipe
 	}
 
 	return s.pipeReader.Read(p)
 }
 
 func (s *apiLogStream) Close() error {
+	var errs []error
+
 	if s.pipeReader != nil {
-		s.pipeReader.Close()
+		if err := s.pipeReader.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("pipe reader: %w", err))
+		}
 	}
+
 	if s.reader != nil {
-		return s.reader.Close()
+		if err := s.reader.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("reader: %w", err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("close errors: %v", errs)
 	}
 	return nil
 }

@@ -10,6 +10,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	// Register round_robin load balancer
+	_ "google.golang.org/grpc/balancer/roundrobin"
+
 	pb "github.com/withobsrvr/flowctl/proto"
 )
 

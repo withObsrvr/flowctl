@@ -15,21 +15,33 @@ import (
 
 // LogAggregator aggregates logs from multiple components
 type LogAggregator struct {
-	streams map[string]io.ReadCloser
-	colors  map[string]*color.Color
-	mu      sync.RWMutex
-	quit    chan struct{}
-	logCh   chan LogEntry
+	streams    map[string]io.ReadCloser
+	colors     map[string]*color.Color
+	mu         sync.RWMutex
+	quit       chan struct{}
+	logCh      chan LogEntry
+	writer     *bufio.Writer
+	lastFlush  time.Time
+	flushMu    sync.Mutex
+	flushTicker *time.Ticker
 }
 
 // NewLogAggregator creates a new log aggregator
 func NewLogAggregator() *LogAggregator {
-	return &LogAggregator{
-		streams: make(map[string]io.ReadCloser),
-		colors:  make(map[string]*color.Color),
-		quit:    make(chan struct{}),
-		logCh:   make(chan LogEntry, 100),
+	agg := &LogAggregator{
+		streams:     make(map[string]io.ReadCloser),
+		colors:      make(map[string]*color.Color),
+		quit:        make(chan struct{}),
+		logCh:       make(chan LogEntry, 100),
+		writer:      bufio.NewWriter(os.Stdout),
+		lastFlush:   time.Now(),
+		flushTicker: time.NewTicker(100 * time.Millisecond),
 	}
+
+	// Start periodic flusher
+	go agg.periodicFlush()
+
+	return agg
 }
 
 // AddStream adds a log stream for a component
@@ -48,9 +60,34 @@ func (l *LogAggregator) GetLogChannel() <-chan LogEntry {
 	return l.logCh
 }
 
+// periodicFlush flushes the writer periodically
+func (l *LogAggregator) periodicFlush() {
+	for {
+		select {
+		case <-l.quit:
+			l.flushTicker.Stop()
+			return
+		case <-l.flushTicker.C:
+			l.flushMu.Lock()
+			if err := l.writer.Flush(); err != nil {
+				logger.Error("Failed to flush log writer", zap.Error(err))
+			}
+			l.lastFlush = time.Now()
+			l.flushMu.Unlock()
+		}
+	}
+}
+
 // Stop stops the log aggregator
 func (l *LogAggregator) Stop() {
 	close(l.quit)
+
+	// Final flush
+	l.flushMu.Lock()
+	if err := l.writer.Flush(); err != nil {
+		logger.Error("Failed to flush log writer on stop", zap.Error(err))
+	}
+	l.flushMu.Unlock()
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -116,13 +153,16 @@ func (l *LogAggregator) PrintLog(entry LogEntry) {
 	timestamp := entry.Timestamp.Format("15:04:05")
 	prefix := fmt.Sprintf("[%s] %s:", timestamp, entry.ComponentID)
 
+	// Write to buffered writer instead of direct stdout
+	l.flushMu.Lock()
 	if componentColor != nil {
-		componentColor.Printf("%-30s %s\n", prefix, entry.Message)
+		componentColor.Fprintf(l.writer, "%-30s %s\n", prefix, entry.Message)
 	} else {
-		fmt.Printf("%-30s %s\n", prefix, entry.Message)
+		fmt.Fprintf(l.writer, "%-30s %s\n", prefix, entry.Message)
 	}
-	// Force flush stdout to ensure logs appear immediately
-	os.Stdout.Sync()
+	l.flushMu.Unlock()
+
+	// Writer is flushed periodically by periodicFlush() every 100ms
 }
 
 // StartAggregatedLogging starts aggregated logging for all components
