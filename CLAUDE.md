@@ -50,7 +50,11 @@ go test -v ./internal/core -run TestPipelineDAG
 ### Command Structure
 The application is a CLI tool built with Cobra framework:
 - **Root**: `flowctl` - Base command with global flags
-- **Subcommands**: `apply`, `list`, `translate`, `server`, `version`
+- **Core Commands**: `init`, `run`, `validate`, `translate`
+- **Monitoring**: `dashboard`, `status`, `list`, `pipelines`, `processors`
+- **Development**: `sandbox`
+- **Utility**: `version`
+- **Hidden**: `server` (standalone control plane mode)
 
 ### Core Components
 
@@ -94,7 +98,32 @@ Sources → Processors → Sinks
 Components register with the control plane on startup and send periodic heartbeats for health monitoring.
 
 ### Important Files
-- Pipeline examples: `examples/minimal.yaml`, `examples/dag-pipeline.yaml`
+- Pipeline examples: `examples/getting-started/`
 - Schema definition: `schemas/cue/schema.cue`
 - Proto definitions: `proto/` directory
 - Storage interface: `internal/storage/storage.go`
+
+## Available Commands
+
+### Pipeline Management
+- `flowctl init` - Interactive wizard to create a new Stellar pipeline
+- `flowctl validate <file>` - Validate pipeline configuration before running
+- `flowctl run <file>` - Run a pipeline with embedded control plane
+- `flowctl translate -f <file> -o <format>` - Translate pipeline to docker-compose or local format
+
+### Monitoring & Observability
+- `flowctl dashboard` - Interactive TUI dashboard for real-time monitoring
+- `flowctl status [file]` - Show component health and status
+- `flowctl pipelines` - Manage pipeline runs (list, active, runs, stop)
+- `flowctl processors` - Discover and inspect processors (list, find, show)
+- `flowctl list` - List all registered services
+
+### Development Environment
+- `flowctl sandbox start` - Start local containerized dev environment
+- `flowctl sandbox status` - Check sandbox status
+- `flowctl sandbox logs` - View sandbox logs
+- `flowctl sandbox stop` - Stop sandbox environment
+
+### Utility
+- `flowctl version` - Print version information
+- `flowctl server` - Run standalone control plane (hidden command)

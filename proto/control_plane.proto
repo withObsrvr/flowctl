@@ -56,17 +56,103 @@ message ServiceList {
   repeated ServiceStatus services = 1;
 }
 
+// Pipeline run status
+enum RunStatus {
+  RUN_STATUS_UNKNOWN = 0;
+  RUN_STATUS_STARTING = 1;
+  RUN_STATUS_RUNNING = 2;
+  RUN_STATUS_COMPLETED = 3;
+  RUN_STATUS_FAILED = 4;
+  RUN_STATUS_STOPPED = 5;
+}
+
+// Metrics for a pipeline run
+message RunMetrics {
+  int64 events_processed = 1;
+  double events_per_second = 2;
+  int64 bytes_processed = 3;
+  map<string, ComponentMetrics> component_metrics = 4;
+}
+
+// Per-component metrics
+message ComponentMetrics {
+  int64 events_in = 1;
+  int64 events_out = 2;
+  int64 bytes_in = 3;
+  int64 bytes_out = 4;
+  double processing_time_ms = 5;
+}
+
+// Pipeline run record
+message PipelineRun {
+  string run_id = 1;
+  string pipeline_id = 2;
+  string pipeline_name = 3;
+  RunStatus status = 4;
+  google.protobuf.Timestamp start_time = 5;
+  google.protobuf.Timestamp end_time = 6;
+  string config_yaml = 7;
+  RunMetrics metrics = 8;
+  string error = 9;
+  repeated string component_ids = 10;
+}
+
+// Create pipeline run request
+message CreatePipelineRunRequest {
+  string run_id = 1;
+  string pipeline_name = 2;
+  string config_yaml = 3;
+  repeated string component_ids = 4;
+}
+
+// Update pipeline run request
+message UpdatePipelineRunRequest {
+  string run_id = 1;
+  RunStatus status = 2;
+  RunMetrics metrics = 3;
+  string error = 4;
+}
+
+// Get pipeline run request
+message GetPipelineRunRequest {
+  string run_id = 1;
+}
+
+// List pipeline runs request
+message ListPipelineRunsRequest {
+  string pipeline_name = 1;  // Optional: filter by pipeline name
+  RunStatus status = 2;      // Optional: filter by status
+  int32 limit = 3;           // Optional: limit number of results (default: 10)
+}
+
+// List pipeline runs response
+message ListPipelineRunsResponse {
+  repeated PipelineRun runs = 1;
+}
+
+// Stop pipeline run request
+message StopPipelineRunRequest {
+  string run_id = 1;
+}
+
 // Control plane service definition
 service ControlPlane {
   // Register a new service with the control plane
   rpc Register(ServiceInfo) returns (RegistrationAck);
-  
+
   // Send periodic heartbeats
   rpc Heartbeat(ServiceHeartbeat) returns (google.protobuf.Empty);
-  
+
   // Get service status
   rpc GetServiceStatus(ServiceInfo) returns (ServiceStatus);
-  
+
   // List all registered services
   rpc ListServices(google.protobuf.Empty) returns (ServiceList);
+
+  // Pipeline run management
+  rpc CreatePipelineRun(CreatePipelineRunRequest) returns (PipelineRun);
+  rpc UpdatePipelineRun(UpdatePipelineRunRequest) returns (PipelineRun);
+  rpc GetPipelineRun(GetPipelineRunRequest) returns (PipelineRun);
+  rpc ListPipelineRuns(ListPipelineRunsRequest) returns (ListPipelineRunsResponse);
+  rpc StopPipelineRun(StopPipelineRunRequest) returns (PipelineRun);
 } 

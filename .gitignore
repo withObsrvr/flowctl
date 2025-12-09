@@ -46,3 +46,7 @@ docs/handoffs/component-registration-bugfix-handoff.md
 docs/shape-up/docker-streaming-logs-api.md
 /data
 docs/shape-up/flowctl-proto-migration.md
+docs/shapes
+docs/COMPREHENSIVE_STREAMING_ANALYSIS.md
+flowctl-demo.db
+ORCHESTRATION_GUIDE.md

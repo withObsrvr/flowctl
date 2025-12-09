@@ -1,243 +1,357 @@
-# Shape Up Documents - Component Distribution Friction Reduction
+# flowctl Shapes: Development Roadmap
 
-This directory contains Shape Up documents for eliminating developer friction in flowctl component distribution.
-
-## Problem Statement
-
-**Current Friction:** Developers must build component binaries locally and reference them with absolute paths, making pipelines non-portable and creating team coordination problems.
-
-**Goal:** Enable developers to reference components from OCI registries (like Docker Hub, GitHub Container Registry) so pipelines become portable, version-controlled, and shareable with zero friction.
+This directory contains Shape Up-style pitch documents for flowctl features. Each shape represents a fixed-time, variable-scope project.
 
 ---
 
-## Phases Overview
+## Completed Shapes ✅
 
-### Phase 1: OCI Registry Support
-**Appetite:** 1 week (5 days)
-**Status:** Shaped, awaiting approval
-**Document:** [phase1-oci-registry-support.md](./phase1-oci-registry-support.md)
+### Phase 1: Foundation (Shapes 01-04)
+- **Shape 01:** Processor Registry - Component registration and discovery
+- **Shape 02:** Type-Based Discovery - BFS search over event types
+- **Shape 03:** Intent-Based Topologies - High-level v2 YAML format
+- **Shape 04:** Runtime Reconfiguration - Hot reload and updates
 
-**What it solves:** Users can reference components from container registries instead of local paths.
+### Phase 2: Dynamic Topology (Shapes 05-08)
+- **[Shape 05](./SHAPE-05-COMPLETE.md):** Integrated V2 Execution - Automatic v2 intent detection and execution
+- **[Shape 06](./SHAPE-06-COMPLETE.md):** Processor Registry & Auto-Download - OCI image distribution
+- **[Shape 07](./SHAPE-07-COMPLETE.md):** Init Command - Interactive wizard for new users
+- **[Shape 08](./SHAPE-08-COMPLETE.md):** External Control Plane Mode - Service mesh architecture
 
-**Before:**
+**Result:** Complete dynamic topology vision with intent-based pipelines, automatic discovery, and auto-download.
+
+---
+
+## Pitched Shapes (Ready to Build) 📋
+
+### Phase 3: Cleanup & Polish (Shape 16)
+
+### [Shape 16: Command Cleanup - Remove Dead/Redundant Commands](./16-command-cleanup.md)
+**Appetite:** 2 days | **Status:** Ready | **Dependencies:** None
+
+**Problem:** Flowctl has 4 broken/redundant commands cluttering the CLI.
+
+**Solution:** Remove `apply`, `new`, `context`, and `help` commands. Reduces codebase by ~500 lines and improves UX.
+
+**Related Docs:**
+- [Implementation Checklist](./16-command-cleanup-checklist.md) - Step-by-step guide
+- [Detailed Rationale](./16-command-cleanup-rationale.md) - Analysis & decision record
+
+---
+
+### Phase 4: Orchestration & Observability (Shapes 09-11)
+
+These shapes transform flowctl from a **component registry** to a **pipeline orchestrator** like Dagster.
+
+### [Shape 09: Pipeline Run Tracking & Management API](./09-pipeline-run-tracking.md)
+**Appetite:** 2-3 days | **Status:** Pitched | **Dependencies:** None
+
+**Problem:** Control plane tracks components but not pipeline runs.
+
+**Solution:** Add run tracking, lifecycle management, and persistent storage.
+
+### [Shape 10: Pipeline Management CLI](./10-pipeline-management-cli.md)
+**Appetite:** 1 day | **Status:** Pitched | **Depends On:** Shape 09
+
+**Problem:** No user-facing CLI for pipeline management.
+
+**Solution:** New `flowctl pipelines` command group with list, runs, info, stop subcommands.
+
+### [Shape 11: Interactive Terminal UI](./11-interactive-tui.md)
+**Appetite:** 2 days | **Status:** Pitched | **Depends On:** Shapes 09, 10
+
+**Problem:** Static CLI, no live monitoring.
+
+**Solution:** Interactive TUI with live dashboard using bubbletea framework.
+
+---
+
+## Historical Shapes (Original Dynamic Topology)
+
+### [Shape 01: Processor Registry](01-processor-registry.md)
+**Appetite:** 1 week (5-7 days)
+**Foundation for everything else**
+
+Processors auto-register with flowctl control plane, advertising:
+- Input event types
+- Output event types
+- Endpoint and health URL
+- Metadata (network, version, etc.)
+
+**Deliverable:**
+```bash
+$ flowctl processors list
+ID                    INPUT TYPES              OUTPUT TYPES                    STATUS
+stellar-live-source   -                        stellar.ledger.v1               healthy
+ttp-processor-v1      stellar.ledger.v1        stellar.token.transfer.v1       healthy
+```
+
+**Enables:** Discovery and chain building
+
+---
+
+### [Shape 02: Type-Based Discovery](02-type-based-discovery.md)
+**Appetite:** 1 week (5-7 days)
+**Depends on:** Shape 01
+
+Flowctl discovers processor chains using BFS graph search over event types.
+
+**Deliverable:**
+```bash
+$ flowctl topology suggest --from stellar.ledger.v1 --to postgres
+Chain found:
+  stellar-live-source → ttp-processor → postgres-sink
+```
+
+**Enables:** Automatic chain building
+
+---
+
+### [Shape 03: Intent-Based Topologies](03-intent-based-topologies.md)
+**Appetite:** 2 weeks (10-14 days)
+**Depends on:** Shapes 01, 02
+
+Users write high-level intent, flowctl translates to executable pipeline.
+
+**Deliverable:**
 ```yaml
-command: ["/home/tillman/Documents/ttp-processor-demo/stellar-live-source-datalake/stellar-live-source-datalake"]
+# Write this (v2 intent)
+spec:
+  from: stellar.ledger.v1
+  to: postgres
+
+# Flowctl generates this (v1 implementation)
+processors:
+  - id: ttp-processor
+    command: ["/path/to/ttp-processor"]
+    # ... discovered from registry
 ```
 
-**After:**
-```yaml
-image: ghcr.io/withobsrvr/stellar-live-source-datalake:v1.2.3
-```
-
-**Key Features:**
-- Parse `image:` field in pipeline YAML
-- Pull images from public registries (Docker Hub, GHCR, GCR)
-- Cache images locally to avoid re-downloading
-- Support multiple drivers (local, Docker Compose, Kubernetes)
-- Backwards compatible with existing `command:` field
+**Enables:** Declarative topologies
 
 ---
 
-### Phase 2: Publishing Automation
-**Appetite:** 2-3 days (small batch)
-**Status:** Shaped, awaiting approval
-**Depends on:** Phase 1
-**Document:** [phase2-publishing-automation.md](./phase2-publishing-automation.md)
+### [Shape 04: Runtime Reconfiguration](04-runtime-reconfiguration.md)
+**Appetite:** 2 weeks (10-14 days)
+**Depends on:** Shapes 01, 02, 03
 
-**What it solves:** Component authors can publish images automatically via CI/CD instead of manual multi-platform builds.
+Add/remove/update processors without stopping pipeline.
 
-**Developer Workflow:**
+**Deliverable:**
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
-# GitHub Actions automatically builds multi-arch images and pushes to registry
+# Pipeline running: source → ttp → postgres
+$ flowctl topology add aggregator --after ttp-processor
+
+# Flowctl:
+# 1. Starts aggregator
+# 2. Creates new routes
+# 3. Drains old route
+# 4. Removes old route
+# Result: source → ttp → aggregator → postgres (no downtime, no data loss)
 ```
 
-**Key Deliverables:**
-- Component image specification document
-- Dockerfile template (multi-stage, distroless)
-- GitHub Actions workflow template
-- Publishing guide documentation
-- Example component repository
+**Achieves:** Full dynamic topology vision
 
 ---
 
-### Phase 3: Development Mode
-**Appetite:** 1 week (5 days)
-**Status:** Shaped, awaiting approval
-**Depends on:** Phase 1
-**Document:** [phase3-development-mode.md](./phase3-development-mode.md)
+## Timeline
 
-**What it solves:** Developers can use local binaries during active development without repeatedly building/pushing images.
+**Sequential (safe approach):**
+```
+Week 1-2:   Shape 01 (Processor Registry)
+Week 3-4:   Shape 02 (Type-Based Discovery)
+Week 5-8:   Shape 03 (Intent-Based Topologies)
+Week 9-12:  Shape 04 (Runtime Reconfiguration)
+Total: ~3 months
+```
 
-**Production:**
+**Parallel (aggressive approach):**
+```
+Week 1-2:   Shape 01 (Processor Registry) - BLOCKER
+Week 3-4:   Shape 02 (Discovery) + start Shape 03 design
+Week 5-6:   Shape 03 (Intent Topologies) - finish implementation
+Week 7-8:   Shape 04 (Runtime Reconfig) - start with drain-and-restart
+Week 9-10:  Shape 04 - iterate to hot reload if time permits
+Total: ~2.5 months
+```
+
+**Recommended:** Start sequential, go parallel if ahead of schedule.
+
+---
+
+## Scope Line Across All Shapes
+
+### Must Have (Non-negotiable)
+Core functionality that proves the vision:
+- ✅ Auto-registration of processors
+- ✅ Discovery of processor chains by event type
+- ✅ Intent → implementation translation
+- ✅ Add/remove processors (at minimum with drain-and-restart)
+
+### Nice to Have (Include if time)
+Polish that improves UX:
+- ⭐ Health monitoring integration
+- ⭐ Interactive chain selection
+- ⭐ Constraint filtering (network, blockchain)
+- ⭐ Hot reload without restart
+
+### Could Have (Cut if needed)
+Features that can wait:
+- 💡 Persistent registry
+- 💡 Processor marketplace
+- 💡 Visual topology builder
+- 💡 Multi-path topologies
+
+---
+
+## Success Criteria
+
+**Demo that proves we achieved the vision:**
+
 ```bash
-flowctl apply pipeline.yaml  # Uses images
+# 1. Start flowctl control plane
+$ flowctl serve
+Control plane running on :8080
+
+# 2. Start processors (they auto-register)
+$ ./stellar-live-source &
+$ ./ttp-processor &
+$ ./postgres-sink &
+
+# 3. Check registry
+$ flowctl processors list
+stellar-live-source   -                        stellar.ledger.v1               healthy
+ttp-processor-v1      stellar.ledger.v1        stellar.token.transfer.v1       healthy
+postgres-sink-v1      stellar.token.transfer.v1 -                              healthy
+
+# 4. Write intent YAML
+$ cat > pipeline.yaml <<EOF
+apiVersion: flowctl/v2
+kind: Topology
+spec:
+  from: stellar.ledger.v1
+  to: postgres
+EOF
+
+# 5. Run pipeline (auto-discovers chain)
+$ flowctl run pipeline.yaml
+Discovered chain: stellar-live-source → ttp-processor → postgres-sink
+Starting topology...
+  ✓ All components running
+
+# 6. Add processor at runtime
+$ flowctl topology add aggregator --after ttp-processor
+Reconfiguring topology...
+  ✓ Topology updated: source → ttp → aggregator → postgres
+  ✓ No events lost, no downtime
 ```
 
-**Development:**
-```bash
-flowctl dev pipeline.yaml  # Uses local binaries (auto-detected overrides)
+**If we can do this demo, we've achieved the vision.**
+
+---
+
+## Risk Assessment
+
+### Shape 01 (Processor Registry)
+**Risk:** Low
+**Reason:** Simple data structure + gRPC registration
+**Mitigation:** None needed
+
+### Shape 02 (Type-Based Discovery)
+**Risk:** Low
+**Reason:** BFS is well-understood algorithm
+**Mitigation:** Set max search depth to prevent infinite loops
+
+### Shape 03 (Intent-Based Topologies)
+**Risk:** Medium
+**Reason:** Translation logic could get complex with constraints
+**Mitigation:** Start with simple from→to, add constraints later
+
+### Shape 04 (Runtime Reconfiguration)
+**Risk:** High
+**Reason:** Event draining and rollback are complex
+**Mitigation:** Build drain-and-restart first, iterate to hot reload
+
+---
+
+## Decision Points
+
+**After Shape 01:**
+- ✅ Continue if: Registry works, processors auto-register
+- ❌ Kill if: Can't reliably track processors or heartbeats fail
+
+**After Shape 02:**
+- ✅ Continue if: Can discover valid chains for common topologies
+- ⚠️ Reassess if: Discovery takes >1s or produces invalid chains
+
+**After Shape 03:**
+- ✅ Continue to Shape 04 if: Intent translation works reliably
+- ⚠️ Stop at Shape 03 if: Translation too fragile or error-prone
+
+**During Shape 04:**
+- ✅ Ship if: Drain-and-restart works without data loss
+- ⭐ Iterate if: Hot reload feasible and time permits
+- ❌ Rollback to Shape 03 if: Can't guarantee no data loss
+
+---
+
+## Files Structure
+
+After all shapes complete:
+
+```
+flowctl/
+├── internal/
+│   ├── registry/
+│   │   ├── client.go (existing - OCI images)
+│   │   └── processor_registry.go (NEW - Shape 01)
+│   ├── topology/
+│   │   ├── matcher.go (NEW - Shape 02)
+│   │   ├── builder.go (NEW - Shape 02)
+│   │   ├── intent.go (NEW - Shape 03)
+│   │   ├── translator.go (NEW - Shape 03)
+│   │   ├── state_manager.go (NEW - Shape 04)
+│   │   └── router.go (NEW - Shape 04)
+│   └── controlplane/
+│       └── server.go (MODIFIED - add registration RPCs)
+├── cmd/
+│   ├── processors.go (NEW - Shape 01)
+│   ├── topology.go (NEW - Shape 02, 03)
+│   └── run.go (MODIFIED - Shape 03)
+└── proto/
+    └── processor_registration.proto (NEW - Shape 01)
 ```
 
-**Key Features:**
-- Separate `flowctl-dev.yaml` override file
-- Selective component override (mix local + images)
-- Automatic rebuild before start
-- Environment variable overrides
-- Fast iteration cycles (< 30 seconds code change → running)
+**Estimated total new code:** ~2500-3000 lines
 
 ---
 
-### Phase 4: Discovery & Management
-**Appetite:** 1-2 weeks (5-10 days)
-**Status:** Shaped, awaiting approval
-**Depends on:** Phase 1, Phase 2
-**Document:** [phase4-discovery-management.md](./phase4-discovery-management.md)
+## Notes
 
-**What it solves:** Developers can discover, search, and manage components without manual GitHub/registry browsing.
+These shapes follow **Shape Up methodology**:
 
-**Discovery:**
-```bash
-flowctl components search kafka
-# Found 3 components:
-#   kafka-source          Stream from Apache Kafka        v2.1.0
-#   kafka-sink            Write to Apache Kafka           v1.9.0
-#   kafka-dlq-processor   Dead letter queue for Kafka     v0.5.0
+- ✅ **Fixed time, variable scope** - Each shape has hard deadline
+- ✅ **Appetites, not estimates** - "We'll spend 1 week" not "This will take 1 week"
+- ✅ **Fat-marker sketches** - Solution outlines, not detailed specs
+- ✅ **Rabbit holes identified** - Explicit "don't build" lists
+- ✅ **Clear done criteria** - Concrete examples that prove success
+- ✅ **Scope lines** - Must/Nice/Could have prioritization
+- ✅ **Ship or kill** - If stuck at 50% time, cut scope or abandon
 
-flowctl components info kafka-source
-# Full details: description, versions, configuration, examples
-```
-
-**Cache Management:**
-```bash
-flowctl cache list      # Show cached images
-flowctl cache clean     # Remove old versions
-flowctl cache prune     # Remove unused images
-```
-
-**Key Features:**
-- Git-based component index (zero infrastructure)
-- Search and filter components
-- Inspect component details and versions
-- Local cache management commands
-- Pretty table formatting
+**Most important:** These shapes are **bets**, not commitments. After each cycle, we decide whether to continue, pivot, or stop.
 
 ---
 
-## Timeline & Dependencies
+## Related Documents
 
-```
-Phase 1 (1 week)
-  └─ OCI Registry Support
-      ├─ Phase 2 (2-3 days) - Publishing Automation
-      │
-      ├─ Phase 3 (1 week) - Development Mode
-      │
-      └─ Phase 2 + Phase 3 complete
-          └─ Phase 4 (1-2 weeks) - Discovery & Management
-
-Total: 3-4 weeks for all phases
-```
-
-**Parallel execution possible:**
-- Phase 2 and Phase 3 can run in parallel after Phase 1 completes
-- Phase 4 requires Phase 2 (components must be published)
-
----
-
-## Success Metrics
-
-### Before (Current State - High Friction)
-- **Portability:** ❌ Pipelines locked to specific machines (absolute paths)
-- **Time to share pipeline:** ∞ (can't share due to local paths)
-- **Time to run someone's pipeline:** 30+ min (build all components)
-- **Version consistency:** ❌ Everyone has different builds
-- **Discovery:** 10+ min (Google, GitHub, guesswork)
-- **Publishing:** 30+ min (manual, error-prone)
-
-### After (Target State - Zero Friction)
-- **Portability:** ✅ Pipelines work on any machine
-- **Time to share pipeline:** 0 sec (git commit YAML)
-- **Time to run someone's pipeline:** 2 min (pull images, cached after)
-- **Version consistency:** ✅ Exact same images via tags
-- **Discovery:** 30 sec (`flowctl components search`)
-- **Publishing:** 5 min (copy templates, push tag)
-
----
-
-## Shape Up Principles Applied
-
-### Fixed Time, Variable Scope
-- Each phase has a clear appetite (1 week, 2-3 days)
-- Scope lines explicitly define MUST HAVE vs COULD HAVE
-- No deadline extensions - ship what's done or cut scope
-
-### Fat-Marker Sketches
-- Solutions show key concepts without over-specifying
-- Room for implementation creativity
-- Focus on user experience and outcomes
-
-### Rabbit Holes Identified
-- Each document lists potential rabbit holes
-- Clear guidance on what NOT to build
-- Time-saving decisions documented
-
-### Uphill/Downhill Work
-- Clear implementation plans (day-by-day)
-- Dependencies identified
-- Risks and mitigations documented
-
-### Cool-Down After Each Phase
-- 20% of cycle time (1-2 days between phases)
-- Fix bugs, refactor, explore
-- Prevent burnout
-
----
-
-## How to Use These Documents
-
-### For Planning
-1. Review each phase document
-2. Confirm appetites match available time
-3. Approve scope lines (MUST HAVE vs NICE TO HAVE)
-4. Agree on success criteria
-
-### For Implementation
-1. Follow day-by-day implementation plan
-2. Use rabbit holes list to avoid time sinks
-3. Check progress against "Done Looks Like" section
-4. Cut COULD HAVE items if running behind
-
-### For Retrospectives
-1. Compare actuals vs estimates
-2. Review what was cut and why
-3. Identify new rabbit holes discovered
-4. Update future shapes based on learnings
-
----
-
-## Approval Status
-
-| Phase | Status | Kick-off | Ship Deadline | Actual Shipped |
-|-------|--------|----------|---------------|----------------|
-| Phase 1 | Awaiting approval | TBD | TBD | - |
-| Phase 2 | Awaiting approval | TBD | TBD | - |
-| Phase 3 | Awaiting approval | TBD | TBD | - |
-| Phase 4 | Awaiting approval | TBD | TBD | - |
-
----
-
-## References
-
-- [Shape Up Methodology](https://basecamp.com/shapeup)
-- [Component Distribution Analysis](../component-distribution-analysis.md) - Research behind these decisions
-- [Terraform Provider Registry](https://registry.terraform.io/)
-- [OCI Distribution Spec](https://github.com/opencontainers/distribution-spec)
-- [Krew Plugin Index](https://github.com/kubernetes-sigs/krew-index)
+- [Original PR #5637](https://github.com/stellar/go-stellar-sdk/pull/5637) - Vision and inspiration
+- [ttp_processor_layout.png](../../ttp-processor-sdk/ttp_processor_layout.png) - Distributed topology diagram
+- [GENERIC_EVENT_ENVELOPE.md](../../ttp-processor-demo/GENERIC_EVENT_ENVELOPE.md) - Event envelope architecture
 
 ---
 
 ## Questions or Feedback?
 
-Open an issue or discussion in the flowctl repository to discuss these shapes, suggest modifications, or ask questions about implementation approach.
+These shapes are living documents. If assumptions change or new information emerges, update the shapes before starting work.
+
+**Better to spend 1 day reshaping than 2 weeks building the wrong thing.**

@@ -11,6 +11,7 @@ import (
 
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/api"
+	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"github.com/withobsrvr/flowctl/internal/storage"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
@@ -89,8 +90,12 @@ func (e *EmbeddedControlPlane) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start control plane: %w", err)
 	}
 
-	// Register the control plane service
+	// Register both control plane services
 	flowctlv1.RegisterControlPlaneServiceServer(e.server, e.controlPlane)
+
+	// Register flowctlpb service using wrapper (needed for pipeline tracking CLI/TUI)
+	wrapper := api.NewControlPlaneWrapper(e.controlPlane)
+	flowctlpb.RegisterControlPlaneServer(e.server, wrapper)
 
 	// Start server in background
 	go func() {

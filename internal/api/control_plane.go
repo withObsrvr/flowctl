@@ -13,6 +13,7 @@ import (
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/storage"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
+	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"go.uber.org/zap"
 )
 
@@ -466,5 +467,281 @@ func (s *ControlPlaneServer) checkServiceHealth() {
 				}
 			}
 		}
+	}
+}
+
+// Pipeline run management RPC methods
+
+// CreatePipelineRun implements the CreatePipelineRun RPC
+func (s *ControlPlaneServer) CreatePipelineRun(ctx context.Context, req *flowctlpb.CreatePipelineRunRequest) (*flowctlpb.PipelineRun, error) {
+	now := time.Now()
+
+	run := &flowctlpb.PipelineRun{
+		RunId:        req.RunId,
+		PipelineId:   req.PipelineName,  // Use pipeline name as ID for now
+		PipelineName: req.PipelineName,
+		Status:       flowctlpb.RunStatus_RUN_STATUS_STARTING,
+		StartTime:    timestamppb.New(now),
+		ConfigYaml:   req.ConfigYaml,
+		ComponentIds: req.ComponentIds,
+		Metrics: &flowctlpb.RunMetrics{
+			EventsProcessed: 0,
+			EventsPerSecond: 0.0,
+			BytesProcessed:  0,
+		},
+	}
+
+	// Store in persistent storage if available
+	if s.storage != nil {
+		runInfo := &storage.PipelineRunInfo{
+			Run: run,
+		}
+		if err := s.storage.CreatePipelineRun(ctx, runInfo); err != nil {
+			logger.Error("Failed to create pipeline run in storage",
+				zap.String("run_id", req.RunId),
+				zap.Error(err))
+			return nil, fmt.Errorf("failed to create pipeline run: %w", err)
+		}
+	}
+
+	logger.Info("Pipeline run created",
+		zap.String("run_id", req.RunId),
+		zap.String("pipeline_name", req.PipelineName),
+		zap.Strings("component_ids", req.ComponentIds))
+
+	return run, nil
+}
+
+// UpdatePipelineRun implements the UpdatePipelineRun RPC
+func (s *ControlPlaneServer) UpdatePipelineRun(ctx context.Context, req *flowctlpb.UpdatePipelineRunRequest) (*flowctlpb.PipelineRun, error) {
+	if s.storage == nil {
+		return nil, fmt.Errorf("storage not configured")
+	}
+
+	// Update the run in storage
+	var updatedRun *flowctlpb.PipelineRun
+	err := s.storage.UpdatePipelineRun(ctx, req.RunId, func(runInfo *storage.PipelineRunInfo) error {
+		if req.Status != flowctlpb.RunStatus_RUN_STATUS_UNKNOWN {
+			runInfo.Run.Status = req.Status
+
+			// Set end time if completed, failed, or stopped
+			if req.Status == flowctlpb.RunStatus_RUN_STATUS_COMPLETED ||
+			   req.Status == flowctlpb.RunStatus_RUN_STATUS_FAILED ||
+			   req.Status == flowctlpb.RunStatus_RUN_STATUS_STOPPED {
+				runInfo.Run.EndTime = timestamppb.New(time.Now())
+			}
+		}
+		if req.Metrics != nil {
+			runInfo.Run.Metrics = req.Metrics
+		}
+		if req.Error != "" {
+			runInfo.Run.Error = req.Error
+		}
+		updatedRun = runInfo.Run
+		return nil
+	})
+
+	if err != nil {
+		logger.Error("Failed to update pipeline run",
+			zap.String("run_id", req.RunId),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to update pipeline run: %w", err)
+	}
+
+	logger.Debug("Pipeline run updated",
+		zap.String("run_id", req.RunId),
+		zap.String("status", req.Status.String()))
+
+	return updatedRun, nil
+}
+
+// GetPipelineRun implements the GetPipelineRun RPC
+func (s *ControlPlaneServer) GetPipelineRun(ctx context.Context, req *flowctlpb.GetPipelineRunRequest) (*flowctlpb.PipelineRun, error) {
+	if s.storage == nil {
+		return nil, fmt.Errorf("storage not configured")
+	}
+
+	runInfo, err := s.storage.GetPipelineRun(ctx, req.RunId)
+	if err != nil {
+		if storage.IsNotFound(err) {
+			return nil, fmt.Errorf("pipeline run not found: %s", req.RunId)
+		}
+		logger.Error("Failed to get pipeline run",
+			zap.String("run_id", req.RunId),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to get pipeline run: %w", err)
+	}
+
+	return runInfo.Run, nil
+}
+
+// ListPipelineRuns implements the ListPipelineRuns RPC
+func (s *ControlPlaneServer) ListPipelineRuns(ctx context.Context, req *flowctlpb.ListPipelineRunsRequest) (*flowctlpb.ListPipelineRunsResponse, error) {
+	if s.storage == nil {
+		return &flowctlpb.ListPipelineRunsResponse{Runs: []*flowctlpb.PipelineRun{}}, nil
+	}
+
+	limit := req.Limit
+	if limit == 0 {
+		limit = 10 // Default limit
+	}
+
+	runInfos, err := s.storage.ListPipelineRuns(ctx, req.PipelineName, req.Status, limit)
+	if err != nil {
+		logger.Error("Failed to list pipeline runs",
+			zap.String("pipeline_name", req.PipelineName),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to list pipeline runs: %w", err)
+	}
+
+	runs := make([]*flowctlpb.PipelineRun, len(runInfos))
+	for i, runInfo := range runInfos {
+		runs[i] = runInfo.Run
+	}
+
+	return &flowctlpb.ListPipelineRunsResponse{Runs: runs}, nil
+}
+
+// StopPipelineRun implements the StopPipelineRun RPC
+func (s *ControlPlaneServer) StopPipelineRun(ctx context.Context, req *flowctlpb.StopPipelineRunRequest) (*flowctlpb.PipelineRun, error) {
+	if s.storage == nil {
+		return nil, fmt.Errorf("storage not configured")
+	}
+
+	// Update the run status to stopped
+	var stoppedRun *flowctlpb.PipelineRun
+	err := s.storage.UpdatePipelineRun(ctx, req.RunId, func(runInfo *storage.PipelineRunInfo) error {
+		runInfo.Run.Status = flowctlpb.RunStatus_RUN_STATUS_STOPPED
+		runInfo.Run.EndTime = timestamppb.New(time.Now())
+		stoppedRun = runInfo.Run
+		return nil
+	})
+
+	if err != nil {
+		if storage.IsNotFound(err) {
+			return nil, fmt.Errorf("pipeline run not found: %s", req.RunId)
+		}
+		logger.Error("Failed to stop pipeline run",
+			zap.String("run_id", req.RunId),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to stop pipeline run: %w", err)
+	}
+
+	logger.Info("Pipeline run stopped",
+		zap.String("run_id", req.RunId))
+
+	return stoppedRun, nil
+}
+
+// ControlPlaneWrapper wraps ControlPlaneServer to implement the flowctlpb.ControlPlane interface
+// This is needed because flowctlpb and v1 have methods with the same names but different signatures
+type ControlPlaneWrapper struct {
+	flowctlpb.UnimplementedControlPlaneServer
+	server *ControlPlaneServer
+}
+
+// NewControlPlaneWrapper creates a wrapper that implements flowctlpb.ControlPlane
+func NewControlPlaneWrapper(server *ControlPlaneServer) *ControlPlaneWrapper {
+	return &ControlPlaneWrapper{server: server}
+}
+
+// Register implements flowctlpb.ControlPlane.Register
+func (w *ControlPlaneWrapper) Register(ctx context.Context, req *flowctlpb.ServiceInfo) (*flowctlpb.RegistrationAck, error) {
+	v1Req := &flowctlv1.RegisterRequest{
+		Component: &flowctlv1.ComponentInfo{
+			Id:   req.ComponentId,
+			Type: convertToV1ComponentType(req.ServiceType),
+		},
+	}
+
+	_, err := w.server.RegisterComponent(ctx, v1Req)
+	if err != nil {
+		return nil, err
+	}
+
+	return &flowctlpb.RegistrationAck{
+		ServiceId: req.ServiceId,
+	}, nil
+}
+
+// Heartbeat implements flowctlpb.ControlPlane.Heartbeat
+func (w *ControlPlaneWrapper) Heartbeat(ctx context.Context, req *flowctlpb.ServiceHeartbeat) (*emptypb.Empty, error) {
+	v1Req := &flowctlv1.HeartbeatRequest{
+		ServiceId: req.ServiceId,
+	}
+
+	return w.server.Heartbeat(ctx, v1Req)
+}
+
+// GetServiceStatus implements flowctlpb.ControlPlane.GetServiceStatus
+func (w *ControlPlaneWrapper) GetServiceStatus(ctx context.Context, req *flowctlpb.ServiceInfo) (*flowctlpb.ServiceStatus, error) {
+	return nil, fmt.Errorf("GetServiceStatus not implemented")
+}
+
+// ListServices implements flowctlpb.ControlPlane.ListServices
+func (w *ControlPlaneWrapper) ListServices(ctx context.Context, req *emptypb.Empty) (*flowctlpb.ServiceList, error) {
+	v1Req := &flowctlv1.ListComponentsRequest{}
+	v1Resp, err := w.server.ListComponents(ctx, v1Req)
+	if err != nil {
+		return nil, err
+	}
+
+	services := make([]*flowctlpb.ServiceStatus, len(v1Resp.Components))
+	for i, comp := range v1Resp.Components {
+		services[i] = &flowctlpb.ServiceStatus{
+			ServiceId:   comp.Component.Id,
+			ComponentId: comp.Component.Id,
+			ServiceType: convertFromV1ServiceType(comp.Component.Type),
+		}
+	}
+
+	return &flowctlpb.ServiceList{Services: services}, nil
+}
+
+// Pipeline run tracking methods - delegate directly to the server
+func (w *ControlPlaneWrapper) CreatePipelineRun(ctx context.Context, req *flowctlpb.CreatePipelineRunRequest) (*flowctlpb.PipelineRun, error) {
+	return w.server.CreatePipelineRun(ctx, req)
+}
+
+func (w *ControlPlaneWrapper) UpdatePipelineRun(ctx context.Context, req *flowctlpb.UpdatePipelineRunRequest) (*flowctlpb.PipelineRun, error) {
+	return w.server.UpdatePipelineRun(ctx, req)
+}
+
+func (w *ControlPlaneWrapper) GetPipelineRun(ctx context.Context, req *flowctlpb.GetPipelineRunRequest) (*flowctlpb.PipelineRun, error) {
+	return w.server.GetPipelineRun(ctx, req)
+}
+
+func (w *ControlPlaneWrapper) ListPipelineRuns(ctx context.Context, req *flowctlpb.ListPipelineRunsRequest) (*flowctlpb.ListPipelineRunsResponse, error) {
+	return w.server.ListPipelineRuns(ctx, req)
+}
+
+func (w *ControlPlaneWrapper) StopPipelineRun(ctx context.Context, req *flowctlpb.StopPipelineRunRequest) (*flowctlpb.PipelineRun, error) {
+	return w.server.StopPipelineRun(ctx, req)
+}
+
+// Helper functions to convert between v1 and flowctlpb types
+func convertToV1ComponentType(t flowctlpb.ServiceType) flowctlv1.ComponentType {
+	switch t {
+	case flowctlpb.ServiceType_SERVICE_TYPE_SOURCE:
+		return flowctlv1.ComponentType_COMPONENT_TYPE_SOURCE
+	case flowctlpb.ServiceType_SERVICE_TYPE_PROCESSOR:
+		return flowctlv1.ComponentType_COMPONENT_TYPE_PROCESSOR
+	case flowctlpb.ServiceType_SERVICE_TYPE_SINK:
+		return flowctlv1.ComponentType_COMPONENT_TYPE_CONSUMER
+	default:
+		return flowctlv1.ComponentType_COMPONENT_TYPE_UNSPECIFIED
+	}
+}
+
+func convertFromV1ServiceType(t flowctlv1.ComponentType) flowctlpb.ServiceType {
+	switch t {
+	case flowctlv1.ComponentType_COMPONENT_TYPE_SOURCE:
+		return flowctlpb.ServiceType_SERVICE_TYPE_SOURCE
+	case flowctlv1.ComponentType_COMPONENT_TYPE_PROCESSOR:
+		return flowctlpb.ServiceType_SERVICE_TYPE_PROCESSOR
+	case flowctlv1.ComponentType_COMPONENT_TYPE_CONSUMER:
+		return flowctlpb.ServiceType_SERVICE_TYPE_SINK
+	default:
+		return flowctlpb.ServiceType_SERVICE_TYPE_UNSPECIFIED
 	}
 }

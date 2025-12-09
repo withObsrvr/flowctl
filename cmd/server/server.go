@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/api"
+	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"github.com/withobsrvr/flowctl/internal/config"
 	"github.com/withobsrvr/flowctl/internal/storage"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
@@ -140,8 +141,12 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 				return fmt.Errorf("failed to start control plane server: %w", err)
 			}
 			
-			// Register the control plane service
+			// Register both control plane services
 			flowctlv1.RegisterControlPlaneServiceServer(grpcServer, controlPlane)
+
+			// Register flowctlpb service using wrapper (needed for pipeline tracking CLI/TUI)
+			wrapper := api.NewControlPlaneWrapper(controlPlane)
+			flowctlpb.RegisterControlPlaneServer(grpcServer, wrapper)
 
 			// Set up signal handling for graceful shutdown
 			ctx, cancel := context.WithCancel(context.Background())
