@@ -5,19 +5,22 @@ import (
 	"sync"
 
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
+	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"go.uber.org/zap"
 )
 
 // MemoryStorage is an in-memory implementation of ServiceStorage for testing
 type MemoryStorage struct {
-	mu       sync.RWMutex
-	services map[string]*ServiceInfo
+	mu           sync.RWMutex
+	services     map[string]*ServiceInfo
+	pipelineRuns map[string]*PipelineRunInfo
 }
 
 // NewMemoryStorage creates a new in-memory storage for testing
 func NewMemoryStorage() ServiceStorage {
 	return &MemoryStorage{
-		services: make(map[string]*ServiceInfo),
+		services:     make(map[string]*ServiceInfo),
+		pipelineRuns: make(map[string]*PipelineRunInfo),
 	}
 }
 
@@ -153,5 +156,85 @@ func (t *memoryTransaction) DeleteService(serviceID string) error {
 	}
 
 	delete(t.storage.services, serviceID)
+	return nil
+}
+
+// Pipeline run storage methods
+
+// CreatePipelineRun stores a new pipeline run in the registry
+func (s *MemoryStorage) CreatePipelineRun(ctx context.Context, run *PipelineRunInfo) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	logger.Debug("Creating pipeline run in memory", zap.String("run_id", run.Run.RunId))
+	s.pipelineRuns[run.Run.RunId] = run
+	return nil
+}
+
+// UpdatePipelineRun updates an existing pipeline run in the registry
+func (s *MemoryStorage) UpdatePipelineRun(ctx context.Context, runID string, updater func(*PipelineRunInfo) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	run, ok := s.pipelineRuns[runID]
+	if !ok {
+		return ErrPipelineRunNotFound{RunID: runID}
+	}
+
+	return updater(run)
+}
+
+// GetPipelineRun retrieves a pipeline run by its ID
+func (s *MemoryStorage) GetPipelineRun(ctx context.Context, runID string) (*PipelineRunInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	run, ok := s.pipelineRuns[runID]
+	if !ok {
+		return nil, ErrPipelineRunNotFound{RunID: runID}
+	}
+
+	return run, nil
+}
+
+// ListPipelineRuns retrieves pipeline runs, optionally filtered by pipeline name and status
+func (s *MemoryStorage) ListPipelineRuns(ctx context.Context, pipelineName string, status flowctlpb.RunStatus, limit int32) ([]*PipelineRunInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	runs := make([]*PipelineRunInfo, 0)
+	count := int32(0)
+
+	for _, run := range s.pipelineRuns {
+		// Check if we've reached the limit
+		if limit > 0 && count >= limit {
+			break
+		}
+
+		// Apply filters
+		if pipelineName != "" && run.Run.PipelineName != pipelineName {
+			continue
+		}
+		if status != flowctlpb.RunStatus_RUN_STATUS_UNKNOWN && run.Run.Status != status {
+			continue
+		}
+
+		runs = append(runs, run)
+		count++
+	}
+
+	return runs, nil
+}
+
+// DeletePipelineRun removes a pipeline run from the registry
+func (s *MemoryStorage) DeletePipelineRun(ctx context.Context, runID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.pipelineRuns[runID]; !ok {
+		return ErrPipelineRunNotFound{RunID: runID}
+	}
+
+	delete(s.pipelineRuns, runID)
 	return nil
 }

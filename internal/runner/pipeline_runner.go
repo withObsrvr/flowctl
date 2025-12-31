@@ -5,14 +5,20 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/withobsrvr/flowctl/internal/controlplane"
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/orchestrator"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
+	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // PipelineRunner manages the lifecycle of a pipeline with embedded control plane
@@ -23,6 +29,11 @@ type PipelineRunner struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	config        Config
+
+	// Run tracking fields
+	runID        string      // Current run ID
+	runStartTime time.Time   // When run started
+	eventsCount  atomic.Int64 // Thread-safe event counter
 }
 
 // Config holds configuration for the pipeline runner
@@ -30,6 +41,7 @@ type Config struct {
 	OrchestratorType     string
 	ControlPlanePort     int
 	ControlPlaneAddress  string
+	UseExternalCP        bool // If true, use external control plane instead of embedded
 	ShowStatus           bool
 	LogDir               string
 	HeartbeatTTL         time.Duration
@@ -58,20 +70,31 @@ func NewPipelineRunner(pipeline *model.Pipeline, config Config) (*PipelineRunner
 		config.JanitorInterval = 10 * time.Second
 	}
 
-	// Create embedded control plane
-	controlPlaneConfig := controlplane.Config{
-		Address:         config.ControlPlaneAddress,
-		Port:            config.ControlPlanePort,
-		HeartbeatTTL:    config.HeartbeatTTL,
-		JanitorInterval: config.JanitorInterval,
-		Storage:         nil, // In-memory for now
-	}
+	// Create embedded control plane (if not using external)
+	var embeddedCP *controlplane.EmbeddedControlPlane
+	var controlPlaneAddr string
 
-	embeddedCP := controlplane.NewEmbeddedControlPlane(controlPlaneConfig)
+	if !config.UseExternalCP {
+		// Create embedded control plane
+		controlPlaneConfig := controlplane.Config{
+			Address:         config.ControlPlaneAddress,
+			Port:            config.ControlPlanePort,
+			HeartbeatTTL:    config.HeartbeatTTL,
+			JanitorInterval: config.JanitorInterval,
+			Storage:         nil, // In-memory for now
+		}
+
+		embeddedCP = controlplane.NewEmbeddedControlPlane(controlPlaneConfig)
+		controlPlaneAddr = embeddedCP.GetEndpoint()
+	} else {
+		// Use external control plane
+		controlPlaneAddr = fmt.Sprintf("%s:%d", config.ControlPlaneAddress, config.ControlPlanePort)
+		logger.Info("Using external control plane",
+			zap.String("endpoint", controlPlaneAddr))
+	}
 
 	// Create orchestrator with control plane endpoint
 	var orch orchestrator.Orchestrator
-	controlPlaneAddr := embeddedCP.GetEndpoint()
 
 	switch config.OrchestratorType {
 	case "process":
@@ -103,51 +126,82 @@ func NewPipelineRunner(pipeline *model.Pipeline, config Config) (*PipelineRunner
 	}, nil
 }
 
-// Run starts the pipeline with embedded control plane
+// Run starts the pipeline with embedded or external control plane
 func (r *PipelineRunner) Run() error {
-	logger.Info("Starting pipeline with embedded control plane",
-		zap.String("pipeline", r.pipeline.Metadata.Name),
-		zap.String("orchestrator", r.config.OrchestratorType),
-		zap.Int("control_plane_port", r.config.ControlPlanePort))
-
-	// Start embedded control plane first
-	if err := r.controlPlane.Start(r.ctx); err != nil {
-		return fmt.Errorf("failed to start control plane: %w", err)
+	if r.config.UseExternalCP {
+		logger.Info("Starting pipeline with external control plane",
+			zap.String("pipeline", r.pipeline.Metadata.Name),
+			zap.String("orchestrator", r.config.OrchestratorType),
+			zap.String("control_plane_endpoint", fmt.Sprintf("%s:%d", r.config.ControlPlaneAddress, r.config.ControlPlanePort)))
+	} else {
+		logger.Info("Starting pipeline with embedded control plane",
+			zap.String("pipeline", r.pipeline.Metadata.Name),
+			zap.String("orchestrator", r.config.OrchestratorType),
+			zap.Int("control_plane_port", r.config.ControlPlanePort))
 	}
 
-	// Wait for control plane to be ready
-	if err := r.waitForControlPlaneReady(); err != nil {
-		r.controlPlane.Stop()
-		return fmt.Errorf("control plane not ready: %w", err)
+	// Start embedded control plane if we have one
+	if r.controlPlane != nil {
+		if err := r.controlPlane.Start(r.ctx); err != nil {
+			return fmt.Errorf("failed to start control plane: %w", err)
+		}
+
+		// Wait for control plane to be ready
+		if err := r.waitForControlPlaneReady(); err != nil {
+			r.controlPlane.Stop()
+			return fmt.Errorf("control plane not ready: %w", err)
+		}
+	} else {
+		// Verify external control plane is accessible
+		if err := r.waitForControlPlaneReady(); err != nil {
+			return fmt.Errorf("external control plane not accessible at %s:%d: %w",
+				r.config.ControlPlaneAddress, r.config.ControlPlanePort, err)
+		}
+		logger.Info("External control plane is accessible")
 	}
+
+	// Create pipeline run record
+	r.createPipelineRun()
 
 	// Start components in dependency order
 	if err := r.startComponents(); err != nil {
-		r.controlPlane.Stop()
+		r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_FAILED)
+		if r.controlPlane != nil {
+			r.controlPlane.Stop()
+		}
 		return err
 	}
 
 	// Wait for all components to register
 	if err := r.waitForComponentRegistration(); err != nil {
-		r.controlPlane.Stop()
+		r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_FAILED)
+		if r.controlPlane != nil {
+			r.controlPlane.Stop()
+		}
 		return err
 	}
 
 	// Wire components together for data flow
 	streamOrch := NewStreamOrchestrator(r.ctx, r.controlPlane, r.pipeline)
 	if err := streamOrch.WireAll(); err != nil {
-		r.controlPlane.Stop()
+		r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_FAILED)
+		if r.controlPlane != nil {
+			r.controlPlane.Stop()
+		}
 		return fmt.Errorf("failed to wire components: %w", err)
 	}
+
+	// Update status to RUNNING now that pipeline is fully wired
+	r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_RUNNING)
 
 	// Start monitoring if enabled
 	if r.config.ShowStatus {
 		go r.monitorPipeline()
-		
+
 		// Start log aggregation
 		logAggregator := r.StartAggregatedLogging()
 		defer logAggregator.Stop()
-		
+
 		// Print aggregated logs
 		go func() {
 			for logEntry := range logAggregator.GetLogChannel() {
@@ -163,12 +217,18 @@ func (r *PipelineRunner) Run() error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Wait for shutdown
+	var shutdownStatus flowctlpb.RunStatus
 	select {
 	case <-sigChan:
 		logger.Info("Received shutdown signal")
+		shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_STOPPED
 	case <-r.ctx.Done():
 		logger.Info("Context cancelled")
+		shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_COMPLETED
 	}
+
+	// Update run status before shutdown
+	r.updateRunStatus(shutdownStatus)
 
 	return r.shutdown()
 }
@@ -328,13 +388,60 @@ func (r *PipelineRunner) waitForComponentRegistration() error {
 	// Wait for each component to register
 	for _, componentID := range componentIDs {
 		logger.Info("Waiting for component registration", zap.String("component", componentID))
-		if err := r.controlPlane.WaitForComponent(componentID, 30*time.Second); err != nil {
-			return fmt.Errorf("component %s failed to register: %w", componentID, err)
+
+		// Use different waiting logic based on control plane type
+		if r.controlPlane != nil {
+			// Embedded control plane
+			if err := r.controlPlane.WaitForComponent(componentID, 30*time.Second); err != nil {
+				return fmt.Errorf("component %s failed to register: %w", componentID, err)
+			}
+		} else {
+			// External control plane - use gRPC client
+			if err := r.waitForExternalComponent(componentID, 30*time.Second); err != nil {
+				return fmt.Errorf("component %s failed to register: %w", componentID, err)
+			}
 		}
+
 		logger.Info("Component registered successfully", zap.String("component", componentID))
 	}
 
 	return nil
+}
+
+// waitForExternalComponent waits for a component to register with external control plane
+func (r *PipelineRunner) waitForExternalComponent(componentID string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		// Connect to external control plane
+		client, conn, err := r.getControlPlaneClient()
+		if err != nil {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		// List services to check if component is registered
+		resp, err := client.ListServices(r.ctx, &emptypb.Empty{})
+		conn.Close()
+
+		if err != nil {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		// Check if our component is in the list
+		for _, service := range resp.Services {
+			if service.ComponentId == componentID {
+				logger.Debug("Found registered component via external control plane",
+					zap.String("component_id", componentID))
+				return nil
+			}
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
+	return fmt.Errorf("timeout waiting for component %s to register with external control plane", componentID)
 }
 
 // monitorPipeline monitors the pipeline status and logs periodic updates
@@ -411,9 +518,11 @@ func (r *PipelineRunner) shutdown() error {
 	// Give components time to deregister
 	time.Sleep(2 * time.Second)
 
-	// Stop control plane
-	if err := r.controlPlane.Stop(); err != nil {
-		logger.Error("Error stopping control plane", zap.Error(err))
+	// Stop embedded control plane (if we have one)
+	if r.controlPlane != nil {
+		if err := r.controlPlane.Stop(); err != nil {
+			logger.Error("Error stopping control plane", zap.Error(err))
+		}
 	}
 
 	logger.Info("Pipeline and control plane stopped successfully")
@@ -459,15 +568,171 @@ func (r *PipelineRunner) waitForControlPlaneReady() error {
 		case <-timeout:
 			return fmt.Errorf("timeout waiting for control plane to be ready")
 		case <-ticker.C:
-			if r.controlPlane.IsStarted() {
-				// Try a simple health check by getting service list
-				_, err := r.controlPlane.GetServiceList()
-				if err == nil {
-					logger.Debug("Control plane is ready")
-					return nil
+			// For embedded control plane
+			if r.controlPlane != nil {
+				if r.controlPlane.IsStarted() {
+					// Try a simple health check by getting service list
+					_, err := r.controlPlane.GetServiceList()
+					if err == nil {
+						logger.Debug("Control plane is ready")
+						return nil
+					}
+					logger.Debug("Control plane not ready yet", zap.Error(err))
 				}
-				logger.Debug("Control plane not ready yet", zap.Error(err))
+			} else {
+				// For external control plane, try to connect
+				client, conn, err := r.getControlPlaneClient()
+				if err == nil {
+					// Try a simple RPC call to verify it's working
+					_, listErr := client.ListServices(r.ctx, &emptypb.Empty{})
+					conn.Close()
+					if listErr == nil {
+						logger.Debug("External control plane is ready")
+						return nil
+					}
+					logger.Debug("External control plane not ready yet", zap.Error(listErr))
+				} else {
+					logger.Debug("Cannot connect to external control plane yet", zap.Error(err))
+				}
 			}
 		}
 	}
+}
+
+// getControlPlaneClient returns a gRPC client for the control plane
+func (r *PipelineRunner) getControlPlaneClient() (flowctlpb.ControlPlaneClient, *grpc.ClientConn, error) {
+	endpoint := fmt.Sprintf("%s:%d", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
+
+	ctx, cancel := context.WithTimeout(r.ctx, 2*time.Second)
+	defer cancel()
+
+	conn, err := grpc.DialContext(ctx, endpoint,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to connect to control plane at %s: %w", endpoint, err)
+	}
+
+	client := flowctlpb.NewControlPlaneClient(conn)
+	return client, conn, nil
+}
+
+// getComponentIDs returns all component IDs in the pipeline
+func (r *PipelineRunner) getComponentIDs() []string {
+	var componentIDs []string
+
+	for _, source := range r.pipeline.Spec.Sources {
+		componentIDs = append(componentIDs, source.ID)
+	}
+	for _, processor := range r.pipeline.Spec.Processors {
+		componentIDs = append(componentIDs, processor.ID)
+	}
+	for _, sink := range r.pipeline.Spec.Sinks {
+		componentIDs = append(componentIDs, sink.ID)
+	}
+	for _, pipeline := range r.pipeline.Spec.Pipelines {
+		componentIDs = append(componentIDs, pipeline.ID)
+	}
+
+	return componentIDs
+}
+
+// createPipelineRun creates a run record in the control plane
+func (r *PipelineRunner) createPipelineRun() {
+	// Generate run ID
+	r.runID = uuid.New().String()
+	r.runStartTime = time.Now()
+
+	logger.Info("Creating pipeline run record",
+		zap.String("run_id", r.runID),
+		zap.String("pipeline_name", r.pipeline.Metadata.Name))
+
+	// Get component IDs
+	componentIDs := r.getComponentIDs()
+
+	// Call CreatePipelineRun RPC
+	client, conn, err := r.getControlPlaneClient()
+	if err != nil {
+		logger.Warn("Failed to connect to control plane for run tracking",
+			zap.String("run_id", r.runID),
+			zap.Error(err))
+		return
+	}
+	defer conn.Close()
+
+	_, err = client.CreatePipelineRun(r.ctx, &flowctlpb.CreatePipelineRunRequest{
+		RunId:        r.runID,
+		PipelineName: r.pipeline.Metadata.Name,
+		ComponentIds: componentIDs,
+	})
+
+	if err != nil {
+		logger.Warn("Failed to create pipeline run record",
+			zap.String("run_id", r.runID),
+			zap.Error(err))
+		// Don't fail the pipeline, just log the error
+		return
+	}
+
+	logger.Info("Pipeline run record created successfully",
+		zap.String("run_id", r.runID),
+		zap.String("pipeline_name", r.pipeline.Metadata.Name))
+}
+
+// updateRunStatus updates the run status in the control plane
+func (r *PipelineRunner) updateRunStatus(status flowctlpb.RunStatus) {
+	if r.runID == "" {
+		// No run ID means run tracking failed to initialize
+		return
+	}
+
+	logger.Debug("Updating pipeline run status",
+		zap.String("run_id", r.runID),
+		zap.String("status", status.String()))
+
+	// Get control plane client
+	client, conn, err := r.getControlPlaneClient()
+	if err != nil {
+		logger.Warn("Failed to connect to control plane for status update",
+			zap.String("run_id", r.runID),
+			zap.Error(err))
+		return
+	}
+	defer conn.Close()
+
+	// Calculate metrics
+	eventsProcessed := r.eventsCount.Load()
+	duration := time.Since(r.runStartTime).Seconds()
+	eventsPerSecond := 0.0
+	if duration > 0 {
+		eventsPerSecond = float64(eventsProcessed) / duration
+	}
+
+	metrics := &flowctlpb.RunMetrics{
+		EventsProcessed: eventsProcessed,
+		EventsPerSecond: eventsPerSecond,
+	}
+
+	// Build update request (end time is automatically set by server for terminal states)
+	req := &flowctlpb.UpdatePipelineRunRequest{
+		RunId:   r.runID,
+		Status:  status,
+		Metrics: metrics,
+	}
+
+	_, err = client.UpdatePipelineRun(r.ctx, req)
+	if err != nil {
+		logger.Warn("Failed to update pipeline run status",
+			zap.String("run_id", r.runID),
+			zap.String("status", status.String()),
+			zap.Error(err))
+		return
+	}
+
+	logger.Info("Pipeline run status updated",
+		zap.String("run_id", r.runID),
+		zap.String("status", status.String()),
+		zap.Int64("events_processed", eventsProcessed),
+		zap.Float64("events_per_second", eventsPerSecond))
 }

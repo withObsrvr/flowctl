@@ -6,9 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/withobsrvr/flowctl/cmd/apply"
 	"github.com/withobsrvr/flowctl/cmd/list"
-	"github.com/withobsrvr/flowctl/cmd/quickstart"
+	"github.com/withobsrvr/flowctl/cmd/processors"
 	"github.com/withobsrvr/flowctl/cmd/sandbox"
 	"github.com/withobsrvr/flowctl/cmd/server"
 	"github.com/withobsrvr/flowctl/cmd/translate"
@@ -63,9 +62,8 @@ func init() {
 	viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
 
 	// Add commands
-	rootCmd.AddCommand(apply.NewCommand())
 	rootCmd.AddCommand(list.NewCommand())
-	rootCmd.AddCommand(quickstart.NewCommand())
+	rootCmd.AddCommand(processors.NewCommand())
 	rootCmd.AddCommand(sandbox.NewCommand())
 	rootCmd.AddCommand(translate.NewCommand())
 	rootCmd.AddCommand(version.NewCommand())

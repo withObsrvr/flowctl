@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
+	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	bolt "go.etcd.io/bbolt"
 	"go.uber.org/zap"
 )
@@ -26,6 +27,9 @@ var DefaultBoltFileMode = os.FileMode(0600)
 
 // BucketName is the name of the bucket where service information is stored
 var serviceBucket = []byte("services")
+
+// pipelineRunBucket is the name of the bucket where pipeline run information is stored
+var pipelineRunBucket = []byte("pipeline_runs")
 
 // BoltDBStorage implements the ServiceStorage interface using BoltDB
 type BoltDBStorage struct {
@@ -100,6 +104,10 @@ func (s *BoltDBStorage) Open() error {
 		_, err := tx.CreateBucketIfNotExists(serviceBucket)
 		if err != nil {
 			return fmt.Errorf("failed to create services bucket: %w", err)
+		}
+		_, err = tx.CreateBucketIfNotExists(pipelineRunBucket)
+		if err != nil {
+			return fmt.Errorf("failed to create pipeline_runs bucket: %w", err)
 		}
 		return nil
 	})
@@ -341,4 +349,170 @@ func (t *boltTransaction) ListServices() ([]*ServiceInfo, error) {
 // DeleteService removes a service from the registry within a transaction
 func (t *boltTransaction) DeleteService(serviceID string) error {
 	return t.storage.deleteServiceTx(t.tx, serviceID)
+}
+
+// Pipeline run storage methods
+
+// CreatePipelineRun stores a new pipeline run in the registry
+func (s *BoltDBStorage) CreatePipelineRun(ctx context.Context, run *PipelineRunInfo) error {
+	logger.Debug("Creating pipeline run", zap.String("run_id", run.Run.RunId))
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(pipelineRunBucket)
+		if b == nil {
+			return fmt.Errorf("pipeline_runs bucket not found")
+		}
+
+		// Serialize the run to JSON
+		data, err := json.Marshal(run)
+		if err != nil {
+			return fmt.Errorf("failed to marshal pipeline run: %w", err)
+		}
+
+		// Store the run
+		key := []byte(run.Run.RunId)
+		if err := b.Put(key, data); err != nil {
+			return fmt.Errorf("failed to store pipeline run: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// UpdatePipelineRun updates an existing pipeline run in the registry
+func (s *BoltDBStorage) UpdatePipelineRun(ctx context.Context, runID string, updater func(*PipelineRunInfo) error) error {
+	logger.Debug("Updating pipeline run", zap.String("run_id", runID))
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(pipelineRunBucket)
+		if b == nil {
+			return fmt.Errorf("pipeline_runs bucket not found")
+		}
+
+		// Get the run
+		key := []byte(runID)
+		data := b.Get(key)
+		if data == nil {
+			return ErrPipelineRunNotFound{RunID: runID}
+		}
+
+		// Deserialize the run
+		var run PipelineRunInfo
+		if err := json.Unmarshal(data, &run); err != nil {
+			return fmt.Errorf("failed to unmarshal pipeline run: %w", err)
+		}
+
+		// Apply the updater function
+		if err := updater(&run); err != nil {
+			return err
+		}
+
+		// Serialize the updated run
+		updatedData, err := json.Marshal(run)
+		if err != nil {
+			return fmt.Errorf("failed to marshal updated pipeline run: %w", err)
+		}
+
+		// Store the updated run
+		if err := b.Put(key, updatedData); err != nil {
+			return fmt.Errorf("failed to store updated pipeline run: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// GetPipelineRun retrieves a pipeline run by its ID
+func (s *BoltDBStorage) GetPipelineRun(ctx context.Context, runID string) (*PipelineRunInfo, error) {
+	logger.Debug("Getting pipeline run", zap.String("run_id", runID))
+	var run *PipelineRunInfo
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(pipelineRunBucket)
+		if b == nil {
+			return fmt.Errorf("pipeline_runs bucket not found")
+		}
+
+		// Get the run
+		key := []byte(runID)
+		data := b.Get(key)
+		if data == nil {
+			return ErrPipelineRunNotFound{RunID: runID}
+		}
+
+		// Deserialize the run
+		var r PipelineRunInfo
+		if err := json.Unmarshal(data, &r); err != nil {
+			return fmt.Errorf("failed to unmarshal pipeline run: %w", err)
+		}
+
+		run = &r
+		return nil
+	})
+	return run, err
+}
+
+// ListPipelineRuns retrieves pipeline runs, optionally filtered by pipeline name and status
+func (s *BoltDBStorage) ListPipelineRuns(ctx context.Context, pipelineName string, status flowctlpb.RunStatus, limit int32) ([]*PipelineRunInfo, error) {
+	logger.Debug("Listing pipeline runs", zap.String("pipeline_name", pipelineName), zap.Any("status", status), zap.Int32("limit", limit))
+	var runs []*PipelineRunInfo
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(pipelineRunBucket)
+		if b == nil {
+			return fmt.Errorf("pipeline_runs bucket not found")
+		}
+
+		// Collect matching runs
+		count := int32(0)
+		err := b.ForEach(func(k, v []byte) error {
+			// Check if we've reached the limit
+			if limit > 0 && count >= limit {
+				return nil
+			}
+
+			var run PipelineRunInfo
+			if err := json.Unmarshal(v, &run); err != nil {
+				return fmt.Errorf("failed to unmarshal pipeline run: %w", err)
+			}
+
+			// Apply filters
+			if pipelineName != "" && run.Run.PipelineName != pipelineName {
+				return nil
+			}
+			if status != flowctlpb.RunStatus_RUN_STATUS_UNKNOWN && run.Run.Status != status {
+				return nil
+			}
+
+			runs = append(runs, &run)
+			count++
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+	return runs, err
+}
+
+// DeletePipelineRun removes a pipeline run from the registry
+func (s *BoltDBStorage) DeletePipelineRun(ctx context.Context, runID string) error {
+	logger.Debug("Deleting pipeline run", zap.String("run_id", runID))
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(pipelineRunBucket)
+		if b == nil {
+			return fmt.Errorf("pipeline_runs bucket not found")
+		}
+
+		// Check if the run exists
+		key := []byte(runID)
+		if b.Get(key) == nil {
+			return ErrPipelineRunNotFound{RunID: runID}
+		}
+
+		// Delete the run
+		if err := b.Delete(key); err != nil {
+			return fmt.Errorf("failed to delete pipeline run: %w", err)
+		}
+
+		return nil
+	})
 }

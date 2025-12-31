@@ -1,9 +1,11 @@
 package runner
 
 import (
+	"context"
 	"fmt"
 	"os"
 
+	"github.com/withobsrvr/flowctl/internal/components"
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
@@ -39,6 +41,94 @@ func LoadPipelineFromFile(filePath string) (*model.Pipeline, error) {
 	return &pipeline, nil
 }
 
+// ResolveComponents resolves component registry references and translates config to env vars
+func ResolveComponents(ctx context.Context, pipeline *model.Pipeline, controlPlaneEndpoint string) error {
+	logger.Debug("Resolving component references")
+
+	// Create component resolver
+	resolver, err := components.NewResolver("")
+	if err != nil {
+		return fmt.Errorf("failed to create component resolver: %w", err)
+	}
+
+	// Resolve sources
+	for i := range pipeline.Spec.Sources {
+		if err := resolveComponent(ctx, &pipeline.Spec.Sources[i], resolver, controlPlaneEndpoint); err != nil {
+			return fmt.Errorf("failed to resolve source %s: %w", pipeline.Spec.Sources[i].ID, err)
+		}
+	}
+
+	// Resolve processors
+	for i := range pipeline.Spec.Processors {
+		if err := resolveComponent(ctx, &pipeline.Spec.Processors[i], resolver, controlPlaneEndpoint); err != nil {
+			return fmt.Errorf("failed to resolve processor %s: %w", pipeline.Spec.Processors[i].ID, err)
+		}
+	}
+
+	// Resolve sinks
+	for i := range pipeline.Spec.Sinks {
+		if err := resolveComponent(ctx, &pipeline.Spec.Sinks[i], resolver, controlPlaneEndpoint); err != nil {
+			return fmt.Errorf("failed to resolve sink %s: %w", pipeline.Spec.Sinks[i].ID, err)
+		}
+	}
+
+	return nil
+}
+
+// resolveComponent resolves a single component reference
+func resolveComponent(ctx context.Context, comp *model.Component, resolver *components.Resolver, controlPlaneEndpoint string) error {
+	// Skip if no type reference (using explicit command or image)
+	if comp.Type == "" {
+		return nil
+	}
+
+	// Check if it's a registry reference (contains @)
+	if !isRegistryReference(comp.Type) {
+		// Just a type name, not a registry reference - skip
+		return nil
+	}
+
+	// Resolve the component
+	resolvedComp, err := resolver.Resolve(ctx, comp.Type)
+	if err != nil {
+		return err
+	}
+
+	// Set the command to the resolved binary path
+	comp.Command = []string{resolvedComp.BinaryPath}
+
+	// Translate config to env vars
+	configEnv := components.TranslateConfig(comp.Config, resolvedComp.Metadata)
+
+	// Merge with explicit env vars (explicit takes precedence)
+	comp.Env = components.MergeEnv(configEnv, comp.Env)
+
+	// Add flowctl env vars
+	comp.Env = components.AddFlowctlEnv(comp.Env, comp.ID, controlPlaneEndpoint)
+
+	logger.Debug("Resolved component",
+		zap.String("id", comp.ID),
+		zap.String("type", comp.Type),
+		zap.String("binary", resolvedComp.BinaryPath))
+
+	return nil
+}
+
+// isRegistryReference checks if a type string is a registry reference (contains @)
+func isRegistryReference(typeStr string) bool {
+	return len(typeStr) > 0 && (typeStr[0] != '/' && contains(typeStr, "@"))
+}
+
+// contains checks if a string contains a substring
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 // validatePipeline validates the pipeline structure
 func validatePipeline(pipeline *model.Pipeline) error {
 	// Check required fields
@@ -72,9 +162,9 @@ func validatePipeline(pipeline *model.Pipeline) error {
 		}
 		componentIDs[source.ID] = true
 
-		// For embedded control plane, we need either image or type
-		if source.Image == "" && source.Type == "" {
-			return fmt.Errorf("source %s must have either image or type specified", source.ID)
+		// For embedded control plane, we need either command, image, or type
+		if len(source.Command) == 0 && source.Image == "" && source.Type == "" {
+			return fmt.Errorf("source %s must have either command, image, or type specified", source.ID)
 		}
 	}
 
@@ -88,9 +178,9 @@ func validatePipeline(pipeline *model.Pipeline) error {
 		}
 		componentIDs[processor.ID] = true
 
-		// For embedded control plane, we need either image or type
-		if processor.Image == "" && processor.Type == "" {
-			return fmt.Errorf("processor %s must have either image or type specified", processor.ID)
+		// For embedded control plane, we need either command, image, or type
+		if len(processor.Command) == 0 && processor.Image == "" && processor.Type == "" {
+			return fmt.Errorf("processor %s must have either command, image, or type specified", processor.ID)
 		}
 
 		// Validate inputs exist
@@ -111,9 +201,9 @@ func validatePipeline(pipeline *model.Pipeline) error {
 		}
 		componentIDs[sink.ID] = true
 
-		// For embedded control plane, we need either image or type
-		if sink.Image == "" && sink.Type == "" {
-			return fmt.Errorf("sink %s must have either image or type specified", sink.ID)
+		// For embedded control plane, we need either command, image, or type
+		if len(sink.Command) == 0 && sink.Image == "" && sink.Type == "" {
+			return fmt.Errorf("sink %s must have either command, image, or type specified", sink.ID)
 		}
 
 		// Validate inputs exist
