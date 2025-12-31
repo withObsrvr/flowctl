@@ -648,19 +648,20 @@ func NewControlPlaneWrapper(server *ControlPlaneServer) *ControlPlaneWrapper {
 // Register implements flowctlpb.ControlPlane.Register
 func (w *ControlPlaneWrapper) Register(ctx context.Context, req *flowctlpb.ServiceInfo) (*flowctlpb.RegistrationAck, error) {
 	v1Req := &flowctlv1.RegisterRequest{
+		ComponentId: req.ServiceId,
 		Component: &flowctlv1.ComponentInfo{
 			Id:   req.ComponentId,
 			Type: convertToV1ComponentType(req.ServiceType),
 		},
 	}
 
-	_, err := w.server.RegisterComponent(ctx, v1Req)
+	resp, err := w.server.RegisterComponent(ctx, v1Req)
 	if err != nil {
 		return nil, err
 	}
 
 	return &flowctlpb.RegistrationAck{
-		ServiceId: req.ServiceId,
+		ServiceId: resp.ServiceId,
 	}, nil
 }
 
@@ -680,7 +681,9 @@ func (w *ControlPlaneWrapper) GetServiceStatus(ctx context.Context, req *flowctl
 
 // ListServices implements flowctlpb.ControlPlane.ListServices
 func (w *ControlPlaneWrapper) ListServices(ctx context.Context, req *emptypb.Empty) (*flowctlpb.ServiceList, error) {
-	v1Req := &flowctlv1.ListComponentsRequest{}
+	v1Req := &flowctlv1.ListComponentsRequest{
+		IncludeUnhealthy: true,
+	}
 	v1Resp, err := w.server.ListComponents(ctx, v1Req)
 	if err != nil {
 		return nil, err
