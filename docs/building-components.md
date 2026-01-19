@@ -52,6 +52,127 @@ cd flowctl-sdk
 ls -la examples/
 ```
 
+## Proto-First Development
+
+**IMPORTANT:** Always use the **proto-first** approach when building flowctl components. This ensures:
+
+- **Type safety** via protobuf schemas
+- **Consistency** across all components in the ecosystem
+- **Automatic serialization** with efficient binary encoding
+- **Language interoperability** if needed in the future
+
+### The flow-proto Repository
+
+All shared protobuf definitions live in the [flow-proto](https://github.com/withObsrvr/flow-proto) repository:
+
+```bash
+# Clone flow-proto for reference
+git clone https://github.com/withObsrvr/flow-proto.git
+cd flow-proto
+
+# Key proto files:
+# proto/flowctl/v1/event.proto     - Core event types
+# proto/stellar/v1/ledger.proto    - Stellar ledger data
+# proto/stellar/v1/contract_events.proto - Contract events
+```
+
+### When to Use Existing vs Custom Protos
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Processing Stellar data | Use `flow-proto/stellar/v1/*` types |
+| Generic event handling | Use `flow-proto/flowctl/v1/Event` |
+| Custom domain events | Define new proto, submit PR to flow-proto |
+| Internal transformations | Can use JSON, but proto preferred |
+
+## Working with Protobuf Messages
+
+### Importing flow-proto Types
+
+Your `go.mod` should include flow-proto:
+
+```go
+require (
+    github.com/withObsrvr/flow-proto v0.0.0
+    github.com/withObsrvr/flowctl-sdk v0.0.0
+    google.golang.org/protobuf v1.36.0
+)
+
+// For local development, use replace directives:
+replace github.com/withObsrvr/flow-proto => /path/to/flow-proto
+replace github.com/withObsrvr/flowctl-sdk => /path/to/flowctl-sdk
+```
+
+### Parsing Event Payloads
+
+Events arrive as `*flowctlv1.Event` with a `Payload` field containing serialized protobuf:
+
+```go
+import (
+    flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
+    stellarv1 "github.com/withObsrvr/flow-proto/go/gen/stellar/v1"
+    "google.golang.org/protobuf/proto"
+)
+
+func handleEvent(ctx context.Context, event *flowctlv1.Event) error {
+    switch event.Type {
+    case "stellar.contract.events.v1":
+        var batch stellarv1.ContractEventBatch
+        if err := proto.Unmarshal(event.Payload, &batch); err != nil {
+            return fmt.Errorf("failed to parse ContractEventBatch: %w", err)
+        }
+
+        for _, ce := range batch.Events {
+            // Process each contract event
+            log.Printf("Contract: %s, Type: %s", ce.ContractId, ce.EventType)
+        }
+
+    case "stellar.raw.ledger.v1":
+        var ledger stellarv1.RawLedger
+        if err := proto.Unmarshal(event.Payload, &ledger); err != nil {
+            return fmt.Errorf("failed to parse RawLedger: %w", err)
+        }
+
+        log.Printf("Ledger: %d, Network: %s", ledger.Sequence, ledger.Network)
+    }
+
+    return nil
+}
+```
+
+### Available Stellar Event Types
+
+| Event Type | Proto Message | Description |
+|------------|---------------|-------------|
+| `stellar.raw.ledger.v1` | `stellarv1.RawLedger` | Raw ledger with XDR data |
+| `stellar.ledger.v1` | `stellarv1.RawLedger` | Alias for raw ledger |
+| `stellar.contract.events.v1` | `stellarv1.ContractEventBatch` | Batch of contract events |
+
+### Thread-Safe Metrics with Atomic Counters
+
+For components that need to track metrics across concurrent goroutines:
+
+```go
+import "sync/atomic"
+
+var eventsProcessed atomic.Int64
+var contractEventsProcessed atomic.Int64
+
+func handleEvent(ctx context.Context, event *flowctlv1.Event) error {
+    eventsProcessed.Add(1)
+
+    // ... process event ...
+
+    // Log progress periodically
+    count := eventsProcessed.Load()
+    if count%1000 == 0 {
+        log.Printf("Processed %d events", count)
+    }
+
+    return nil
+}
+```
+
 ## Component Types
 
 ### Source (Data Producer)
@@ -418,7 +539,9 @@ processors:
 
 Sinks consume data and write to storage or external systems.
 
-### Basic Sink Structure
+### Basic Sink Structure (Using consumer.Run())
+
+The flowctl-sdk provides a zero-config `consumer.Run()` function that handles all the gRPC setup, control plane registration, health checks, and event loop:
 
 ```go
 package main
@@ -426,43 +549,64 @@ package main
 import (
     "context"
     "log"
+    "os"
+    "sync/atomic"
 
     "github.com/withObsrvr/flowctl-sdk/pkg/consumer"
-    flowpb "github.com/withObsrvr/flow-proto/gen/go/flow/v1"
+    flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 )
 
+// Thread-safe counters for metrics
+var eventsProcessed atomic.Int64
+
 func main() {
-    sink := consumer.New(consumer.Config{
-        Name:        "my-sink",
-        Description: "Writes events to storage",
-        Version:     "1.0.0",
-        InputType:   "myorg.processed.v1", // Type this sink accepts
+    componentID := os.Getenv("FLOWCTL_COMPONENT_ID")
+    if componentID == "" {
+        componentID = "my-sink"
+    }
+
+    // Set default port (avoid conflicts with other components)
+    if os.Getenv("PORT") == "" {
+        os.Setenv("PORT", ":50053")
+    }
+
+    log.Printf("Starting My Sink (componentID: %s)", componentID)
+
+    // consumer.Run() handles everything:
+    // - gRPC server setup
+    // - Control plane registration
+    // - Health checks
+    // - Graceful shutdown
+    consumer.Run(consumer.ConsumerConfig{
+        ConsumerName: "My Sink",
+        InputType:    "myorg.event.v1",  // Event type to subscribe to
+        OnEvent:      handleEvent,        // Your event handler
+        ComponentID:  componentID,
     })
 
-    // Set the consumption function
-    sink.SetConsumeFunc(consumeEvent)
-
-    // Run the sink (blocks until shutdown)
-    if err := sink.Run(); err != nil {
-        log.Fatalf("Sink failed: %v", err)
-    }
+    // Only reached on shutdown
+    log.Printf("Total events processed: %d", eventsProcessed.Load())
 }
 
-// consumeEvent writes a single event
-func consumeEvent(ctx context.Context, event *flowpb.Event) error {
-    // TODO: Write event to storage
-    // Examples: Database insert, file write, HTTP POST, etc.
+// handleEvent processes each incoming event
+func handleEvent(ctx context.Context, event *flowctlv1.Event) error {
+    eventsProcessed.Add(1)
 
-    log.Printf("Consumed event: %s", event.Id)
-
-    // Example: Log to stdout
-    log.Printf("Event data: %s", string(event.Data))
+    // Your business logic here
+    log.Printf("Received event: %s (type: %s)", event.Id, event.Type)
 
     return nil
 }
 ```
 
-### Real Example: PostgreSQL Sink
+### Real Example: PostgreSQL Sink with Protobuf
+
+This example shows a production-ready PostgreSQL sink that:
+- Uses `consumer.Run()` for zero-config setup
+- Parses protobuf events using `proto.Unmarshal()`
+- Uses JSONB for flexible querying
+- Implements batch inserts with transactions
+- Tracks metrics with atomic counters
 
 ```go
 package main
@@ -474,107 +618,119 @@ import (
     "fmt"
     "log"
     "os"
+    "sync/atomic"
 
     _ "github.com/lib/pq"
     "github.com/withObsrvr/flowctl-sdk/pkg/consumer"
-    flowpb "github.com/withObsrvr/flow-proto/gen/go/flow/v1"
+    flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
+    stellarv1 "github.com/withObsrvr/flow-proto/go/gen/stellar/v1"
+    "google.golang.org/protobuf/proto"
 )
 
-type EventData struct {
-    Type      string `json:"type"`
-    Value     string `json:"value"`
-    Status    string `json:"status"`
-    Timestamp int64  `json:"timestamp"`
+// Global sink and metrics
+var sink *PostgreSQLSink
+var eventsProcessed atomic.Int64
+var contractEventsProcessed atomic.Int64
+
+type PostgreSQLSink struct {
+    db *sql.DB
 }
 
 func main() {
-    // Database configuration from environment
-    dbHost := os.Getenv("POSTGRES_HOST")
-    dbPort := os.Getenv("POSTGRES_PORT")
-    dbName := os.Getenv("POSTGRES_DB")
-    dbUser := os.Getenv("POSTGRES_USER")
-    dbPass := os.Getenv("POSTGRES_PASSWORD")
+    // Configuration from environment
+    pgHost := getEnv("POSTGRES_HOST", "localhost")
+    pgPort := getEnv("POSTGRES_PORT", "5432")
+    pgDB := getEnv("POSTGRES_DB", "stellar_events")
+    pgUser := getEnv("POSTGRES_USER", "postgres")
+    pgPassword := getEnv("POSTGRES_PASSWORD", "")
+    componentID := getEnv("FLOWCTL_COMPONENT_ID", "postgres-consumer")
 
-    // Connect to PostgreSQL
+    // Build connection string
     connStr := fmt.Sprintf("host=%s port=%s dbname=%s user=%s password=%s sslmode=disable",
-        dbHost, dbPort, dbName, dbUser, dbPass)
+        pgHost, pgPort, pgDB, pgUser, pgPassword)
 
-    db, err := sql.Open("postgres", connStr)
+    // Set default port
+    if os.Getenv("PORT") == "" {
+        os.Setenv("PORT", ":50053")
+    }
+
+    // Initialize PostgreSQL
+    var err error
+    sink, err = NewPostgreSQLSink(connStr)
     if err != nil {
-        log.Fatalf("Database connection failed: %v", err)
+        log.Fatalf("Failed to initialize PostgreSQL: %v", err)
     }
-    defer db.Close()
+    defer sink.Close()
 
-    // Verify connection
-    if err := db.Ping(); err != nil {
-        log.Fatalf("Database ping failed: %v", err)
-    }
-
-    // Create table if not exists
-    createTable := `
-        CREATE TABLE IF NOT EXISTS events (
-            id TEXT PRIMARY KEY,
-            type TEXT NOT NULL,
-            value TEXT,
-            status TEXT,
-            timestamp BIGINT,
-            raw_data JSONB,
-            created_at TIMESTAMPTZ DEFAULT NOW()
-        )
-    `
-    if _, err := db.Exec(createTable); err != nil {
-        log.Fatalf("Table creation failed: %v", err)
-    }
-
-    // Create sink
-    sink := consumer.New(consumer.Config{
-        Name:        "postgresql-sink",
-        Description: "Writes events to PostgreSQL",
-        Version:     "1.0.0",
-        InputType:   "myorg.event.v1",
+    // Run consumer (blocks until shutdown)
+    consumer.Run(consumer.ConsumerConfig{
+        ConsumerName: "PostgreSQL Consumer",
+        InputType:    "stellar.contract.events.v1",
+        OnEvent:      handleEvent,
+        ComponentID:  componentID,
     })
 
-    sink.SetConsumeFunc(func(ctx context.Context, event *flowpb.Event) error {
-        // Parse event data
-        var data EventData
-        if err := json.Unmarshal(event.Data, &data); err != nil {
-            return fmt.Errorf("failed to parse event: %w", err)
-        }
-
-        // Insert into database
-        query := `
-            INSERT INTO events (id, type, value, status, timestamp, raw_data)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (id) DO UPDATE SET
-                type = EXCLUDED.type,
-                value = EXCLUDED.value,
-                status = EXCLUDED.status,
-                timestamp = EXCLUDED.timestamp,
-                raw_data = EXCLUDED.raw_data
-        `
-
-        _, err := db.ExecContext(ctx, query,
-            event.Id,
-            data.Type,
-            data.Value,
-            data.Status,
-            data.Timestamp,
-            event.Data,
-        )
-
-        if err != nil {
-            return fmt.Errorf("database insert failed: %w", err)
-        }
-
-        log.Printf("Inserted event: %s", event.Id)
-        return nil
-    })
-
-    if err := sink.Run(); err != nil {
-        log.Fatalf("Sink failed: %v", err)
-    }
+    log.Printf("Contract events stored: %d", contractEventsProcessed.Load())
 }
+
+func handleEvent(ctx context.Context, event *flowctlv1.Event) error {
+    eventsProcessed.Add(1)
+
+    switch event.Type {
+    case "stellar.contract.events.v1":
+        // Parse protobuf payload
+        var batch stellarv1.ContractEventBatch
+        if err := proto.Unmarshal(event.Payload, &batch); err != nil {
+            return fmt.Errorf("failed to parse ContractEventBatch: %w", err)
+        }
+
+        // Batch insert with transaction
+        tx, err := sink.db.Begin()
+        if err != nil {
+            return err
+        }
+
+        for _, ce := range batch.Events {
+            if err := insertContractEvent(tx, ce); err != nil {
+                tx.Rollback()
+                return err
+            }
+        }
+
+        if err := tx.Commit(); err != nil {
+            return err
+        }
+
+        contractEventsProcessed.Add(int64(len(batch.Events)))
+    }
+
+    return nil
+}
+
+func insertContractEvent(tx *sql.Tx, ce *stellarv1.ContractEvent) error {
+    // Extract topics as JSONB
+    topicsJSON, _ := json.Marshal(ce.Topics)
+
+    _, err := tx.Exec(`
+        INSERT INTO contract_events (id, ledger_sequence, contract_id, event_type, topics, data)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (id) DO UPDATE SET topics = EXCLUDED.topics, data = EXCLUDED.data
+    `,
+        fmt.Sprintf("ce-%d-%s-%d", ce.Meta.LedgerSequence, ce.ContractId, ce.EventIndex),
+        ce.Meta.LedgerSequence,
+        ce.ContractId,
+        ce.EventType,
+        string(topicsJSON),
+        ce.Data.Json,
+    )
+    return err
+}
+
+// NewPostgreSQLSink, Close, getEnv implementations...
+// See full example: https://github.com/withObsrvr/ttp-processor-demo/postgres-consumer
 ```
+
+**Reference Implementation:** See [postgres-consumer](https://github.com/withObsrvr/ttp-processor-demo/tree/main/postgres-consumer) for the complete source code.
 
 ### Configuration
 
@@ -843,11 +999,20 @@ The SDK provides automatic health checks. For custom health logic:
    - Location: `flowctl-sdk/examples/contract-events-processor/`
    - Shows: Event extraction, data transformation, error handling
 
-3. **PostgreSQL Consumer**
-   - Location: `flowctl-sdk/examples/postgresql-consumer/`
-   - Shows: Database connection, batch inserts, transaction management
+3. **PostgreSQL Consumer** (Recommended Reference)
+   - Location: `ttp-processor-demo/postgres-consumer/`
+   - Shows: Proto-first development, `consumer.Run()` API, JSONB storage, atomic counters
+   - Key patterns:
+     - Using `proto.Unmarshal()` to parse event payloads
+     - Transaction-based batch inserts
+     - GIN indexes for JSONB queries
+     - Thread-safe metrics with `sync/atomic`
 
-4. **Complete Pipeline**
+4. **DuckDB Consumer**
+   - Location: `ttp-processor-demo/duckdb-consumer/`
+   - Shows: Embedded database, similar patterns to PostgreSQL consumer
+
+5. **Complete Pipeline**
    - Location: `flowctl-sdk/examples/contract-events-pipeline/`
    - Shows: All components working together in production configuration
 

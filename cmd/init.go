@@ -2,10 +2,14 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -26,7 +30,7 @@ var initCmd = &cobra.Command{
 
 This command guides you through creating a v1 pipeline configuration with
 automatic component downloads. Components are automatically downloaded from
-ghcr.io when you run the pipeline.
+Docker Hub when you run the pipeline.
 
 Examples:
   # Interactive mode (default)
@@ -228,7 +232,7 @@ func generateIntent(name, fromType, toType, network, startLedger, endLedger, blo
 		"kind":       "Pipeline",
 		"metadata": map[string]interface{}{
 			"name":        name,
-			"description": fmt.Sprintf("Process %s data on %s", blockchain, network),
+			"description": fmt.Sprintf("Process %s contract events on %s", blockchain, network),
 		},
 		"spec": map[string]interface{}{
 			"driver": "process",
@@ -237,12 +241,35 @@ func generateIntent(name, fromType, toType, network, startLedger, endLedger, blo
 
 	spec := pipeline["spec"].(map[string]interface{})
 
-	// Add source component
-	sourceConfig := map[string]interface{}{
-		"network": network,
+	// Get network passphrase for processor config
+	var networkPassphrase string
+	if network == "testnet" {
+		networkPassphrase = "Test SDF Network ; September 2015"
+	} else {
+		networkPassphrase = "Public Global Stellar Network ; September 2015"
 	}
+
+	// Add source component with RPC backend (easiest for quickstart)
+	sourceConfig := map[string]interface{}{
+		"network_passphrase": networkPassphrase,
+		"backend_type":       "RPC",
+	}
+	// Set appropriate RPC endpoint based on network
+	if network == "testnet" {
+		sourceConfig["rpc_endpoint"] = "https://soroban-testnet.stellar.org"
+	} else {
+		sourceConfig["rpc_endpoint"] = "https://soroban-rpc.mainnet.stellar.gateway.fm"
+	}
+	// For RPC backend, start from a recent ledger (RPC nodes only keep ~24 hours of history)
 	if startLedger != "" {
 		sourceConfig["start_ledger"] = startLedger
+	} else {
+		// Query the RPC endpoint to get a recent ledger
+		rpcEndpoint := sourceConfig["rpc_endpoint"].(string)
+		if latestLedger := getLatestLedger(rpcEndpoint); latestLedger > 0 {
+			// Start from 100 ledgers before the latest to give some buffer
+			sourceConfig["start_ledger"] = latestLedger - 100
+		}
 	}
 	if endLedger != "" {
 		sourceConfig["end_ledger"] = endLedger
@@ -257,7 +284,21 @@ func generateIntent(name, fromType, toType, network, startLedger, endLedger, blo
 	}
 	spec["sources"] = sources
 
+	// Add contract-events-processor to extract Soroban events from ledgers
+	processors := []map[string]interface{}{
+		{
+			"id":   "contract-events",
+			"type": "contract-events-processor@v1.0.0",
+			"config": map[string]interface{}{
+				"network_passphrase": networkPassphrase,
+			},
+			"inputs": []string{"stellar-source"},
+		},
+	}
+	spec["processors"] = processors
+
 	// Add sink component based on destination
+	// Sinks receive from contract-events processor (not directly from source)
 	sinks := []map[string]interface{}{}
 
 	switch toType {
@@ -268,16 +309,20 @@ func generateIntent(name, fromType, toType, network, startLedger, endLedger, blo
 			"config": map[string]interface{}{
 				"database_path": fmt.Sprintf("./%s.duckdb", name),
 			},
-			"inputs": []string{"stellar-source"},
+			"inputs": []string{"contract-events"},
 		})
 	case "postgres":
 		sinks = append(sinks, map[string]interface{}{
 			"id":   "postgres-sink",
-			"type": "postgres-sink@v1.0.0",
+			"type": "postgres-consumer@v1.0.0",
 			"config": map[string]interface{}{
-				"connection_string": "postgresql://localhost:5432/stellar",
+				"postgres_host":     "localhost",
+				"postgres_port":     "5432",
+				"postgres_db":       "stellar_events",
+				"postgres_user":     "postgres",
+				"postgres_password": "${POSTGRES_PASSWORD:-postgres}",
 			},
-			"inputs": []string{"stellar-source"},
+			"inputs": []string{"contract-events"},
 		})
 	case "csv":
 		sinks = append(sinks, map[string]interface{}{
@@ -286,13 +331,55 @@ func generateIntent(name, fromType, toType, network, startLedger, endLedger, blo
 			"config": map[string]interface{}{
 				"output_dir": "./data",
 			},
-			"inputs": []string{"stellar-source"},
+			"inputs": []string{"contract-events"},
 		})
 	}
 
 	spec["sinks"] = sinks
 
 	return pipeline
+}
+
+// getLatestLedger queries the RPC endpoint to get the latest ledger sequence
+func getLatestLedger(rpcEndpoint string) int {
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// JSON-RPC request to get the latest ledger
+	requestBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}`)
+
+	resp, err := client.Post(rpcEndpoint, "application/json", bytes.NewBuffer(requestBody))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to query RPC endpoint %s: %v\n", rpcEndpoint, err)
+		return 0
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "Warning: RPC endpoint returned status %d\n", resp.StatusCode)
+		return 0
+	}
+
+	var result struct {
+		Result struct {
+			Sequence int `json:"sequence"`
+		} `json:"result"`
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to decode RPC response: %v\n", err)
+		return 0
+	}
+
+	if result.Error != nil {
+		fmt.Fprintf(os.Stderr, "Warning: RPC error %d: %s\n", result.Error.Code, result.Error.Message)
+		return 0
+	}
+
+	return result.Result.Sequence
 }
 
 func writeIntentToFile(intent map[string]interface{}, filename string) error {
@@ -308,8 +395,9 @@ func printSummary(intent map[string]interface{}, filename, blockchain, network, 
 	spec := intent["spec"].(map[string]interface{})
 
 	fmt.Println("Your pipeline will:")
-	fmt.Printf("  1. Read %s data (%s)\n", blockchain, network)
-	fmt.Printf("  2. Send to %s\n", destination)
+	fmt.Printf("  1. Read %s ledgers (%s)\n", blockchain, network)
+	fmt.Println("  2. Extract Soroban contract events")
+	fmt.Printf("  3. Store in %s\n", destination)
 
 	// Show configuration details
 	fmt.Println("\nPipeline configuration:")
@@ -334,7 +422,7 @@ func printSummary(intent map[string]interface{}, filename, blockchain, network, 
 
 	fmt.Println("\nNext steps:")
 	fmt.Printf("  $ flowctl run %s\n", filename)
-	fmt.Println("\n  Components will be automatically downloaded from ghcr.io on first run!")
+	fmt.Println("\n  Components will be automatically downloaded from Docker Hub on first run!")
 
 	fmt.Println("\nLearn more:")
 	fmt.Println("  flowctl --help     # All commands")

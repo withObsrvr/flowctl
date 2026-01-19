@@ -1,0 +1,21 @@
+{
+  "name": "contract-events-processor",
+  "version": "1.0.0",
+  "type": "processor",
+  "description": "Extracts Soroban contract events from Stellar ledgers",
+  "input_types": ["stellar.ledger.v1"],
+  "output_types": ["stellar.contract.events.v1"],
+  "config_schema": {
+    "network_passphrase": {
+      "type": "string",
+      "description": "Stellar network passphrase",
+      "default": "Test SDF Network ; September 2015",
+      "env": "NETWORK_PASSPHRASE"
+    }
+  },
+  "env_mapping": {
+    "network_passphrase": "NETWORK_PASSPHRASE"
+  },
+  "port": 50054,
+  "health_port": 8082
+}

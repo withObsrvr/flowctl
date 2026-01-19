@@ -236,7 +236,9 @@ To build production-ready components, you'll use the **flowctl-sdk**.
 The fastest way to learn is to examine a working example:
 
 ```bash
-cd /home/tillman/Documents/flowctl-sdk/examples/contract-events-pipeline
+# Clone the SDK and run the demo
+git clone https://github.com/withObsrvr/flowctl-sdk.git
+cd flowctl-sdk/examples/contract-events-pipeline
 ./demo.sh
 ```
 
@@ -552,7 +554,8 @@ sinks:
 
 1. **Real-World Example**: Study the complete contract events pipeline
    ```bash
-   cd /home/tillman/Documents/flowctl-sdk/examples/contract-events-pipeline
+   git clone https://github.com/withObsrvr/flowctl-sdk.git
+   cd flowctl-sdk/examples/contract-events-pipeline
    cat README.md
    ./demo.sh
    ```

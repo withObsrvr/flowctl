@@ -1,0 +1,18 @@
+{
+  "name": "duckdb-consumer",
+  "version": "1.0.0",
+  "description": "DuckDB sink for Stellar pipeline data (ledgers and contract events)",
+  "type": "sink",
+  "input_types": ["stellar.ledger.v1", "stellar.contract.events.v1"],
+  "output_types": [],
+  "config_schema": {
+    "database_path": {
+      "type": "string",
+      "description": "Path to DuckDB database file",
+      "default": "./stellar_data.duckdb",
+      "env": "DUCKDB_PATH"
+    }
+  },
+  "health_port": 8090,
+  "port": 50053
+}
