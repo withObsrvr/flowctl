@@ -27,6 +27,33 @@ Components are **separate Go programs** that implement the flowctl component int
 
 **You focus on:** The business logic of processing data.
 
+## Getting Started: Choose Your Path
+
+### New to Stellar Processing?
+
+Start with **nebu** for rapid prototyping, then graduate to flowctl for production:
+
+1. **Learn proto-first development**: [BUILDING_PROTO_PROCESSORS.md](https://github.com/withObsrvr/nebu-processor-registry/blob/main/BUILDING_PROTO_PROCESSORS.md)
+2. **Build and test** your processor with nebu's Unix pipe model
+3. **Graduate to flowctl**: [GRADUATING_TO_FLOWCTL.md](https://github.com/withObsrvr/nebu-processor-registry/blob/main/docs/GRADUATING_TO_FLOWCTL.md)
+
+### Ready for Production?
+
+Jump straight to the **flowctl-sdk quickstart**:
+
+- **5-minute quickstart**: [flowctl-sdk/docs/QUICKSTART.md](https://github.com/withObsrvr/flowctl-sdk/blob/main/docs/QUICKSTART.md)
+- **Complete examples**: [flowctl-sdk/examples/](https://github.com/withObsrvr/flowctl-sdk/tree/main/examples)
+
+### Terminology
+
+| Role | Description | SDK Package |
+|------|-------------|-------------|
+| **Source** | Produces events (data producer) | `flowctl-sdk/pkg/source` |
+| **Processor** | Transforms events | `flowctl-sdk/pkg/processor` |
+| **Sink** | Consumes events (data consumer) | `flowctl-sdk/pkg/consumer` |
+
+The core API for Stellar processors is `EventsFromLedger()`, matching Stellar's official processor pattern.
+
 ## Prerequisites
 
 ### Required Tools
