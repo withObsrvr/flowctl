@@ -74,28 +74,34 @@ Generates `stellar-pipeline.yaml`:
 apiVersion: flowctl/v1
 kind: Pipeline
 metadata:
-  name: stellar-testnet-duckdb
-  description: Stellar testnet data pipeline to DuckDB
+  name: stellar-pipeline
+  description: Process stellar contract events on testnet
 
 spec:
-  driver: docker
+  driver: process
 
   sources:
     - id: stellar-source
-      image: docker.io/withobsrvr/stellar-live-source:v1.0.0
-      env:
-        NETWORK: testnet
-        ENABLE_FLOWCTL: "true"
-        FLOWCTL_ENDPOINT: "127.0.0.1:8080"
+      type: stellar-live-source@v1.0.0
+      config:
+        network_passphrase: "Test SDF Network ; September 2015"
+        backend_type: RPC
+        rpc_endpoint: https://soroban-testnet.stellar.org
+        start_ledger: 54000000
+
+  processors:
+    - id: contract-events
+      type: contract-events-processor@v1.0.0
+      config:
+        network_passphrase: "Test SDF Network ; September 2015"
+      inputs: ["stellar-source"]
 
   sinks:
     - id: duckdb-sink
-      image: docker.io/withobsrvr/duckdb-consumer:v1.0.0
-      inputs: ["stellar-source"]
-      env:
-        DATABASE_PATH: "/data/stellar.duckdb"
-        ENABLE_FLOWCTL: "true"
-        FLOWCTL_ENDPOINT: "127.0.0.1:8080"
+      type: duckdb-consumer@v1.0.0
+      config:
+        database_path: ./stellar-pipeline.duckdb
+      inputs: ["contract-events"]
 ```
 
 ### Create a Mainnet PostgreSQL Pipeline
@@ -142,7 +148,7 @@ docker pull docker.io/withobsrvr/csv-sink:v1.0.0
 
 ## Generated Configuration Structure
 
-The init command generates pipelines with this structure:
+The init command generates pipelines with a three-stage architecture: **source → processor → sink**.
 
 ```yaml
 apiVersion: flowctl/v1
@@ -152,32 +158,39 @@ metadata:
   description: <generated-description>
 
 spec:
-  driver: docker
+  driver: process
 
   sources:
     - id: stellar-source
-      image: <source-image>
-      env:
-        NETWORK: <testnet|mainnet>
-        ENABLE_FLOWCTL: "true"
-        FLOWCTL_ENDPOINT: "127.0.0.1:8080"
+      type: stellar-live-source@v1.0.0
+      config:
+        network_passphrase: <network-passphrase>
+        backend_type: RPC
+        rpc_endpoint: <rpc-endpoint>
+        start_ledger: <recent-ledger>
+
+  processors:
+    - id: contract-events
+      type: contract-events-processor@v1.0.0
+      config:
+        network_passphrase: <network-passphrase>
+      inputs: ["stellar-source"]
 
   sinks:
     - id: <sink-id>
-      image: <sink-image>
-      inputs: ["stellar-source"]
-      env:
+      type: <sink-type>
+      config:
         <sink-specific-config>
-        ENABLE_FLOWCTL: "true"
-        FLOWCTL_ENDPOINT: "127.0.0.1:8080"
+      inputs: ["contract-events"]
 ```
 
 ### Configuration Notes
 
-- **driver**: Always `docker` for auto-downloaded components
-- **ENABLE_FLOWCTL**: Enables control plane integration
-- **FLOWCTL_ENDPOINT**: Control plane address (default: `127.0.0.1:8080`)
-- **inputs**: Connects sink to receive data from source
+- **driver**: Uses `process` driver to run components as local processes
+- **type**: Component type with version (e.g., `stellar-live-source@v1.0.0`)
+- **processors**: The `contract-events-processor` extracts Soroban contract events from raw ledgers
+- **inputs**: Connects each component to its upstream data source
+- **Three-stage flow**: Source produces ledgers → Processor extracts events → Sink stores data
 
 ## Running the Pipeline
 

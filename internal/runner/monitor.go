@@ -132,7 +132,7 @@ func (m *Monitor) displayStatus() {
 		// Show metrics if available
 		if len(service.Metrics) > 0 {
 			for k, v := range service.Metrics {
-				fmt.Printf("  %s: %.2f\n", k, v)
+				fmt.Printf("  %s: %s\n", k, v)
 			}
 		}
 

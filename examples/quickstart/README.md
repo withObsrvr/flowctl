@@ -60,7 +60,7 @@ For automation or CI/CD:
 **What happens:**
 1. flowctl downloads required components from Docker Hub (first run only)
 2. Starts the embedded control plane
-3. Launches components: source -> sink
+3. Launches components: source -> contract-events-processor -> sink
 4. Data flows from Stellar network to your chosen destination
 
 Press `Ctrl+C` to stop.
@@ -70,23 +70,23 @@ Press `Ctrl+C` to stop.
 ### DuckDB
 
 ```bash
-# Query the DuckDB file
-duckdb stellar_data.duckdb "SELECT * FROM ledgers LIMIT 5"
+# Query the DuckDB file for contract events
+duckdb stellar-pipeline.duckdb "SELECT * FROM contract_events LIMIT 5"
 ```
 
 ### PostgreSQL
 
 ```bash
-# Connect and query
-psql -h localhost -U postgres -d stellar -c "SELECT * FROM ledgers LIMIT 5"
+# Connect and query contract events
+psql -h localhost -U postgres -d stellar_events -c "SELECT * FROM contract_events LIMIT 5"
 ```
 
 ### CSV
 
 ```bash
 # Check the CSV files
-ls -la stellar_data/
-head stellar_data/ledgers.csv
+ls -la data/
+head data/contract_events.csv
 ```
 
 ## Sample Pipelines
@@ -106,35 +106,42 @@ A typical generated pipeline looks like:
 apiVersion: flowctl/v1
 kind: Pipeline
 metadata:
-  name: stellar-testnet-duckdb
-  description: Stellar testnet data pipeline to DuckDB
+  name: stellar-pipeline
+  description: Process stellar contract events on testnet
 
 spec:
-  driver: docker
+  driver: process
 
   sources:
     - id: stellar-source
-      image: docker.io/withobsrvr/stellar-live-source:v1.0.0
-      env:
-        NETWORK: testnet
-        ENABLE_FLOWCTL: "true"
-        FLOWCTL_ENDPOINT: "127.0.0.1:8080"
+      type: stellar-live-source@v1.0.0
+      config:
+        network_passphrase: "Test SDF Network ; September 2015"
+        backend_type: RPC
+        rpc_endpoint: https://soroban-testnet.stellar.org
+        start_ledger: 54000000
+
+  processors:
+    - id: contract-events
+      type: contract-events-processor@v1.0.0
+      config:
+        network_passphrase: "Test SDF Network ; September 2015"
+      inputs: ["stellar-source"]
 
   sinks:
     - id: duckdb-sink
-      image: docker.io/withobsrvr/duckdb-consumer:v1.0.0
-      inputs: ["stellar-source"]
-      env:
-        DATABASE_PATH: "/data/stellar.duckdb"
-        ENABLE_FLOWCTL: "true"
-        FLOWCTL_ENDPOINT: "127.0.0.1:8080"
+      type: duckdb-consumer@v1.0.0
+      config:
+        database_path: ./stellar-pipeline.duckdb
+      inputs: ["contract-events"]
 ```
 
 **Key points:**
-- `driver: docker` runs components as Docker containers
-- Components are pulled from `docker.io/withobsrvr/`
-- `inputs` connects the sink to receive data from the source
-- `ENABLE_FLOWCTL` enables control plane integration
+- `driver: process` runs components as local processes
+- Components are automatically downloaded from Docker Hub
+- Pipeline has three stages: source → processor → sink
+- The `contract-events` processor extracts Soroban events from ledgers
+- `inputs` connects each component to its upstream data source
 
 ## Troubleshooting
 

@@ -4,31 +4,31 @@
 apiVersion: flowctl/v1
 kind: Pipeline
 metadata:
-  name: stellar-testnet-duckdb
-  description: Stellar testnet data pipeline to DuckDB
+  name: stellar-pipeline
+  description: Process stellar contract events on testnet
 
 spec:
-  driver: docker
+  driver: process
 
   sources:
     - id: stellar-source
-      image: docker.io/withobsrvr/stellar-live-source:v1.0.0
-      env:
-        NETWORK: testnet
-        ENABLE_FLOWCTL: "true"
-        FLOWCTL_ENDPOINT: "127.0.0.1:8080"
-        PORT: ":50051"
-        HEALTH_PORT: "8088"
+      type: stellar-live-source@v1.0.0
+      config:
+        network_passphrase: "Test SDF Network ; September 2015"
+        backend_type: RPC
+        rpc_endpoint: https://soroban-testnet.stellar.org
+        start_ledger: 54000000
+
+  processors:
+    - id: contract-events
+      type: contract-events-processor@v1.0.0
+      config:
+        network_passphrase: "Test SDF Network ; September 2015"
+      inputs: ["stellar-source"]
 
   sinks:
     - id: duckdb-sink
-      image: docker.io/withobsrvr/duckdb-consumer:v1.0.0
-      inputs: ["stellar-source"]
-      env:
-        DATABASE_PATH: "/data/stellar.duckdb"
-        ENABLE_FLOWCTL: "true"
-        FLOWCTL_ENDPOINT: "127.0.0.1:8080"
-        PORT: ":50052"
-        HEALTH_PORT: "8089"
-      volumes:
-        - "./data:/data"
+      type: duckdb-consumer@v1.0.0
+      config:
+        database_path: ./stellar-pipeline.duckdb
+      inputs: ["contract-events"]

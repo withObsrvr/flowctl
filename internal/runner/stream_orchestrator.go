@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -16,6 +18,16 @@ import (
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 )
+
+// getSinkBufferSize returns the buffer size for sink channels from environment or default
+func getSinkBufferSize() int {
+	if envVal := os.Getenv("FLOWCTL_SINK_BUFFER_SIZE"); envVal != "" {
+		if size, err := strconv.Atoi(envVal); err == nil && size > 0 {
+			return size
+		}
+	}
+	return 1000 // Default buffer size
+}
 
 // StreamOrchestrator manages data flow between pipeline components
 type StreamOrchestrator struct {
@@ -405,13 +417,16 @@ func (s *StreamOrchestrator) fanOutToSinks(processor model.Component, sinks []mo
 				zap.String("sink", sink.ID))
 		}
 
+		bufferSize := getSinkBufferSize()
 		sinkConns = append(sinkConns, sinkConnection{
 			sink:               sink,
 			stream:             consumeStream,
 			acceptedEventTypes: acceptedTypes,
-			eventChan:          make(chan *flowctlv1.Event, 100), // Buffered channel for backpressure
+			eventChan:          make(chan *flowctlv1.Event, bufferSize),
 		})
-		logger.Info("Connected sink for fan-out", zap.String("sink", sink.ID))
+		logger.Info("Connected sink for fan-out",
+			zap.String("sink", sink.ID),
+			zap.Int("buffer_size", bufferSize))
 	}
 
 	if len(sinkConns) == 0 {
@@ -461,17 +476,23 @@ func (s *StreamOrchestrator) fanOutToSinks(processor model.Component, sinks []mo
 	// Read from processor and broadcast to sink channels
 	go func() {
 		eventsFiltered := make(map[string]int64) // Track events filtered per sink
+		droppedEvents := make(map[string]int64)  // Track events dropped per sink due to buffer full
 
 		for {
 			envelope, err := processStream.Recv()
 			if err == io.EOF {
 				logger.Info("Processor stream ended, closing sink channels", zap.String("processor", processor.ID))
-				// Log filtering statistics
+				// Log filtering and drop statistics
 				for _, sc := range sinkConns {
 					if filtered := eventsFiltered[sc.sink.ID]; filtered > 0 {
 						logger.Info("Sink filtering statistics",
 							zap.String("sink", sc.sink.ID),
 							zap.Int64("events_filtered", filtered))
+					}
+					if dropped := droppedEvents[sc.sink.ID]; dropped > 0 {
+						logger.Error("Sink dropped events due to buffer pressure",
+							zap.String("sink", sc.sink.ID),
+							zap.Int64("events_dropped", dropped))
 					}
 				}
 				// Close all sink channels to signal writers to finish
@@ -502,15 +523,20 @@ func (s *StreamOrchestrator) fanOutToSinks(processor model.Component, sinks []mo
 					continue
 				}
 
-				// Send to sink's channel (non-blocking with select to handle full buffer)
+				// Send to sink's channel with timeout for backpressure
+				// This allows the reader to slow down when sinks can't keep up,
+				// while preventing indefinite blocking
 				select {
 				case sc.eventChan <- envelope:
 					// Event queued successfully
-				default:
-					// Channel full, log warning but don't block
-					logger.Warn("Sink channel full, dropping event",
+				case <-time.After(5 * time.Second):
+					// Buffer full for extended period - log error and continue
+					// This preserves backpressure while preventing indefinite blocking
+					logger.Error("Sink channel full after timeout, event dropped",
 						zap.String("sink", sc.sink.ID),
-						zap.String("event_id", envelope.Id))
+						zap.String("event_id", envelope.Id),
+						zap.String("event_type", envelope.Type))
+					droppedEvents[sc.sink.ID]++
 				}
 			}
 		}

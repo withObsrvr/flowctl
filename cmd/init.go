@@ -320,7 +320,7 @@ func generateIntent(name, fromType, toType, network, startLedger, endLedger, blo
 				"postgres_port":     "5432",
 				"postgres_db":       "stellar_events",
 				"postgres_user":     "postgres",
-				"postgres_password": "postgres",
+				"postgres_password": "${POSTGRES_PASSWORD:-postgres}",
 			},
 			"inputs": []string{"contract-events"},
 		})
@@ -349,17 +349,33 @@ func getLatestLedger(rpcEndpoint string) int {
 
 	resp, err := client.Post(rpcEndpoint, "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to query RPC endpoint %s: %v\n", rpcEndpoint, err)
 		return 0
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "Warning: RPC endpoint returned status %d\n", resp.StatusCode)
+		return 0
+	}
 
 	var result struct {
 		Result struct {
 			Sequence int `json:"sequence"`
 		} `json:"result"`
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to decode RPC response: %v\n", err)
+		return 0
+	}
+
+	if result.Error != nil {
+		fmt.Fprintf(os.Stderr, "Warning: RPC error %d: %s\n", result.Error.Code, result.Error.Message)
 		return 0
 	}
 
