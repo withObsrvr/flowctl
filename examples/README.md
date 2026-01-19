@@ -4,11 +4,21 @@ This directory contains example pipeline configurations demonstrating various fl
 
 ## 📚 Navigation
 
+### Quickstart (2 Minutes)
+
+**Get running immediately:**
+
+1. **[Quickstart Guide](quickstart/README.md)** ⭐ **Fastest Start!**
+   - Create a pipeline with `flowctl init`
+   - Auto-download components from Docker Hub
+   - Run your first Stellar data pipeline
+   - Sample pipelines for testnet/mainnet
+
 ### For Beginners
 
 **Start here if you're new to flowctl:**
 
-1. **[Getting Started Guide](getting-started/README.md)** ⭐ **Start Here!**
+1. **[Getting Started Guide](getting-started/README.md)** - Comprehensive beginner guide
    - What is flowctl and how does it work?
    - Core concepts (sources, processors, sinks)
    - Your first pipeline walkthrough
@@ -36,10 +46,10 @@ This directory contains example pipeline configurations demonstrating various fl
 → Start with [Getting Started Guide](getting-started/README.md)
 
 **"I want to build a custom pipeline"**
-→ Study the [Building Components Guide](../docs/building-components.md) and see real working example at `/home/tillman/Documents/ttp-processor-demo/ttp-pipeline.yaml`
+→ Study the [Building Components Guide](../docs/building-components.md) and see the [Contract Events Pipeline](https://github.com/withObsrvr/flowctl-sdk/tree/main/examples/contract-events-pipeline) for a real working example
 
 **"I want to see a real production pipeline"**
-→ Check out `/home/tillman/Documents/ttp-processor-demo/ttp-pipeline.yaml` - a complete working pipeline with Stellar source, TTP processor, and Node consumer
+→ Check out the [Contract Events Pipeline](https://github.com/withObsrvr/flowctl-sdk/tree/main/examples/contract-events-pipeline) - a complete working pipeline with Stellar source, processor, and PostgreSQL consumer
 
 ## 📖 Example Details
 
@@ -134,7 +144,7 @@ spec:
         HEALTH_PORT: "8090"
 ```
 
-**Note:** See `/home/tillman/Documents/ttp-processor-demo/ttp-pipeline.yaml` for a complete working example.
+**Note:** See the [Contract Events Pipeline](https://github.com/withObsrvr/flowctl-sdk/tree/main/examples/contract-events-pipeline) for a complete working example, or use `flowctl init` to generate a pipeline.
 
 ### Step 4: Run and Test
 
@@ -177,7 +187,7 @@ spec:
 
 **Beginner:**
 1. Read [Getting Started Guide](getting-started/README.md)
-2. Study the working pipeline at `/home/tillman/Documents/ttp-processor-demo/ttp-pipeline.yaml`
+2. Try the [Quickstart Guide](quickstart/README.md) to create your first pipeline with `flowctl init`
 
 **Intermediate:**
 1. Read [Building Components Guide](../docs/building-components.md)
@@ -192,7 +202,7 @@ spec:
 ## ❓ Common Questions
 
 **Q: Where can I find a working example pipeline?**
-A: See `/home/tillman/Documents/ttp-processor-demo/ttp-pipeline.yaml` for a complete working pipeline with real components (Stellar source, TTP processor, Node consumer).
+A: Use `flowctl init` to generate a pipeline, or see the [Contract Events Pipeline](https://github.com/withObsrvr/flowctl-sdk/tree/main/examples/contract-events-pipeline) for a complete working example with real components.
 
 **Q: How do I deploy to production?**
 A: Build component Docker images, use `driver: docker` in your pipeline spec, and deploy to your orchestration platform. Use `flowctl translate` to generate Docker Compose or Kubernetes configs.
@@ -252,8 +262,9 @@ curl http://localhost:8088/health
 # Test components standalone before adding to pipeline
 ENABLE_FLOWCTL=false PORT=:50051 /path/to/component
 
-# Study the working example
-cat /home/tillman/Documents/ttp-processor-demo/ttp-pipeline.yaml
+# Generate a sample pipeline to study
+./bin/flowctl init --non-interactive --network testnet --destination duckdb
+cat stellar-pipeline.yaml
 
 # Build components with flowctl-sdk for proper integration
 # github.com/withObsrvr/flowctl-sdk/pkg/{source,processor,consumer}

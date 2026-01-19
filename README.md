@@ -30,14 +30,107 @@ make build
 make deps
 ```
 
-## Quick Start
+## Quick Start (2 Minutes)
 
-1. Create a pipeline configuration file (see `examples/minimal.yaml` for a template)
-2. Run the pipeline:
+Get your first Stellar pipeline running:
 
 ```bash
-./bin/flowctl run examples/minimal.yaml
+# 1. Build flowctl
+git clone https://github.com/withobsrvr/flowctl.git && cd flowctl && make build
+
+# 2. Create a pipeline interactively
+./bin/flowctl init
+
+# 3. Run it (components auto-download!)
+./bin/flowctl run stellar-pipeline.yaml
 ```
+
+Components are automatically downloaded on first run.
+
+### DuckDB (Simplest - No Setup Required)
+
+```bash
+./bin/flowctl init --non-interactive --network testnet --destination duckdb
+./bin/flowctl run stellar-pipeline.yaml
+
+# Query your data
+duckdb stellar-pipeline.duckdb "SELECT event_type, COUNT(*) FROM contract_events GROUP BY event_type"
+```
+
+### PostgreSQL (Production-Ready)
+
+```bash
+# Start PostgreSQL (if not already running)
+docker run --name flowctl-postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
+docker exec flowctl-postgres createdb -U postgres stellar_events
+
+# Create and run pipeline
+./bin/flowctl init --non-interactive --network testnet --destination postgres
+./bin/flowctl run stellar-pipeline.yaml
+
+# Query your data
+docker exec flowctl-postgres psql -U postgres -d stellar_events \
+  -c "SELECT event_type, COUNT(*) FROM contract_events GROUP BY event_type"
+```
+
+**See also:** [Quickstart Examples](examples/quickstart/) | [flowctl init Reference](docs/init-command.md)
+
+---
+
+## flowctl init
+
+The `flowctl init` command creates pipeline configurations through an interactive wizard or via flags.
+
+### Interactive Mode (Default)
+
+```bash
+./bin/flowctl init
+```
+
+Prompts for:
+1. **Network**: `testnet` or `mainnet`
+2. **Destination**: `postgres`, `duckdb`, or `csv`
+
+### Non-Interactive Mode
+
+Use flags for automation:
+
+```bash
+./bin/flowctl init --non-interactive --network testnet --destination duckdb
+./bin/flowctl init --non-interactive --network mainnet --destination postgres -o my-pipeline.yaml
+```
+
+### Flags
+
+| Flag | Values | Description |
+|------|--------|-------------|
+| `--network` | `testnet`, `mainnet` | Stellar network to connect to |
+| `--destination` | `postgres`, `duckdb`, `csv` | Where to write data |
+| `--output`, `-o` | filename | Output file (default: `stellar-pipeline.yaml`) |
+| `--non-interactive` | - | Skip interactive prompts |
+
+### Destination Prerequisites
+
+| Destination | Prerequisite |
+|-------------|--------------|
+| `duckdb` | None - embedded database, just works |
+| `postgres` | PostgreSQL running on `localhost:5432` with database `stellar_events` |
+| `csv` | Write access to `./data` directory |
+
+### Auto-Download
+
+When you run the pipeline, flowctl automatically downloads components from Docker Hub:
+
+| Component | Type | Description |
+|-----------|------|-------------|
+| `stellar-live-source@v1.0.0` | Source | Streams Stellar ledger data |
+| `contract-events-processor@v1.0.0` | Processor | Extracts Soroban contract events |
+| `duckdb-consumer@v1.0.0` | Sink | Writes to embedded DuckDB database |
+| `postgres-consumer@v1.0.0` | Sink | Writes to PostgreSQL with JSONB |
+
+Components are cached in `~/.flowctl/components/`.
+
+**Full reference:** [docs/init-command.md](docs/init-command.md)
 
 ## Understanding Components
 
@@ -262,6 +355,49 @@ The bash script generator creates:
 3. Proper dependency ordering between components
 4. Health check monitoring
 5. Process supervision with automatic restart
+
+## Processor Discovery
+
+Discover and inspect processors registered with the control plane at runtime.
+
+**Note:** These commands require a running pipeline with an active control plane.
+
+### List Processors
+
+```bash
+# List all healthy processors
+./bin/flowctl processors list
+
+# Include unhealthy processors
+./bin/flowctl processors list --include-unhealthy
+
+# Output as JSON
+./bin/flowctl processors list -o json
+```
+
+### Find Processors by Type
+
+```bash
+# Find processors that accept stellar.ledger.v1 events
+./bin/flowctl processors find --input stellar.ledger.v1
+
+# Find processors that produce token.transfer events
+./bin/flowctl processors find --output stellar.token.transfer.v1
+
+# Find processors for a specific network
+./bin/flowctl processors find --metadata network=testnet
+```
+
+### Show Processor Details
+
+```bash
+# Show full details for a processor
+./bin/flowctl processors show ttp-processor-v1
+```
+
+**Full reference:** [docs/processor-discovery.md](docs/processor-discovery.md)
+
+---
 
 ## Troubleshooting
 

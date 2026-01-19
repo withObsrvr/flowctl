@@ -239,15 +239,15 @@ func (r *Resolver) parseComponentRef(ref string) (string, string, error) {
 // buildImageReference builds an OCI image reference from component name and version
 func (r *Resolver) buildImageReference(name, version string) (*registry.ImageReference, error) {
 	// Build full OCI reference
-	// "stellar-live-source" → "ghcr.io/withobsrvr/stellar-live-source:v1.0.0"
+	// "stellar-live-source" → "docker.io/withobsrvr/stellar-live-source:v1.0.0"
 	var fullRef string
 
 	if strings.Contains(name, "/") {
 		// Already has org: "withobsrvr/stellar-live-source"
-		fullRef = fmt.Sprintf("ghcr.io/%s:%s", name, version)
+		fullRef = fmt.Sprintf("docker.io/%s:%s", name, version)
 	} else {
-		// Add default org: "stellar-live-source" → "ghcr.io/withobsrvr/stellar-live-source"
-		fullRef = fmt.Sprintf("ghcr.io/%s/%s:%s", r.defaultOrg, name, version)
+		// Add default org: "stellar-live-source" → "docker.io/withobsrvr/stellar-live-source"
+		fullRef = fmt.Sprintf("docker.io/%s/%s:%s", r.defaultOrg, name, version)
 	}
 
 	return registry.ParseImageReference(fullRef)

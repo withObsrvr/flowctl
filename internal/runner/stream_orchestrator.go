@@ -361,12 +361,14 @@ func (s *StreamOrchestrator) wireProcessorToProcessor(currentProc, nextProc mode
 
 // fanOutToSinks broadcasts events from a processor to multiple sinks in parallel
 // CYCLE 2: Supports event type-based routing
+// Uses dedicated writer goroutines per sink to ensure thread-safe gRPC stream access
 func (s *StreamOrchestrator) fanOutToSinks(processor model.Component, sinks []model.Component, processStream flowctlv1.ProcessorService_ProcessClient) error {
 	// Create sink connections and streams
 	type sinkConnection struct {
-		sink              model.Component
-		stream            flowctlv1.ConsumerService_ConsumeClient
-		acceptedEventTypes []string // CYCLE 2: Event type filtering
+		sink               model.Component
+		stream             flowctlv1.ConsumerService_ConsumeClient
+		acceptedEventTypes []string                 // CYCLE 2: Event type filtering
+		eventChan          chan *flowctlv1.Event    // Channel for serializing sends
 	}
 
 	var sinkConns []sinkConnection
@@ -404,9 +406,10 @@ func (s *StreamOrchestrator) fanOutToSinks(processor model.Component, sinks []mo
 		}
 
 		sinkConns = append(sinkConns, sinkConnection{
-			sink:              sink,
-			stream:            consumeStream,
+			sink:               sink,
+			stream:             consumeStream,
 			acceptedEventTypes: acceptedTypes,
+			eventChan:          make(chan *flowctlv1.Event, 100), // Buffered channel for backpressure
 		})
 		logger.Info("Connected sink for fan-out", zap.String("sink", sink.ID))
 	}
@@ -419,57 +422,96 @@ func (s *StreamOrchestrator) fanOutToSinks(processor model.Component, sinks []mo
 		zap.String("processor", processor.ID),
 		zap.Int("num_sinks", len(sinkConns)))
 
-	// Read from processor and broadcast to all sinks
+	// WaitGroup to track writer goroutines
+	var writerWg sync.WaitGroup
+
+	// Start a dedicated writer goroutine for each sink
+	// This ensures thread-safe access to each gRPC stream (one goroutine per stream)
+	for i := range sinkConns {
+		sc := &sinkConns[i]
+		writerWg.Add(1)
+		go func(sinkConn *sinkConnection) {
+			defer writerWg.Done()
+			var eventsSent int64
+			var sendErrors int64
+
+			for event := range sinkConn.eventChan {
+				if err := sinkConn.stream.Send(event); err != nil {
+					sendErrors++
+					logger.Error("Error sending to sink in fan-out",
+						zap.Error(err),
+						zap.String("sink", sinkConn.sink.ID),
+						zap.String("event_id", event.Id),
+						zap.String("event_type", event.Type))
+					// Continue processing remaining events
+				} else {
+					eventsSent++
+				}
+			}
+
+			// Channel closed, close the stream
+			logger.Info("Sink writer finished, closing stream",
+				zap.String("sink", sinkConn.sink.ID),
+				zap.Int64("events_sent", eventsSent),
+				zap.Int64("send_errors", sendErrors))
+			sinkConn.stream.CloseAndRecv()
+		}(sc)
+	}
+
+	// Read from processor and broadcast to sink channels
 	go func() {
-		eventsSent := make(map[string]int64) // Track events sent per sink
 		eventsFiltered := make(map[string]int64) // Track events filtered per sink
 
 		for {
 			envelope, err := processStream.Recv()
 			if err == io.EOF {
-				logger.Info("Processor stream ended, closing all sinks", zap.String("processor", processor.ID))
-				// Log routing statistics
+				logger.Info("Processor stream ended, closing sink channels", zap.String("processor", processor.ID))
+				// Log filtering statistics
 				for _, sc := range sinkConns {
-					logger.Info("Sink routing statistics",
-						zap.String("sink", sc.sink.ID),
-						zap.Int64("events_sent", eventsSent[sc.sink.ID]),
-						zap.Int64("events_filtered", eventsFiltered[sc.sink.ID]))
+					if filtered := eventsFiltered[sc.sink.ID]; filtered > 0 {
+						logger.Info("Sink filtering statistics",
+							zap.String("sink", sc.sink.ID),
+							zap.Int64("events_filtered", filtered))
+					}
 				}
-				// Close all sink streams
-				for _, sc := range sinkConns {
-					sc.stream.CloseAndRecv()
+				// Close all sink channels to signal writers to finish
+				for i := range sinkConns {
+					close(sinkConns[i].eventChan)
 				}
+				// Wait for all writers to finish before returning
+				writerWg.Wait()
 				return
 			}
 			if err != nil {
 				logger.Error("Error receiving from processor for fan-out", zap.Error(err), zap.String("processor", processor.ID))
-				// Close all sink streams
-				for _, sc := range sinkConns {
-					sc.stream.CloseAndRecv()
+				// Close all sink channels to signal writers to finish
+				for i := range sinkConns {
+					close(sinkConns[i].eventChan)
 				}
+				// Wait for all writers to finish before returning
+				writerWg.Wait()
 				return
 			}
 
 			// CYCLE 2: Broadcast to matching sinks based on event type
-			// Each sink gets its own goroutine to avoid blocking others
-			for _, sc := range sinkConns {
+			for i := range sinkConns {
+				sc := &sinkConns[i]
 				// Check if sink accepts this event type
 				if !s.sinkAcceptsEventType(sc.acceptedEventTypes, envelope.Type) {
 					eventsFiltered[sc.sink.ID]++
 					continue
 				}
 
-				eventsSent[sc.sink.ID]++
-				go func(sinkConn sinkConnection, event *flowctlv1.Event) {
-					if err := sinkConn.stream.Send(event); err != nil {
-						logger.Error("Error sending to sink in fan-out",
-							zap.Error(err),
-							zap.String("sink", sinkConn.sink.ID),
-							zap.String("event_id", event.Id),
-							zap.String("event_type", event.Type))
-						// Don't stop other sinks if one fails
-					}
-				}(sc, envelope)
+				// Send to sink's channel (non-blocking with select to handle full buffer)
+				select {
+				case sc.eventChan <- envelope:
+					// Event queued successfully
+				default:
+					// Channel full, log warning but don't block
+					logger.Warn("Sink channel full, dropping event",
+						zap.String("sink", sc.sink.ID),
+						zap.String("event_id", envelope.Id))
+				}
 			}
 		}
 	}()
