@@ -155,12 +155,15 @@ var pipelinesRunInfoCmd = &cobra.Command{
 		}
 		defer conn.Close()
 
-		runID, err := resolveRunID(context.Background(), client, args[0])
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		runID, err := resolveRunID(ctx, client, args[0])
 		if err != nil {
 			return err
 		}
 
-		run, err := client.GetPipelineRun(context.Background(), &flowctlpb.GetPipelineRunRequest{
+		run, err := client.GetPipelineRun(ctx, &flowctlpb.GetPipelineRunRequest{
 			RunId: runID,
 		})
 		if err != nil {
@@ -206,14 +209,17 @@ var pipelinesStopCmd = &cobra.Command{
 		}
 		defer conn.Close()
 
-		runID, err := resolveRunID(context.Background(), client, args[0])
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		runID, err := resolveRunID(ctx, client, args[0])
 		if err != nil {
 			return err
 		}
 
 		fmt.Printf("Stopping pipeline run %s...\n", runID)
 
-		run, err := client.StopPipelineRun(context.Background(), &flowctlpb.StopPipelineRunRequest{
+		run, err := client.StopPipelineRun(ctx, &flowctlpb.StopPipelineRunRequest{
 			RunId: runID,
 		})
 		if err != nil {
@@ -365,7 +371,7 @@ func resolveRunID(ctx context.Context, client flowctlpb.ControlPlaneClient, runI
 	}
 
 	// Fallback: allow a unique prefix so operators can use the short IDs shown in tables.
-	resp, listErr := client.ListPipelineRuns(ctx, &flowctlpb.ListPipelineRunsRequest{Limit: 1000})
+	resp, listErr := client.ListPipelineRuns(ctx, &flowctlpb.ListPipelineRunsRequest{Limit: -1})
 	if listErr != nil {
 		return "", fmt.Errorf("failed to resolve run id %q: %w", runID, listErr)
 	}

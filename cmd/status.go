@@ -78,12 +78,14 @@ Examples:
 		defer conn.Close()
 
 		client := flowctlv1.NewControlPlaneServiceClient(conn)
-		ctx = context.Background()
 
 		// If watch mode, loop
 		if statusWatch {
 			for {
-				if err := displayStatus(ctx, client, pipelineName); err != nil {
+				rpcCtx, rpcCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				err := displayStatus(rpcCtx, client, pipelineName)
+				rpcCancel()
+				if err != nil {
 					return formatControlPlaneError(err, endpoint)
 				}
 				time.Sleep(time.Duration(statusWatchInterval) * time.Second)
@@ -92,7 +94,9 @@ Examples:
 		}
 
 		// Single status display
-		if err := displayStatus(ctx, client, pipelineName); err != nil {
+		rpcCtx, rpcCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer rpcCancel()
+		if err := displayStatus(rpcCtx, client, pipelineName); err != nil {
 			return formatControlPlaneError(err, endpoint)
 		}
 		return nil

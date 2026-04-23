@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"time"
 
@@ -70,14 +69,6 @@ func runV1Pipeline(cmd *cobra.Command, pipelineFile string) error {
 		return fmt.Errorf("failed to load pipeline: %w", err)
 	}
 
-	if !useExternalCP && controlPlanePort == 0 {
-		port, err := chooseFreePort(controlPlaneAddress)
-		if err != nil {
-			return fmt.Errorf("failed to choose free control plane port: %w", err)
-		}
-		controlPlanePort = port
-	}
-
 	logMsg := "Starting pipeline with embedded control plane"
 	if useExternalCP {
 		logMsg = "Starting pipeline with external control plane"
@@ -125,20 +116,6 @@ func runV1Pipeline(cmd *cobra.Command, pipelineFile string) error {
 
 	// Run pipeline with integrated control plane
 	return pipelineRunner.Run()
-}
-
-func chooseFreePort(address string) (int, error) {
-	if address == "" {
-		address = "127.0.0.1"
-	}
-
-	l, err := net.Listen("tcp", fmt.Sprintf("%s:0", address))
-	if err != nil {
-		return 0, err
-	}
-	defer l.Close()
-
-	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
 func init() {

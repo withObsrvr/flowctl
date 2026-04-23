@@ -291,6 +291,52 @@ func TestControlPlaneServer_StopPipelineRunInvokesStopper(t *testing.T) {
 	}
 }
 
+func TestControlPlaneServer_HeartbeatUnknownPreservesStatusAndMergesMetrics(t *testing.T) {
+	server := NewControlPlaneServer(nil)
+	if err := server.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer server.Close()
+
+	ctx := context.Background()
+	_, err := server.RegisterComponent(ctx, &flowctlv1.RegisterRequest{
+		ComponentId: "svc-1",
+		Component: &flowctlv1.ComponentInfo{
+			Id:   "svc-1",
+			Type: flowctlv1.ComponentType_COMPONENT_TYPE_SOURCE,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to register component: %v", err)
+	}
+
+	server.services["svc-1"].Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_DEGRADED
+	server.services["svc-1"].Status.Metrics = map[string]string{"component_metric": "42"}
+
+	_, err = server.Heartbeat(ctx, &flowctlv1.HeartbeatRequest{
+		ServiceId: "svc-1",
+		Status:    flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN,
+		Metrics:   map[string]string{"orchestrator": "process"},
+	})
+	if err != nil {
+		t.Fatalf("failed to send heartbeat: %v", err)
+	}
+
+	status, err := server.GetComponentStatus(ctx, &flowctlv1.ComponentStatusRequest{ServiceId: "svc-1"})
+	if err != nil {
+		t.Fatalf("failed to get component status: %v", err)
+	}
+	if status.Status != flowctlv1.HealthStatus_HEALTH_STATUS_DEGRADED {
+		t.Fatalf("expected degraded status to be preserved, got %v", status.Status)
+	}
+	if status.Metrics["component_metric"] != "42" {
+		t.Fatalf("expected existing metric to be preserved, got metrics=%v", status.Metrics)
+	}
+	if status.Metrics["orchestrator"] != "process" {
+		t.Fatalf("expected synthetic metric to be merged, got metrics=%v", status.Metrics)
+	}
+}
+
 func TestControlPlaneWrapper_Register(t *testing.T) {
 	// Create control plane server
 	server := NewControlPlaneServer(nil)

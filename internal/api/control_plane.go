@@ -268,11 +268,11 @@ func (s *ControlPlaneServer) Heartbeat(ctx context.Context, req *flowctlv1.Heart
 
 	now := time.Now()
 	service.LastSeen = now
-	service.Status.Metrics = req.Metrics
-	if req.Status == flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN {
-		service.Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY
-	} else {
+	service.Status.Metrics = mergeStringMaps(service.Status.Metrics, req.Metrics)
+	if req.Status != flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN {
 		service.Status.Status = req.Status
+	} else if service.Status.Status == flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN {
+		service.Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY
 	}
 	service.Status.LastHeartbeat = timestamppb.New(now)
 
@@ -280,11 +280,11 @@ func (s *ControlPlaneServer) Heartbeat(ctx context.Context, req *flowctlv1.Heart
 	if s.storage != nil {
 		err := s.storage.UpdateService(ctx, req.ServiceId, func(storedService *storage.ServiceInfo) error {
 			storedService.LastSeen = now
-			storedService.Status.Metrics = req.Metrics
-			if req.Status == flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN {
-				storedService.Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY
-			} else {
+			storedService.Status.Metrics = mergeStringMaps(storedService.Status.Metrics, req.Metrics)
+			if req.Status != flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN {
 				storedService.Status.Status = req.Status
+			} else if storedService.Status.Status == flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN {
+				storedService.Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY
 			}
 			storedService.Status.LastHeartbeat = timestamppb.New(now)
 			return nil
@@ -762,6 +762,21 @@ func (w *ControlPlaneWrapper) ListPipelineRuns(ctx context.Context, req *flowctl
 
 func (w *ControlPlaneWrapper) StopPipelineRun(ctx context.Context, req *flowctlpb.StopPipelineRunRequest) (*flowctlpb.PipelineRun, error) {
 	return w.server.StopPipelineRun(ctx, req)
+}
+
+func mergeStringMaps(base, updates map[string]string) map[string]string {
+	if len(base) == 0 && len(updates) == 0 {
+		return map[string]string{}
+	}
+
+	merged := make(map[string]string, len(base)+len(updates))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range updates {
+		merged[k] = v
+	}
+	return merged
 }
 
 // Helper functions to convert between v1 and flowctlpb types

@@ -444,7 +444,13 @@ func (p *ProcessOrchestrator) buildEnvironment(component *Component) []string {
 		componentEnv["HEALTH_PORT"] = fmt.Sprintf("%d", 18080+len(p.processes)+1)
 	}
 
-	// Add flowctl integration environment variables
+	// Add component-specific environment variables first.
+	for key, value := range componentEnv {
+		env = append(env, fmt.Sprintf("%s=%s", key, value))
+	}
+
+	// Force flowctl integration environment variables last so user-provided or
+	// registry-resolved values cannot override the active control plane endpoint.
 	env = append(env,
 		"ENABLE_FLOWCTL=true",
 		fmt.Sprintf("FLOWCTL_ENDPOINT=%s", p.controlPlaneEndpoint),
@@ -452,11 +458,6 @@ func (p *ProcessOrchestrator) buildEnvironment(component *Component) []string {
 		fmt.Sprintf("FLOWCTL_SERVICE_ID=%s", component.ID),
 		fmt.Sprintf("FLOWCTL_COMPONENT_ID=%s", component.ID), // Component ID for registration matching
 	)
-
-	// Add component-specific environment variables
-	for key, value := range componentEnv {
-		env = append(env, fmt.Sprintf("%s=%s", key, value))
-	}
 
 	return env
 }
@@ -508,7 +509,7 @@ func (p *ProcessOrchestrator) heartbeatProcess(componentID string) {
 
 		_, err := client.Heartbeat(ctx, &flowctlv1.HeartbeatRequest{
 			ServiceId: componentID,
-			Status:    flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY,
+			Status:    flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN,
 			Metrics: map[string]string{
 				"orchestrator": "process",
 				"pid":          fmt.Sprintf("%d", info.PID),
