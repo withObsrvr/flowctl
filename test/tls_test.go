@@ -34,35 +34,41 @@ func genTLSCertificates(t *testing.T) (certFile, keyFile, caFile string) {
 	// Generate a CA key and certificate
 	caKeyFile := filepath.Join(tmpDir, "ca.key")
 	caFile = filepath.Join(tmpDir, "ca.crt")
-	
+
 	// Generate a server key and certificate
 	keyFile = filepath.Join(tmpDir, "server.key")
 	certFile = filepath.Join(tmpDir, "server.crt")
-	
+	serverCSR := filepath.Join(tmpDir, "server.csr")
+	serverExt := filepath.Join(tmpDir, "server.ext")
+	serverExtContents := `subjectAltName=DNS:localhost,IP:127.0.0.1`
+	if err := os.WriteFile(serverExt, []byte(serverExtContents), 0644); err != nil {
+		t.Fatalf("Failed to write openssl extension file: %v", err)
+	}
+
 	// For testing purposes, we'll use simple bash commands to generate self-signed certs
 	// In production, proper certificate generation and management is required
 	// This is a simplification for testing purposes
 	cmds := []string{
 		// Generate CA key and certificate
 		"openssl genrsa -out " + caKeyFile + " 2048",
-		"openssl req -new -x509 -key " + caKeyFile + " -out " + caFile + 
+		"openssl req -new -x509 -key " + caKeyFile + " -out " + caFile +
 			" -days 1 -subj \"/C=US/ST=CA/L=SF/O=Test/CN=Flowctl Test CA\"",
-		
-		// Generate server key and certificate
+
+		// Generate server key and certificate with SAN for modern TLS validation
 		"openssl genrsa -out " + keyFile + " 2048",
-		"openssl req -new -key " + keyFile + " -out " + tmpDir + "/server.csr " +
-			"-subj \"/C=US/ST=CA/L=SF/O=Test/CN=localhost\"",
-		"openssl x509 -req -in " + tmpDir + "/server.csr -CA " + caFile + 
-			" -CAkey " + caKeyFile + " -CAcreateserial -out " + certFile + 
-			" -days 1 -subj \"/C=US/ST=CA/L=SF/O=Test/CN=localhost\"",
+		"openssl req -new -key " + keyFile + " -out " + serverCSR +
+			" -subj \"/C=US/ST=CA/L=SF/O=Test/CN=localhost\"",
+		"openssl x509 -req -in " + serverCSR + " -CA " + caFile +
+			" -CAkey " + caKeyFile + " -CAcreateserial -out " + certFile +
+			" -days 1 -extfile " + serverExt,
 	}
-	
+
 	for _, cmd := range cmds {
 		if output, err := exec.Command("bash", "-c", cmd).CombinedOutput(); err != nil {
 			t.Fatalf("Failed to execute %s: %v\nOutput: %s", cmd, err, output)
 		}
 	}
-	
+
 	return certFile, keyFile, caFile
 }
 
@@ -73,9 +79,9 @@ func setupTLSServer(t *testing.T, tlsConfig *config.TLSConfig) (string, func()) 
 	if err != nil {
 		t.Fatalf("Failed to listen: %v", err)
 	}
-	
+
 	var serverOpts []grpc.ServerOption
-	
+
 	// Configure server with TLS if enabled
 	if tlsConfig != nil && tlsConfig.Mode != config.TLSModeDisabled {
 		serverCreds, err := tlsConfig.LoadServerCredentials()
@@ -86,21 +92,21 @@ func setupTLSServer(t *testing.T, tlsConfig *config.TLSConfig) (string, func()) 
 			serverOpts = append(serverOpts, serverCreds)
 		}
 	}
-	
+
 	// Create the gRPC server
 	server := grpc.NewServer(serverOpts...)
-	
+
 	// Create the control plane server
 	controlPlane := api.NewControlPlaneServer(nil) // In-memory storage for tests
 	pb.RegisterControlPlaneServer(server, api.NewControlPlaneWrapper(controlPlane))
-	
+
 	// Start the server
 	go func() {
 		if err := server.Serve(listener); err != nil {
 			t.Logf("Server stopped: %v", err)
 		}
 	}()
-	
+
 	// Return the server address and a cleanup function
 	return listener.Addr().String(), func() {
 		server.Stop()
@@ -115,13 +121,13 @@ func TestTLSConnection(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping TLS test in short mode")
 	}
-	
+
 	// Initialize logger for tests
 	_ = logger.Init("error")
-	
+
 	// Generate certificates for testing
 	certFile, keyFile, caFile := genTLSCertificates(t)
-	
+
 	tests := []struct {
 		name         string
 		serverConfig *config.TLSConfig
@@ -204,35 +210,35 @@ func TestTLSConnection(t *testing.T) {
 			expectError: false,
 		},
 	}
-	
+
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Set up server with appropriate TLS configuration
 			serverAddr, cleanup := setupTLSServer(t, tc.serverConfig)
 			defer cleanup()
-			
+
 			// Allow server to start
 			time.Sleep(100 * time.Millisecond)
-			
+
 			// Create client options
 			clientOpts := &api.ClientOptions{
 				ServerAddress: serverAddr,
 				TLSConfig:     tc.clientConfig,
 			}
-			
+
 			// Create client (should succeed regardless of TLS config)
 			client, conn, err := api.CreateControlPlaneClient(clientOpts)
 			if err != nil {
 				t.Fatalf("Failed to create client: %v", err)
 			}
 			defer conn.Close()
-			
+
 			// Test the connection by making a simple RPC call
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
-			
+
 			_, err = client.ListServices(ctx, &emptypb.Empty{})
-			
+
 			// Check if the result matches our expectation
 			if tc.expectError && err == nil {
 				t.Errorf("Expected error in test %q, but got none", tc.name)

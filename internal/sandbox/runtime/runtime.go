@@ -144,32 +144,32 @@ func (r *Runtime) getContainerCommand() (string, error) {
 // performPreflightChecks validates that we can access the container runtime
 func (r *Runtime) performPreflightChecks() error {
 	logger.Info("Performing pre-flight checks", zap.String("command", r.containerCmd))
-	
+
 	// Try a simple version command to test access
 	cmd := exec.Command(r.containerCmd, "version", "--format", "json")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		errMsg := string(output)
-		
+
 		// Check for permission errors
 		if strings.Contains(errMsg, "permission denied") || strings.Contains(errMsg, "docker.sock") {
 			return r.handlePermissionError(errMsg)
 		}
-		
+
 		// Check for daemon not running
 		if strings.Contains(errMsg, "Cannot connect to the Docker daemon") || strings.Contains(errMsg, "Is the docker daemon running") {
 			return fmt.Errorf("Docker daemon is not running. Please start Docker and try again.\n\nOriginal error: %s", errMsg)
 		}
-		
+
 		// Check for command not found
 		if strings.Contains(err.Error(), "executable file not found") {
 			cmdName := filepath.Base(r.containerCmd)
 			return fmt.Errorf("%s not found. Please install Docker or nerdctl, or use --use-system-runtime flag with your system's container runtime", cmdName)
 		}
-		
+
 		return fmt.Errorf("failed to access container runtime: %s", errMsg)
 	}
-	
+
 	logger.Info("Pre-flight checks passed")
 	return nil
 }
@@ -177,9 +177,9 @@ func (r *Runtime) performPreflightChecks() error {
 // handlePermissionError provides platform-specific guidance for permission errors
 func (r *Runtime) handlePermissionError(originalError string) error {
 	var guidance strings.Builder
-	
+
 	guidance.WriteString("Permission denied accessing Docker. ")
-	
+
 	// Detect if running on NixOS
 	if _, err := os.Stat("/etc/NIXOS"); err == nil {
 		guidance.WriteString("NixOS specific solutions:\n\n")
@@ -217,11 +217,11 @@ func (r *Runtime) handlePermissionError(originalError string) error {
 			guidance.WriteString("3. Check if Docker is properly installed and running\n")
 		}
 	}
-	
+
 	guidance.WriteString("\nOriginal error: ")
 	guidance.WriteString(originalError)
-	
-	return fmt.Errorf(guidance.String())
+
+	return fmt.Errorf("%s", guidance.String())
 }
 
 // createNetwork creates the sandbox network
@@ -233,22 +233,22 @@ func (r *Runtime) createNetwork() error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		errMsg := string(output)
-		
+
 		// Check for permission denied errors
 		if strings.Contains(errMsg, "permission denied") || strings.Contains(errMsg, "docker.sock") {
 			return r.handlePermissionError(errMsg)
 		}
-		
+
 		// Check for daemon not running
 		if strings.Contains(errMsg, "Cannot connect to the Docker daemon") || strings.Contains(errMsg, "Is the docker daemon running") {
 			return fmt.Errorf("Docker daemon is not running. Please start Docker and try again.\n\nOriginal error: %s", errMsg)
 		}
-		
+
 		// Check for command not found
 		if !r.config.UseSystemRuntime && strings.Contains(err.Error(), "no such file or directory") {
 			return fmt.Errorf("failed to list networks: %w\n\nThis error often occurs when the bundled runtime is not properly set up. Please use the --use-system-runtime flag instead.", err)
 		}
-		
+
 		return fmt.Errorf("failed to list networks: %s", errMsg)
 	}
 
@@ -265,12 +265,12 @@ func (r *Runtime) createNetwork() error {
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		errMsg := string(output)
-		
+
 		// Check for permission errors on create as well
 		if strings.Contains(errMsg, "permission denied") || strings.Contains(errMsg, "docker.sock") {
 			return r.handlePermissionError(errMsg)
 		}
-		
+
 		return fmt.Errorf("failed to create network: %s", errMsg)
 	}
 
@@ -284,7 +284,7 @@ func (r *Runtime) StartServices(services map[string]config.ServiceConfig) error 
 
 	// Start services in dependency order
 	started := make(map[string]bool)
-	
+
 	for name := range services {
 		if err := r.startServiceWithDeps(name, services, started); err != nil {
 			return fmt.Errorf("failed to start service %s: %w", name, err)
@@ -355,12 +355,12 @@ func (r *Runtime) startService(name string, service config.ServiceConfig) error 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		errMsg := string(output)
-		
+
 		// Check for permission errors when starting containers
 		if strings.Contains(errMsg, "permission denied") || strings.Contains(errMsg, "docker.sock") {
 			return r.handlePermissionError(errMsg)
 		}
-		
+
 		return fmt.Errorf("failed to start container: %s", errMsg)
 	}
 
@@ -386,12 +386,12 @@ func (r *Runtime) StartPipeline(pipelinePath string) error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		errMsg := string(output)
-		
+
 		// Check for permission errors when starting pipeline
 		if strings.Contains(errMsg, "permission denied") || strings.Contains(errMsg, "docker.sock") {
 			return r.handlePermissionError(errMsg)
 		}
-		
+
 		return fmt.Errorf("failed to start pipeline: %s", errMsg)
 	}
 
@@ -402,7 +402,7 @@ func (r *Runtime) StartPipeline(pipelinePath string) error {
 // LoadEnvFile loads environment variables from a file
 func (r *Runtime) LoadEnvFile(envFile string) error {
 	logger.Info("Loading environment file", zap.String("file", envFile))
-	
+
 	// This would load and parse the .env file
 	// For now, just log that we would do this
 	return nil
@@ -411,7 +411,7 @@ func (r *Runtime) LoadEnvFile(envFile string) error {
 // StartWatcher starts file watching for hot reload
 func (r *Runtime) StartWatcher(pipelinePath string) error {
 	logger.Info("Starting file watcher", zap.String("path", pipelinePath))
-	
+
 	// Create watcher with reload function
 	w, err := watcher.NewWatcher(func(changedFile string) error {
 		return r.reloadPipeline(changedFile)
@@ -432,7 +432,7 @@ func (r *Runtime) StartWatcher(pipelinePath string) error {
 // reloadPipeline reloads the pipeline when files change
 func (r *Runtime) reloadPipeline(changedFile string) error {
 	logger.Info("Reloading pipeline due to file change", zap.String("file", changedFile))
-	
+
 	// Stop current pipeline container
 	cmd := exec.Command(r.containerCmd, "stop", "flowctl-pipeline")
 	cmd.Run() // Ignore errors
@@ -456,12 +456,12 @@ func (r *Runtime) ListContainers() ([]*Container, error) {
 	// Parse output (simplified)
 	lines := strings.Split(string(output), "\n")
 	var containers []*Container
-	
+
 	for _, line := range lines[1:] { // Skip header
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		
+
 		parts := strings.Split(line, "\t")
 		if len(parts) >= 4 {
 			containers = append(containers, &Container{
@@ -487,21 +487,21 @@ func (r *Runtime) GetNetworkInfo() (*NetworkInfo, error) {
 // StreamServiceLogs streams logs from a specific service
 func (r *Runtime) StreamServiceLogs(serviceName string, opts *LogsOptions) error {
 	args := []string{"logs"}
-	
+
 	if opts.Follow {
 		args = append(args, "-f")
 	}
-	
+
 	if opts.Tail > 0 {
 		args = append(args, "--tail", fmt.Sprintf("%d", opts.Tail))
 	}
-	
+
 	args = append(args, serviceName)
 
 	cmd := exec.Command(r.containerCmd, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	
+
 	return cmd.Run()
 }
 
@@ -538,11 +538,11 @@ func (r *Runtime) StopAll(opts *StopOptions) error {
 
 	for _, container := range containers {
 		args := []string{"stop"}
-		
+
 		if opts.Timeout > 0 {
 			args = append(args, "-t", fmt.Sprintf("%d", opts.Timeout))
 		}
-		
+
 		args = append(args, container.Name)
 
 		cmd := exec.Command(r.containerCmd, args...)
@@ -573,7 +573,7 @@ func (r *Runtime) StopAll(opts *StopOptions) error {
 func (r *Runtime) DisplayConnectionInfo(services map[string]config.ServiceConfig) {
 	logger.Info("🚀 Infrastructure services started successfully:")
 	logger.Info("")
-	
+
 	for name, service := range services {
 		var info strings.Builder
 		// Simple title case - capitalize first letter
@@ -582,7 +582,7 @@ func (r *Runtime) DisplayConnectionInfo(services map[string]config.ServiceConfig
 			titleName = strings.ToUpper(string(name[0])) + name[1:]
 		}
 		info.WriteString(fmt.Sprintf("  ✅ %s", titleName))
-		
+
 		// Add connection details based on service type
 		switch name {
 		case "redis":
@@ -628,10 +628,10 @@ func (r *Runtime) DisplayConnectionInfo(services map[string]config.ServiceConfig
 				info.WriteString(fmt.Sprintf(" - localhost:%s", strings.Join(ports, ", ")))
 			}
 		}
-		
+
 		logger.Info(info.String())
 	}
-	
+
 	logger.Info("")
 	logger.Info("📋 Next steps:")
 	logger.Info("  1. Modify your pipeline YAML to use localhost endpoints")
@@ -642,7 +642,7 @@ func (r *Runtime) DisplayConnectionInfo(services map[string]config.ServiceConfig
 // UpgradeBundledRuntime upgrades the bundled runtime
 func UpgradeBundledRuntime(opts *UpgradeOptions) error {
 	logger.Info("Upgrading bundled runtime", zap.String("version", opts.Version))
-	
+
 	// This would download and install new runtime binaries
 	// For now, just log that we would do this
 	return nil

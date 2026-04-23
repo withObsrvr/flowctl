@@ -10,6 +10,31 @@ permissions:
   contents: read
 
 jobs:
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run go vet
+        run: |
+          PKGS=$(find . \
+            \( -path './.git' -o -path './data' -o -path './bin' -o -path './internal/testfixtures/source' -o -path './internal/testfixtures/processor' -o -path './internal/testfixtures/sink' \) -prune \
+            -o -name '*.go' -print | xargs -r -n1 dirname | sort -u | sed 's#^#./#' | sed 's#\.//#./#')
+          go vet $PKGS
+
   test:
     name: Build and test
     runs-on: ubuntu-latest
