@@ -27,6 +27,7 @@ result-*
 # Docs
 ai-docs/
 examples/continuous.yaml
+sales/
 
 # DB files
 *.duckdb

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -148,15 +149,21 @@ var pipelinesRunInfoCmd = &cobra.Command{
 	Short: "Show detailed information about a pipeline run",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		runID := args[0]
-
 		client, conn, err := connectToControlPlane()
 		if err != nil {
 			return err
 		}
 		defer conn.Close()
 
-		run, err := client.GetPipelineRun(context.Background(), &flowctlpb.GetPipelineRunRequest{
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		runID, err := resolveRunID(ctx, client, args[0])
+		if err != nil {
+			return err
+		}
+
+		run, err := client.GetPipelineRun(ctx, &flowctlpb.GetPipelineRunRequest{
 			RunId: runID,
 		})
 		if err != nil {
@@ -196,17 +203,23 @@ var pipelinesStopCmd = &cobra.Command{
 	Short: "Stop a running pipeline",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		runID := args[0]
-
 		client, conn, err := connectToControlPlane()
 		if err != nil {
 			return err
 		}
 		defer conn.Close()
 
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		runID, err := resolveRunID(ctx, client, args[0])
+		if err != nil {
+			return err
+		}
+
 		fmt.Printf("Stopping pipeline run %s...\n", runID)
 
-		run, err := client.StopPipelineRun(context.Background(), &flowctlpb.StopPipelineRunRequest{
+		run, err := client.StopPipelineRun(ctx, &flowctlpb.StopPipelineRunRequest{
 			RunId: runID,
 		})
 		if err != nil {
@@ -274,7 +287,7 @@ func connectToControlPlane() (flowctlpb.ControlPlaneClient, *grpc.ClientConn, er
 		grpc.WithBlock(),
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to connect to control plane at %s: %w", endpoint, err)
+		return nil, nil, formatPipelinesControlPlaneError(endpoint, err)
 	}
 
 	client := flowctlpb.NewControlPlaneClient(conn)
@@ -344,6 +357,48 @@ func formatEventCount(n int64) string {
 	} else {
 		return fmt.Sprintf("%.1fM", float64(n)/1000000)
 	}
+}
+
+func resolveRunID(ctx context.Context, client flowctlpb.ControlPlaneClient, runID string) (string, error) {
+	if runID == "" {
+		return "", fmt.Errorf("run id is required")
+	}
+
+	// Fast path: exact lookup succeeds.
+	run, err := client.GetPipelineRun(ctx, &flowctlpb.GetPipelineRunRequest{RunId: runID})
+	if err == nil {
+		return run.RunId, nil
+	}
+
+	// Fallback: allow a unique prefix so operators can use the short IDs shown in tables.
+	resp, listErr := client.ListPipelineRuns(ctx, &flowctlpb.ListPipelineRunsRequest{Limit: -1})
+	if listErr != nil {
+		return "", fmt.Errorf("failed to resolve run id %q: %w", runID, listErr)
+	}
+
+	matches := make([]string, 0)
+	for _, candidate := range resp.Runs {
+		if strings.HasPrefix(candidate.RunId, runID) {
+			matches = append(matches, candidate.RunId)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("pipeline run not found: %s", runID)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("run id prefix %q is ambiguous (%d matches); provide more characters", runID, len(matches))
+	}
+}
+
+func formatPipelinesControlPlaneError(endpoint string, err error) error {
+	msg := err.Error()
+	if strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "connection refused") || strings.Contains(msg, "Error while dialing") {
+		return fmt.Errorf("no control plane is reachable at %s\nstart a pipeline with: flowctl run <pipeline.yaml>\nor specify a different endpoint with --control-plane-address/--control-plane-port", endpoint)
+	}
+	return fmt.Errorf("failed to connect to control plane at %s: %w", endpoint, err)
 }
 
 func init() {

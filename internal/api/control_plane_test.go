@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/storage"
 	flowctlpb "github.com/withobsrvr/flowctl/proto"
-	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -249,6 +249,91 @@ func TestControlPlaneServer_Janitor(t *testing.T) {
 	}
 	if status.Status != flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY {
 		t.Errorf("Service should be healthy after receiving heartbeat")
+	}
+}
+
+func TestControlPlaneServer_StopPipelineRunInvokesStopper(t *testing.T) {
+	memStorage, cleanup := createTestStorage()
+	defer cleanup()
+
+	server := NewControlPlaneServer(memStorage)
+	if err := server.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer server.Close()
+
+	ctx := context.Background()
+	_, err := server.CreatePipelineRun(ctx, &flowctlpb.CreatePipelineRunRequest{
+		RunId:        "run-stop-test",
+		PipelineName: "test-pipeline",
+	})
+	if err != nil {
+		t.Fatalf("failed to create pipeline run: %v", err)
+	}
+
+	stopped := make(chan struct{}, 1)
+	server.RegisterRunStopper("run-stop-test", func() {
+		stopped <- struct{}{}
+	})
+
+	run, err := server.StopPipelineRun(ctx, &flowctlpb.StopPipelineRunRequest{RunId: "run-stop-test"})
+	if err != nil {
+		t.Fatalf("failed to stop pipeline run: %v", err)
+	}
+	if run.Status != flowctlpb.RunStatus_RUN_STATUS_STOPPED {
+		t.Fatalf("expected stopped status, got %v", run.Status)
+	}
+
+	select {
+	case <-stopped:
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected stop callback to be invoked")
+	}
+}
+
+func TestControlPlaneServer_HeartbeatUnknownPreservesStatusAndMergesMetrics(t *testing.T) {
+	server := NewControlPlaneServer(nil)
+	if err := server.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer server.Close()
+
+	ctx := context.Background()
+	_, err := server.RegisterComponent(ctx, &flowctlv1.RegisterRequest{
+		ComponentId: "svc-1",
+		Component: &flowctlv1.ComponentInfo{
+			Id:   "svc-1",
+			Type: flowctlv1.ComponentType_COMPONENT_TYPE_SOURCE,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to register component: %v", err)
+	}
+
+	server.services["svc-1"].Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_DEGRADED
+	server.services["svc-1"].Status.Metrics = map[string]string{"component_metric": "42"}
+
+	_, err = server.Heartbeat(ctx, &flowctlv1.HeartbeatRequest{
+		ServiceId: "svc-1",
+		Status:    flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN,
+		Metrics:   map[string]string{"orchestrator": "process"},
+	})
+	if err != nil {
+		t.Fatalf("failed to send heartbeat: %v", err)
+	}
+
+	status, err := server.GetComponentStatus(ctx, &flowctlv1.ComponentStatusRequest{ServiceId: "svc-1"})
+	if err != nil {
+		t.Fatalf("failed to get component status: %v", err)
+	}
+	if status.Status != flowctlv1.HealthStatus_HEALTH_STATUS_DEGRADED {
+		t.Fatalf("expected degraded status to be preserved, got %v", status.Status)
+	}
+	if status.Metrics["component_metric"] != "42" {
+		t.Fatalf("expected existing metric to be preserved, got metrics=%v", status.Metrics)
+	}
+	if status.Metrics["orchestrator"] != "process" {
+		t.Fatalf("expected synthetic metric to be merged, got metrics=%v", status.Metrics)
 	}
 }
 

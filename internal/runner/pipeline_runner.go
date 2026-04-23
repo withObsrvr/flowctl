@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/withobsrvr/flowctl/internal/controlplane"
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/orchestrator"
+	"github.com/withobsrvr/flowctl/internal/storage"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"go.uber.org/zap"
@@ -23,29 +26,33 @@ import (
 
 // PipelineRunner manages the lifecycle of a pipeline with embedded control plane
 type PipelineRunner struct {
-	pipeline      *model.Pipeline
-	orchestrator  orchestrator.Orchestrator
-	controlPlane  *controlplane.EmbeddedControlPlane
-	ctx           context.Context
-	cancel        context.CancelFunc
-	config        Config
+	pipeline     *model.Pipeline
+	orchestrator orchestrator.Orchestrator
+	controlPlane *controlplane.EmbeddedControlPlane
+	ctx          context.Context
+	cancel       context.CancelFunc
+	config       Config
 
 	// Run tracking fields
-	runID        string      // Current run ID
-	runStartTime time.Time   // When run started
-	eventsCount  atomic.Int64 // Thread-safe event counter
+	runID         string       // Current run ID
+	runStartTime  time.Time    // When run started
+	eventsCount   atomic.Int64 // Thread-safe event counter
+	stopRequested atomic.Bool
+	stopOnce      sync.Once
 }
 
 // Config holds configuration for the pipeline runner
 type Config struct {
-	OrchestratorType     string
-	ControlPlanePort     int
-	ControlPlaneAddress  string
-	UseExternalCP        bool // If true, use external control plane instead of embedded
-	ShowStatus           bool
-	LogDir               string
-	HeartbeatTTL         time.Duration
-	JanitorInterval      time.Duration
+	OrchestratorType    string
+	ControlPlanePort    int
+	ControlPlaneAddress string
+	UseExternalCP       bool // If true, use external control plane instead of embedded
+	ShowStatus          bool
+	LogDir              string
+	HeartbeatTTL        time.Duration
+	JanitorInterval     time.Duration
+	DBPath              string
+	NoPersistence       bool
 }
 
 // NewPipelineRunner creates a new pipeline runner with embedded control plane
@@ -75,13 +82,26 @@ func NewPipelineRunner(pipeline *model.Pipeline, config Config) (*PipelineRunner
 	var controlPlaneAddr string
 
 	if !config.UseExternalCP {
+		var serviceStorage storage.ServiceStorage
+		if config.NoPersistence {
+			serviceStorage = storage.NewMemoryStorage()
+		} else {
+			dbPath, err := resolveEmbeddedDBPath(config.DBPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve embedded control plane db path: %w", err)
+			}
+			serviceStorage = storage.NewBoltDBStorage(&storage.BoltOptions{Path: dbPath})
+			logger.Info("Using persistent embedded control plane storage",
+				zap.String("path", dbPath))
+		}
+
 		// Create embedded control plane
 		controlPlaneConfig := controlplane.Config{
 			Address:         config.ControlPlaneAddress,
 			Port:            config.ControlPlanePort,
 			HeartbeatTTL:    config.HeartbeatTTL,
 			JanitorInterval: config.JanitorInterval,
-			Storage:         nil, // In-memory for now
+			Storage:         serviceStorage,
 		}
 
 		embeddedCP = controlplane.NewEmbeddedControlPlane(controlPlaneConfig)
@@ -124,6 +144,19 @@ func NewPipelineRunner(pipeline *model.Pipeline, config Config) (*PipelineRunner
 		cancel:       cancel,
 		config:       config,
 	}, nil
+}
+
+func resolveEmbeddedDBPath(dbPath string) (string, error) {
+	if dbPath != "" {
+		return dbPath, nil
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(homeDir, ".flowctl", storage.DefaultBoltFilePath), nil
 }
 
 // Run starts the pipeline with embedded or external control plane
@@ -224,7 +257,11 @@ func (r *PipelineRunner) Run() error {
 		shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_STOPPED
 	case <-r.ctx.Done():
 		logger.Info("Context cancelled")
-		shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_COMPLETED
+		if r.stopRequested.Load() {
+			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_STOPPED
+		} else {
+			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_COMPLETED
+		}
 	}
 
 	// Update run status before shutdown
@@ -267,10 +304,10 @@ func (r *PipelineRunner) startComponents() error {
 	// Start pipeline components (new)
 	if len(r.pipeline.Spec.Pipelines) > 0 {
 		logger.Info("Starting pipeline components", zap.Int("count", len(r.pipeline.Spec.Pipelines)))
-		
+
 		// Handle dependencies between pipelines
 		started := make(map[string]bool)
-		
+
 		// Helper function to start a pipeline component
 		var startPipeline func(pipeline model.Component) error
 		startPipeline = func(pipeline model.Component) error {
@@ -278,7 +315,7 @@ func (r *PipelineRunner) startComponents() error {
 			if started[pipeline.ID] {
 				return nil
 			}
-			
+
 			// Start dependencies first
 			for _, dep := range pipeline.DependsOn {
 				// Find the dependency
@@ -290,21 +327,21 @@ func (r *PipelineRunner) startComponents() error {
 					}
 				}
 			}
-			
+
 			// Start the pipeline component
 			component := r.convertToOrchestratorComponent(pipeline, "pipeline")
 			if err := r.orchestrator.StartComponent(r.ctx, component); err != nil {
 				return fmt.Errorf("failed to start pipeline %s: %w", pipeline.ID, err)
 			}
-			
-			logger.Info("Started pipeline component", 
+
+			logger.Info("Started pipeline component",
 				zap.String("id", pipeline.ID),
 				zap.String("image", pipeline.Image))
-			
+
 			started[pipeline.ID] = true
 			return nil
 		}
-		
+
 		// Start all pipelines respecting dependencies
 		for _, pipeline := range r.pipeline.Spec.Pipelines {
 			if err := startPipeline(pipeline); err != nil {
@@ -338,7 +375,7 @@ func (r *PipelineRunner) convertToOrchestratorComponent(modelComp model.Componen
 			Protocol: port.Protocol,
 		})
 	}
-	
+
 	// Convert volumes
 	for _, vol := range modelComp.Volumes {
 		orchComp.Volumes = append(orchComp.Volumes, orchestrator.VolumeMount{
@@ -502,6 +539,10 @@ func (r *PipelineRunner) logPipelineStatus() {
 // shutdown gracefully shuts down the pipeline and control plane
 func (r *PipelineRunner) shutdown() error {
 	logger.Info("Shutting down pipeline and control plane")
+
+	if r.controlPlane != nil && r.runID != "" {
+		defer r.controlPlane.UnregisterRunStopper(r.runID)
+	}
 
 	// Create a new context for shutdown operations with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -675,9 +716,21 @@ func (r *PipelineRunner) createPipelineRun() {
 		return
 	}
 
+	if r.controlPlane != nil {
+		r.controlPlane.RegisterRunStopper(r.runID, r.Stop)
+	}
+
 	logger.Info("Pipeline run record created successfully",
 		zap.String("run_id", r.runID),
 		zap.String("pipeline_name", r.pipeline.Metadata.Name))
+}
+
+// Stop requests graceful shutdown of the running pipeline.
+func (r *PipelineRunner) Stop() {
+	r.stopOnce.Do(func() {
+		r.stopRequested.Store(true)
+		r.cancel()
+	})
 }
 
 // updateRunStatus updates the run status in the control plane

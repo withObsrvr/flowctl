@@ -1,20 +1,26 @@
 # flowctl
 
-flowctl is a **pipeline orchestrator** that coordinates data flow between components. It manages sources (data producers), processors (transformers), and sinks (consumers) through an embedded control plane, enabling you to build robust data pipelines with minimal boilerplate.
+flowctl is a **production pipeline orchestrator** for Stellar data components. It manages sources, processors, and sinks through an embedded control plane so you can define pipelines declaratively, run them as supervised processes, and observe their health and status.
 
-## Features
+## What flowctl is for
 
-- Unix-style CLI interface
-- Pluggable processor architecture
-- Support for multiple sink types
-- YAML-based configuration
-- Structured logging with Uber's Zap
-- Built-in health monitoring
-- Prometheus metrics
-- Docker Compose deployment
-- DAG-based processor chaining with buffered channels
-- Flexible pipeline topologies with fan-out/fan-in support
-- Secure communication with TLS and mutual TLS support
+flowctl is the **orchestration/production layer** in the ecosystem:
+- define pipelines in `flowctl/v1` YAML
+- resolve and launch components
+- run with an embedded or external control plane
+- track registration, heartbeats, and run state
+- inspect status and active runs
+
+If you are rapidly prototyping processors or doing ad-hoc local analysis, use **nebu** first. When a processor is ready to be operated, monitored, and reused in production, it should live behind **flowctl**.
+
+## Current focus
+
+The primary supported runtime path today is:
+- **Process orchestration** (`spec.driver: process` / `--orchestrator process`)
+- **Embedded control plane** (default)
+- **`flowctl/v1` pipelines**
+
+Container/deployment backends exist in the repo but should be treated as secondary until they are hardened and fully tested.
 
 ## Installation
 
@@ -30,22 +36,67 @@ make build
 make deps
 ```
 
-## Quick Start (2 Minutes)
+## Quick Start
 
-Get your first Stellar pipeline running:
+If you are new to flowctl, start here.
+
+### 5-minute path
 
 ```bash
 # 1. Build flowctl
 git clone https://github.com/withobsrvr/flowctl.git && cd flowctl && make build
 
-# 2. Create a pipeline interactively
-./bin/flowctl init
+# 2. Generate a starter pipeline
+./bin/flowctl init --non-interactive --network testnet --destination duckdb
 
-# 3. Run it (components auto-download!)
+# 3. Validate it
+./bin/flowctl validate stellar-pipeline.yaml
+
+# 4. Run it
 ./bin/flowctl run stellar-pipeline.yaml
 ```
 
+In another terminal:
+
+```bash
+# 5. Check component health
+./bin/flowctl status
+
+# 6. Inspect active runs
+./bin/flowctl pipelines active
+```
+
 Components are automatically downloaded on first run.
+
+### Core operator workflow
+
+```bash
+./bin/flowctl init
+./bin/flowctl validate stellar-pipeline.yaml
+./bin/flowctl run stellar-pipeline.yaml
+./bin/flowctl status
+./bin/flowctl pipelines active
+./bin/flowctl pipelines run-info <run-id>
+./bin/flowctl pipelines stop <run-id>
+```
+
+### Recommended operator flags
+
+```bash
+# Use a non-default control plane port
+./bin/flowctl run --control-plane-port 9090 stellar-pipeline.yaml
+./bin/flowctl status --control-plane-address 127.0.0.1 --control-plane-port 9090
+./bin/flowctl pipelines active --control-plane-address 127.0.0.1 --control-plane-port 9090
+
+# Let flowctl auto-select a free control plane port
+./bin/flowctl run --control-plane-port 0 stellar-pipeline.yaml
+
+# Persist embedded run history explicitly
+./bin/flowctl run --db-path ~/.flowctl/flowctl-service-registry.db stellar-pipeline.yaml
+
+# Or disable persistence for a one-off local run
+./bin/flowctl run --no-persistence stellar-pipeline.yaml
+```
 
 ### DuckDB (Simplest - No Setup Required)
 
@@ -77,39 +128,19 @@ docker exec flowctl-postgres psql -U postgres -d stellar_events \
 
 ---
 
-## flowctl init
+## Starter Pipelines
 
-The `flowctl init` command creates pipeline configurations through an interactive wizard or via flags.
+The `flowctl init` command creates starter pipelines through an interactive wizard or via flags.
 
-### Interactive Mode (Default)
+Common examples:
 
 ```bash
 ./bin/flowctl init
-```
-
-Prompts for:
-1. **Network**: `testnet` or `mainnet`
-2. **Destination**: `postgres`, `duckdb`, or `csv`
-
-### Non-Interactive Mode
-
-Use flags for automation:
-
-```bash
 ./bin/flowctl init --non-interactive --network testnet --destination duckdb
-./bin/flowctl init --non-interactive --network mainnet --destination postgres -o my-pipeline.yaml
+./bin/flowctl init --non-interactive --network mainnet --destination postgres -o prod-pipeline.yaml
 ```
 
-### Flags
-
-| Flag | Values | Description |
-|------|--------|-------------|
-| `--network` | `testnet`, `mainnet` | Stellar network to connect to |
-| `--destination` | `postgres`, `duckdb`, `csv` | Where to write data |
-| `--output`, `-o` | filename | Output file (default: `stellar-pipeline.yaml`) |
-| `--non-interactive` | - | Skip interactive prompts |
-
-### Destination Prerequisites
+Destination prerequisites:
 
 | Destination | Prerequisite |
 |-------------|--------------|
@@ -117,24 +148,15 @@ Use flags for automation:
 | `postgres` | PostgreSQL running on `localhost:5432` with database `stellar_events` |
 | `csv` | Write access to `./data` directory |
 
-### Auto-Download
+Components are downloaded automatically on first run and cached in `~/.flowctl/components/`.
 
-When you run the pipeline, flowctl automatically downloads components from Docker Hub:
-
-| Component | Type | Description |
-|-----------|------|-------------|
-| `stellar-live-source@v1.0.0` | Source | Streams Stellar ledger data |
-| `contract-events-processor@v1.0.0` | Processor | Extracts Soroban contract events |
-| `duckdb-consumer@v1.0.0` | Sink | Writes to embedded DuckDB database |
-| `postgres-consumer@v1.0.0` | Sink | Writes to PostgreSQL with JSONB |
-
-Components are cached in `~/.flowctl/components/`.
-
-**Full reference:** [docs/init-command.md](docs/init-command.md)
+Full reference:
+- [docs/init-command.md](docs/init-command.md)
+- [examples/quickstart/](examples/quickstart/)
 
 ## Understanding Components
 
-**flowctl is a pipeline orchestrator**, not a data processor itself. It coordinates separate component binaries (sources, processors, sinks) and manages the data flow between them via an embedded control plane.
+**flowctl is a pipeline orchestrator**, not a data processor itself. It coordinates separate component binaries and manages data flow and component lifecycle via a control plane.
 
 ### Architecture Overview
 
@@ -205,14 +227,14 @@ spec:
 
 **Key configuration concepts**:
 - `apiVersion: flowctl/v1` - Standard pipeline format
-- `spec.driver` - Execution environment (`process`, `docker`, `kubernetes`, `nomad`)
+- `spec.driver` - Execution environment (currently focus on `process`)
 - Component `command` - Full path to the component binary
 - Component `env` - Environment variables for configuration
 
-For more complex examples, see:
-- `examples/minimal.yaml` - Minimal working pipeline
-- `examples/docker-pipeline.yaml` - Pipeline with Docker deployment
-- `examples/dag-pipeline.yaml` - DAG-based pipeline with complex topology
+For more examples, see:
+- `examples/quickstart/testnet-duckdb-pipeline.yaml` - Quickstart DuckDB pipeline
+- `examples/quickstart/testnet-postgres-pipeline.yaml` - Quickstart PostgreSQL pipeline
+- `examples/config/example.yaml` - Configuration example
 - **[Real-world demo](https://github.com/withObsrvr/flowctl-sdk/tree/main/examples/contract-events-pipeline)** - Complete Stellar contract events pipeline with PostgreSQL
 
 ### Logging
@@ -233,30 +255,19 @@ Example:
 ./bin/flowctl apply -f examples/minimal.yaml --log-level=debug
 ```
 
-## Pipeline Translation
+## Translation and Docker-based Workflows
 
-flowctl supports translating pipeline configurations to different deployment formats:
+flowctl still includes translation and Docker/container-oriented workflows, but they are **not the primary supported runtime path** today.
 
-```bash
-# Translate a pipeline to Docker Compose
-./bin/flowctl translate -f examples/docker-pipeline.yaml -o docker-compose
+If you are getting started with flowctl, skip these for now and use:
+- `flowctl init`
+- `flowctl validate`
+- `flowctl run`
+- `flowctl status`
+- `flowctl pipelines`
 
-# Save the output to a file
-./bin/flowctl translate -f examples/docker-pipeline.yaml -o docker-compose --to-file docker-compose.yml
-
-# Add a resource prefix for naming consistency
-./bin/flowctl translate -f examples/docker-pipeline.yaml -o docker-compose --prefix myapp
-
-# Specify a container registry
-./bin/flowctl translate -f examples/docker-pipeline.yaml -o docker-compose --registry ghcr.io/myorg
-
-# Generate local execution script
-./bin/flowctl translate -f examples/local-pipeline.yaml -o local --to-file run_pipeline.sh
-```
-
-Supported output formats:
-- `docker-compose`: Docker Compose YAML
-- `local`: Local execution configuration (Docker Compose or bash script)
+If you specifically need Docker Compose translation, local execution generation, or container troubleshooting, see:
+- [docs/docker-and-translation.md](docs/docker-and-translation.md)
 
 ## Advanced Features
 
@@ -301,60 +312,6 @@ tls:
 ```
 
 For more information, see [TLS Configuration](docs/tls-configuration.md).
-
-### Local Execution
-
-When using the `local` output format, flowctl generates a configuration for running your pipeline locally. By default, it creates a Docker Compose configuration with profiles, but you can also use the legacy bash script generator if needed.
-
-#### Docker Compose-based Local Execution (Default)
-
-The Docker Compose-based local generator creates:
-1. A Docker Compose configuration file with profile support
-2. An environment file with all required variables
-3. Proper dependency ordering between components
-4. Health check monitoring
-5. Volume management for persistent data and logs
-
-```bash
-# Generate Docker Compose configuration for local execution
-./bin/flowctl translate -f examples/local-pipeline.yaml -o local --to-file docker-compose.yaml
-
-# Start the pipeline
-docker compose --profile local up -d
-
-# View logs
-docker compose logs -f
-
-# Stop the pipeline
-docker compose down
-```
-
-See [Local Execution with Docker Compose](docs/local-execution.md) for more details.
-
-#### Legacy Bash Script Generator
-
-For compatibility with existing workflows, you can still use the bash script generator:
-
-```bash
-# Set environment variable to use bash script generator
-export FLOWCTL_LOCAL_GENERATOR_TYPE=bash
-
-# Generate local execution script
-./bin/flowctl translate -f examples/local-pipeline.yaml -o local --to-file run_pipeline.sh
-
-# Make the script executable
-chmod +x run_pipeline.sh
-
-# Run the pipeline
-./run_pipeline.sh
-```
-
-The bash script generator creates:
-1. A bash script to start and manage pipeline components
-2. An environment file with all required variables
-3. Proper dependency ordering between components
-4. Health check monitoring
-5. Process supervision with automatic restart
 
 ## Processor Discovery
 
@@ -432,16 +389,20 @@ chmod +x /path/to/component
 **Solutions:**
 
 ```bash
-# 1. Verify ENABLE_FLOWCTL is set
+# 1. Verify control plane endpoint matches the running pipeline
+./bin/flowctl status --control-plane-address 127.0.0.1 --control-plane-port 8080
+
+# 2. If 8080 is busy, run on a different port or auto-select one
+./bin/flowctl run --control-plane-port 9090 pipeline.yaml
+./bin/flowctl run --control-plane-port 0 pipeline.yaml
+
+# 3. Verify ENABLE_FLOWCTL is set
 # In pipeline YAML:
 env:
   ENABLE_FLOWCTL: "true"
   FLOWCTL_ENDPOINT: "127.0.0.1:8080"
 
-# 2. Check control plane started
-# Look for log: "Starting control plane on 127.0.0.1:8080"
-
-# 3. Check component built with flowctl-sdk
+# 4. Check component built with flowctl-sdk
 # Components must use SDK for registration:
 # github.com/withObsrvr/flowctl-sdk/pkg/{source,processor,consumer}
 ```
@@ -480,7 +441,13 @@ processors:
 lsof -i :50051
 netstat -tulpn | grep 50051
 
-# 2. Use unique ports for each component
+# 2. For the embedded control plane, use another port
+./bin/flowctl run --control-plane-port 9090 pipeline.yaml
+
+# 3. Or let flowctl choose a free control plane port automatically
+./bin/flowctl run --control-plane-port 0 pipeline.yaml
+
+# 4. Use unique ports for each component
 sources:
   - id: source-1
     env:
@@ -493,9 +460,11 @@ processors:
       PORT: ":50052"  # Different port
       HEALTH_PORT: "8089"
 
-# 3. Kill conflicting process if needed
+# 5. Kill conflicting process if needed
 kill <PID>
 ```
+
+**Tip:** In process mode, flowctl now injects a default `HEALTH_PORT` for components that do not define one, which reduces accidental health-port collisions. Explicitly setting `HEALTH_PORT` is still recommended for production pipelines.
 
 #### Pipeline Configuration Invalid
 
@@ -504,8 +473,8 @@ kill <PID>
 **Solutions:**
 
 ```bash
-# 1. Validate configuration
-./bin/flowctl run --dry-run pipeline.yaml
+# 1. Validate configuration before running
+./bin/flowctl validate pipeline.yaml
 
 # 2. Check required fields
 # - apiVersion: flowctl/v1
@@ -547,34 +516,27 @@ CONFIG_KEY=value \
 # Database connections, API endpoints, file paths, etc.
 ```
 
+#### Inspecting Active and Historical Runs
+
+**Examples:**
+
+```bash
+# Active runs on a specific control plane
+./bin/flowctl pipelines active --control-plane-address 127.0.0.1 --control-plane-port 9090
+
+# Inspect one run in detail (full id or unique prefix)
+./bin/flowctl pipelines run-info abc12345 --control-plane-address 127.0.0.1 --control-plane-port 9090
+
+# Stop a running pipeline
+./bin/flowctl pipelines stop abc12345 --control-plane-address 127.0.0.1 --control-plane-port 9090
+```
+
+**Persistence note:** embedded control plane mode now uses BoltDB-backed storage by default, so run history can survive process restarts. Use `--db-path` to choose the storage location or `--no-persistence` for ephemeral local runs.
+
 ### Docker and Container Issues
 
-#### Docker Permission Errors
-
-If you encounter permission errors when running flowctl sandbox commands, the tool will provide platform-specific guidance. Common solutions include:
-
-**Linux:**
-- Run with sudo: `sudo flowctl sandbox start ...`
-- Add your user to the docker group: `sudo usermod -aG docker $USER` (then log out and back in)
-- Check if Docker service is running: `sudo systemctl status docker`
-
-**macOS:**
-- Ensure Docker Desktop is running
-- Check Docker Desktop permissions in System Preferences
-- Try restarting Docker Desktop
-
-**NixOS:**
-- See detailed setup guide: [docs/nixos-docker-setup.md](docs/nixos-docker-setup.md)
-- Quick fix: Run with sudo
-- Permanent fix: Add user to docker group in configuration.nix
-
-#### Container Runtime Not Found
-
-If flowctl cannot find Docker or nerdctl:
-
-1. Install Docker: https://docs.docker.com/get-docker/
-2. Or install nerdctl: https://github.com/containerd/nerdctl
-3. flowctl uses your system-installed container runtime by default
+Docker/container troubleshooting has moved to:
+- [docs/docker-and-translation.md](docs/docker-and-translation.md)
 
 ### Getting Help
 

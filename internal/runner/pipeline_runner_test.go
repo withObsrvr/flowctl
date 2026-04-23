@@ -68,7 +68,7 @@ func TestNewPipelineRunner(t *testing.T) {
 	}
 
 	// Test control plane endpoint
-	expectedEndpoint := "http://127.0.0.1:8084"
+	expectedEndpoint := "127.0.0.1:8084"
 	if runner.GetControlPlaneEndpoint() != expectedEndpoint {
 		t.Errorf("Expected endpoint %s, got %s", expectedEndpoint, runner.GetControlPlaneEndpoint())
 	}

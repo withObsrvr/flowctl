@@ -20,9 +20,19 @@ build:
 	@echo "Binary built at bin/flowctl"
 
 # Run tests
+# Use a filesystem-based package list so local runtime directories (for example
+# unreadable data mounts under ./data) do not break package discovery.
 test:
 	@echo "Running tests..."
-	@go test -v ./...
+	@GOFILES=$$(find . \
+		\( -path './.git' -o -path './data' -o -path './bin' -o -path './internal/testfixtures/source' -o -path './internal/testfixtures/processor' -o -path './internal/testfixtures/sink' \) -prune \
+		-o -name '*.go' -print); \
+		if [ -n "$$GOFILES" ]; then \
+			PKGS=$$(printf '%s\n' "$$GOFILES" | xargs -n1 dirname | sort -u | sed 's#^#./#' | sed 's#\.//#./#'); \
+			go test -v $$PKGS; \
+		else \
+			echo "No Go packages found."; \
+		fi
 
 # Run the application
 run:

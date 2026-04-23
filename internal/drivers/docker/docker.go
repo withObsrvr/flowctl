@@ -30,7 +30,7 @@ func (d *DockerDriver) Apply(ctx context.Context, pipeline *model.Pipeline, opti
 	logger.Info("Deploying pipeline with Docker driver")
 	
 	// Generate Docker Compose file
-	data, err := d.translator.Translate(ctx, pipeline, model.DockerCompose)
+	_, err := d.translator.Translate(ctx, pipeline, model.DockerCompose)
 	if err != nil {
 		return fmt.Errorf("failed to translate pipeline to Docker Compose: %w", err)
 	}

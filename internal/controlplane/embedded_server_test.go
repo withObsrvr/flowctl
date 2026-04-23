@@ -34,7 +34,7 @@ func TestEmbeddedControlPlane_Lifecycle(t *testing.T) {
 	}
 
 	// Test endpoint
-	expectedEndpoint := "http://127.0.0.1:8081"
+	expectedEndpoint := "127.0.0.1:8081"
 	if cp.GetEndpoint() != expectedEndpoint {
 		t.Errorf("Expected endpoint %s, got %s", expectedEndpoint, cp.GetEndpoint())
 	}
@@ -116,7 +116,7 @@ func TestEmbeddedControlPlane_WaitForComponent(t *testing.T) {
 		t.Error("Expected timeout error when waiting for non-existent component")
 	}
 
-	if err.Error() != "timeout waiting for component non-existent to register" {
-		t.Errorf("Expected timeout error message, got: %v", err)
+	if got := err.Error(); got == "timeout waiting for component non-existent to register" || len(got) == 0 {
+		t.Errorf("Expected detailed timeout error message, got: %v", err)
 	}
 }

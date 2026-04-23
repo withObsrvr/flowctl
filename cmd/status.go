@@ -15,10 +15,12 @@ import (
 )
 
 var (
-	statusControlPlaneAddr string
-	statusIncludeUnhealthy bool
-	statusWatch            bool
-	statusWatchInterval    int
+	statusControlPlaneAddress string
+	statusControlPlanePort    int
+	statusControlPlaneAddr    string
+	statusIncludeUnhealthy    bool
+	statusWatch               bool
+	statusWatchInterval       int
 )
 
 var statusCmd = &cobra.Command{
@@ -38,6 +40,9 @@ Examples:
   flowctl status
 
   # Show status from specific control plane
+  flowctl status --control-plane-address localhost --control-plane-port 9090
+
+  # Legacy combined endpoint form (still supported)
   flowctl status --control-plane-addr localhost:9090
 
   # Include unhealthy components
@@ -56,24 +61,32 @@ Examples:
 			}
 		}
 
-		// Connect to control plane
-		conn, err := grpc.NewClient(
-			statusControlPlaneAddr,
+		endpoint := resolveStatusControlPlaneEndpoint()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		conn, err := grpc.DialContext(
+			ctx,
+			endpoint,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithBlock(),
 		)
 		if err != nil {
-			return fmt.Errorf("failed to connect to control plane: %w", err)
+			return formatControlPlaneError(err, endpoint)
 		}
 		defer conn.Close()
 
 		client := flowctlv1.NewControlPlaneServiceClient(conn)
-		ctx := context.Background()
 
 		// If watch mode, loop
 		if statusWatch {
 			for {
-				if err := displayStatus(ctx, client, pipelineName); err != nil {
-					return err
+				rpcCtx, rpcCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				err := displayStatus(rpcCtx, client, pipelineName)
+				rpcCancel()
+				if err != nil {
+					return formatControlPlaneError(err, endpoint)
 				}
 				time.Sleep(time.Duration(statusWatchInterval) * time.Second)
 				fmt.Print("\033[H\033[2J") // Clear screen
@@ -81,7 +94,12 @@ Examples:
 		}
 
 		// Single status display
-		return displayStatus(ctx, client, pipelineName)
+		rpcCtx, rpcCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer rpcCancel()
+		if err := displayStatus(rpcCtx, client, pipelineName); err != nil {
+			return formatControlPlaneError(err, endpoint)
+		}
+		return nil
 	},
 }
 
@@ -294,10 +312,27 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dm", m)
 }
 
+func resolveStatusControlPlaneEndpoint() string {
+	if statusControlPlaneAddr != "" {
+		return statusControlPlaneAddr
+	}
+	return fmt.Sprintf("%s:%d", statusControlPlaneAddress, statusControlPlanePort)
+}
+
+func formatControlPlaneError(err error, endpoint string) error {
+	msg := err.Error()
+	if strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "connection refused") || strings.Contains(msg, "failed to connect") || strings.Contains(msg, "Error while dialing") {
+		return fmt.Errorf("no control plane is reachable at %s\nstart a pipeline with: flowctl run <pipeline.yaml>\nor specify a different endpoint with --control-plane-address/--control-plane-port", endpoint)
+	}
+	return err
+}
+
 func init() {
 	rootCmd.AddCommand(statusCmd)
 
-	statusCmd.Flags().StringVar(&statusControlPlaneAddr, "control-plane-addr", "127.0.0.1:8080", "control plane address")
+	statusCmd.Flags().StringVar(&statusControlPlaneAddress, "control-plane-address", "127.0.0.1", "control plane address")
+	statusCmd.Flags().IntVar(&statusControlPlanePort, "control-plane-port", 8080, "control plane port")
+	statusCmd.Flags().StringVar(&statusControlPlaneAddr, "control-plane-addr", "", "legacy combined control plane endpoint host:port")
 	statusCmd.Flags().BoolVar(&statusIncludeUnhealthy, "include-unhealthy", true, "include unhealthy components")
 	statusCmd.Flags().BoolVar(&statusWatch, "watch", false, "watch mode (refresh periodically)")
 	statusCmd.Flags().IntVar(&statusWatchInterval, "interval", 5, "watch interval in seconds")
