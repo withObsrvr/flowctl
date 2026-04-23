@@ -114,6 +114,37 @@ wait_for_log_pattern() {
   done
 }
 
+wait_for_postgres_events() {
+  local container_name="$1"
+  local pid="$2"
+  local log_path="$3"
+  local timeout_seconds="${4:-180}"
+  local start_time
+  start_time=$(date +%s)
+
+  while true; do
+    local pg_count
+    pg_count=$(docker exec "$container_name" psql -U postgres -d stellar_events -tAc "SELECT COUNT(*) FROM contract_events;" 2>/dev/null || echo 0)
+    if [[ -n "${pg_count}" && "${pg_count}" != "0" ]]; then
+      return 0
+    fi
+
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      echo "flowctl run exited before PostgreSQL received events" >&2
+      tail -n 80 "$log_path" >&2 || true
+      return 1
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      echo "timed out waiting for PostgreSQL events" >&2
+      tail -n 80 "$log_path" >&2 || true
+      return 1
+    fi
+
+    sleep 2
+  done
+}
+
 query_duckdb() {
   local db_path="$1"
   local sql="$2"
@@ -202,14 +233,7 @@ if command -v docker >/dev/null 2>&1; then
   ./bin/flowctl init --non-interactive --network testnet --destination postgres -o "${TMP_DIR}/postgres-pipeline.yaml" >/dev/null
   nohup ./bin/flowctl run --control-plane-port 9091 --no-persistence "${TMP_DIR}/postgres-pipeline.yaml" >"${TMP_DIR}/postgres.log" 2>&1 &
   POSTGRES_PID=$!
-  wait_for_control_plane 9091 "$POSTGRES_PID" "${TMP_DIR}/postgres.log" 180
-  for _ in $(seq 1 90); do
-    pg_count=$(docker exec "${POSTGRES_CONTAINER}" psql -U postgres -d stellar_events -tAc "SELECT COUNT(*) FROM contract_events;" 2>/dev/null || echo 0)
-    if [[ -n "${pg_count}" && "${pg_count}" != "0" ]]; then
-      break
-    fi
-    sleep 2
-  done
+  wait_for_postgres_events "${POSTGRES_CONTAINER}" "$POSTGRES_PID" "${TMP_DIR}/postgres.log" 240
   kill "${POSTGRES_PID}" >/dev/null 2>&1 || true
   wait "${POSTGRES_PID}" || true
   POSTGRES_PID=""
