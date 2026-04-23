@@ -122,7 +122,7 @@ When you run a pipeline created by `flowctl init`, components are automatically 
 |-----------|-------|------|-------------|
 | Stellar Live Source | `docker.io/withobsrvr/stellar-live-source:v1.0.0` | Source | Streams Stellar ledger data in real-time |
 | DuckDB Consumer | `docker.io/withobsrvr/duckdb-consumer:v1.0.0` | Sink | Writes data to embedded DuckDB database |
-| PostgreSQL Sink | `docker.io/withobsrvr/postgres-sink:v1.0.0` | Sink | Writes data to PostgreSQL database |
+| PostgreSQL Sink | `docker.io/withobsrvr/postgres-consumer:v1.0.0` | Sink | Writes data to PostgreSQL database |
 
 ### Registry Information
 
@@ -137,7 +137,7 @@ To pre-download components:
 ```bash
 docker pull docker.io/withobsrvr/stellar-live-source:v1.0.0
 docker pull docker.io/withobsrvr/duckdb-consumer:v1.0.0
-docker pull docker.io/withobsrvr/postgres-sink:v1.0.0
+docker pull docker.io/withobsrvr/postgres-consumer:v1.0.0
 ```
 
 ## Generated Configuration Structure
