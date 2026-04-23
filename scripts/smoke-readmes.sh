@@ -28,7 +28,9 @@ need make
 
 wait_for_control_plane() {
   local port="$1"
-  local timeout_seconds="${2:-120}"
+  local pid="$2"
+  local log_path="$3"
+  local timeout_seconds="${4:-120}"
   local start_time
   start_time=$(date +%s)
 
@@ -37,8 +39,15 @@ wait_for_control_plane() {
       return 0
     fi
 
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      echo "flowctl run exited before control plane on port $port became reachable" >&2
+      tail -n 80 "$log_path" >&2 || true
+      return 1
+    fi
+
     if (( $(date +%s) - start_time >= timeout_seconds )); then
       echo "timed out waiting for control plane on port $port" >&2
+      tail -n 80 "$log_path" >&2 || true
       return 1
     fi
 
@@ -79,7 +88,8 @@ wait_for_duckdb_unlock() {
 wait_for_log_pattern() {
   local file_path="$1"
   local pattern="$2"
-  local timeout_seconds="${3:-120}"
+  local pid="$3"
+  local timeout_seconds="${4:-120}"
   local start_time
   start_time=$(date +%s)
 
@@ -88,8 +98,15 @@ wait_for_log_pattern() {
       return 0
     fi
 
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      echo "flowctl run exited before log pattern '$pattern' appeared" >&2
+      tail -n 80 "$file_path" >&2 || true
+      return 1
+    fi
+
     if (( $(date +%s) - start_time >= timeout_seconds )); then
       echo "timed out waiting for log pattern '$pattern' in $file_path" >&2
+      tail -n 80 "$file_path" >&2 || true
       return 1
     fi
 
@@ -154,11 +171,11 @@ perl -0pi -e "s#\./stellar-pipeline\.duckdb#${TMP_DIR}/stellar-pipeline.duckdb#g
 echo "==> DuckDB quickstart smoke"
 nohup ./bin/flowctl run --control-plane-port 9090 --no-persistence "${TMP_DIR}/stellar-pipeline.yaml" >"${TMP_DIR}/duckdb.log" 2>&1 &
 DUCKDB_PID=$!
-wait_for_control_plane 9090 180
+wait_for_control_plane 9090 "$DUCKDB_PID" "${TMP_DIR}/duckdb.log" 180
 ./bin/flowctl processors list --endpoint 127.0.0.1:9090 >/dev/null
 ./bin/flowctl processors find --input stellar.ledger.v1 --endpoint 127.0.0.1:9090 >/dev/null
 ./bin/flowctl processors find --output stellar.contract.events.v1 --endpoint 127.0.0.1:9090 >/dev/null
-wait_for_log_pattern "${TMP_DIR}/duckdb.log" "Stored [0-9][0-9]* contract events" 180
+wait_for_log_pattern "${TMP_DIR}/duckdb.log" "Stored [0-9][0-9]* contract events" "$DUCKDB_PID" 180
 kill "${DUCKDB_PID}" >/dev/null 2>&1 || true
 wait "${DUCKDB_PID}" || true
 DUCKDB_PID=""
@@ -185,7 +202,7 @@ if command -v docker >/dev/null 2>&1; then
   ./bin/flowctl init --non-interactive --network testnet --destination postgres -o "${TMP_DIR}/postgres-pipeline.yaml" >/dev/null
   nohup ./bin/flowctl run --control-plane-port 9091 --no-persistence "${TMP_DIR}/postgres-pipeline.yaml" >"${TMP_DIR}/postgres.log" 2>&1 &
   POSTGRES_PID=$!
-  wait_for_control_plane 9091 180
+  wait_for_control_plane 9091 "$POSTGRES_PID" "${TMP_DIR}/postgres.log" 180
   for _ in $(seq 1 90); do
     pg_count=$(docker exec "${POSTGRES_CONTAINER}" psql -U postgres -d stellar_events -tAc "SELECT COUNT(*) FROM contract_events;" 2>/dev/null || echo 0)
     if [[ -n "${pg_count}" && "${pg_count}" != "0" ]]; then
