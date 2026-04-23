@@ -1,6 +1,6 @@
 # Building Components for flowctl
 
-This guide covers building custom sources, processors, and sinks using the flowctl-sdk.
+This guide covers building custom sources, processors, and sinks using the flowctl SDKs.
 
 If you are specifically building **processors**, read this first:
 
@@ -30,7 +30,14 @@ promote to a production-ready flowctl processor
 
 ## Overview
 
-Components are **separate Go programs** that implement the flowctl component interface. The **flowctl-sdk** provides packages that handle:
+Components are separate programs that implement the flowctl component interface.
+
+You now have two SDK paths:
+
+- **Go SDK**: [`flowctl-sdk`](https://github.com/withObsrvr/flowctl-sdk)
+- **JavaScript / TypeScript SDK**: [`js-flowctl-sdk`](https://github.com/withObsrvr/js-flowctl-sdk) via `npm install @withobsrvr/js-flowctl-sdk`
+
+Both SDKs provide:
 
 ✅ gRPC server setup
 ✅ Control plane registration
@@ -54,10 +61,16 @@ Start with **nebu** for rapid prototyping, then graduate to flowctl for producti
 
 ### Ready for Production?
 
-Jump straight to the **flowctl-sdk quickstart**:
+Jump straight to one of the SDK quickstarts:
 
+#### Go
 - **5-minute quickstart**: [flowctl-sdk/docs/QUICKSTART.md](https://github.com/withObsrvr/flowctl-sdk/blob/main/docs/QUICKSTART.md)
 - **Complete examples**: [flowctl-sdk/examples/](https://github.com/withObsrvr/flowctl-sdk/tree/main/examples)
+
+#### JavaScript / TypeScript
+- **NPM package**: [`@withobsrvr/js-flowctl-sdk`](https://www.npmjs.com/package/@withobsrvr/js-flowctl-sdk)
+- **Repository**: [withObsrvr/js-flowctl-sdk](https://github.com/withObsrvr/js-flowctl-sdk)
+- **End-to-end example**: [`examples/flowctl-e2e/`](https://github.com/withObsrvr/js-flowctl-sdk/tree/main/examples/flowctl-e2e)
 
 ### Terminology
 
@@ -83,7 +96,9 @@ The core API for Stellar processors is `EventsFromLedger()`, matching Stellar's 
 - Understanding of gRPC concepts (not required to implement, just understand)
 - Familiarity with Protobuf (SDK handles most complexity)
 
-### Get the SDK
+### Get an SDK
+
+#### Go SDK
 
 ```bash
 # Clone the SDK
@@ -92,6 +107,18 @@ cd flowctl-sdk
 
 # Explore examples
 ls -la examples/
+```
+
+#### JavaScript / TypeScript SDK
+
+```bash
+npm install @withobsrvr/js-flowctl-sdk
+
+# optional focused packages
+npm install @withobsrvr/js-flowctl-source
+npm install @withobsrvr/js-flowctl-processor
+npm install @withobsrvr/js-flowctl-consumer
+npm install @withobsrvr/js-flowctl-stellar
 ```
 
 ## Proto-First Development
