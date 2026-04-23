@@ -19,6 +19,19 @@ need uname
 need mktemp
 need install
 
+checksum_cmd() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    echo "sha256sum"
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    echo "shasum -a 256"
+    return 0
+  fi
+  echo ""
+  return 1
+}
+
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m)
 
@@ -49,8 +62,9 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
-archive="${BIN}_${VERSION#v}_${os}_${arch}.tar.gz"
+archive="${BIN}_${VERSION}_${os}_${arch}.tar.gz"
 url="https://github.com/${REPO}/releases/download/${VERSION}/${archive}"
+checksum_url="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
@@ -59,6 +73,26 @@ echo "Installing ${BIN} ${VERSION} for ${os}/${arch}..."
 echo "Downloading ${url}"
 
 curl -fL "$url" -o "$tmpdir/$archive"
+curl -fL "$checksum_url" -o "$tmpdir/checksums.txt"
+
+checksum_tool=$(checksum_cmd || true)
+if [ -z "$checksum_tool" ]; then
+  echo "error: neither sha256sum nor shasum is available for checksum verification" >&2
+  exit 1
+fi
+
+expected=$(grep "  ${archive}\$" "$tmpdir/checksums.txt" | awk '{print $1}')
+if [ -z "$expected" ]; then
+  echo "error: checksum for ${archive} not found in checksums.txt" >&2
+  exit 1
+fi
+
+actual=$(eval "$checksum_tool \"$tmpdir/$archive\"" | awk '{print $1}')
+if [ "$expected" != "$actual" ]; then
+  echo "error: checksum verification failed for ${archive}" >&2
+  exit 1
+fi
+
 mkdir -p "$INSTALL_DIR"
 tar -xzf "$tmpdir/$archive" -C "$tmpdir"
 install "$tmpdir/$BIN" "$INSTALL_DIR/$BIN"

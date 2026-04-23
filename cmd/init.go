@@ -428,8 +428,10 @@ func printSummary(intent map[string]interface{}, filename, blockchain, network, 
 	// Show configuration details
 	if sources, ok := spec["sources"].([]map[string]interface{}); ok && len(sources) > 0 {
 		if config, ok := sources[0]["config"].(map[string]interface{}); ok {
-			if startLedger, ok := config["start_ledger"].(string); ok && startLedger != "" {
-				if endLedger, ok := config["end_ledger"].(string); ok && endLedger != "" {
+			startLedger := configValueString(config["start_ledger"])
+			endLedger := configValueString(config["end_ledger"])
+			if startLedger != "" {
+				if endLedger != "" {
 					fmt.Printf("Ledgers:     %s to %s\n", startLedger, endLedger)
 				} else {
 					fmt.Printf("Start at:    %s\n", startLedger)
@@ -449,7 +451,7 @@ func printSummary(intent map[string]interface{}, filename, blockchain, network, 
 	fmt.Println("  flowctl pipelines active")
 
 	if destination == "duckdb" {
-		duckdbFile := strings.TrimSuffix(filename, ".yaml") + ".duckdb"
+		duckdbFile := duckDBPathFromIntent(spec)
 		fmt.Println("\nOptional, after stopping the pipeline:")
 		fmt.Printf("  duckdb %s \"SELECT event_type, COUNT(*) FROM contract_events GROUP BY event_type\"\n", duckdbFile)
 		fmt.Println("\nDuckDB is the recommended first-run path and does not require a local Docker daemon.")
@@ -458,4 +460,34 @@ func printSummary(intent map[string]interface{}, filename, blockchain, network, 
 	}
 
 	fmt.Println("\nComponents are downloaded automatically on first run and cached under ~/.flowctl/.")
+}
+
+func configValueString(v interface{}) string {
+	switch value := v.(type) {
+	case string:
+		return value
+	case fmt.Stringer:
+		return value.String()
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return fmt.Sprint(value)
+	default:
+		return ""
+	}
+}
+
+func duckDBPathFromIntent(spec map[string]interface{}) string {
+	sinks, ok := spec["sinks"].([]map[string]interface{})
+	if !ok {
+		return "stellar-pipeline.duckdb"
+	}
+	for _, sink := range sinks {
+		config, ok := sink["config"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if path := configValueString(config["database_path"]); path != "" {
+			return path
+		}
+	}
+	return "stellar-pipeline.duckdb"
 }

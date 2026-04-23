@@ -25,6 +25,7 @@ need() {
 
 need go
 need make
+need perl
 
 component_image_available() {
   local image_ref="$1"
@@ -239,7 +240,7 @@ if command -v docker >/dev/null 2>&1; then
     exit 0
   fi
   docker rm -f "${POSTGRES_CONTAINER}" >/dev/null 2>&1 || true
-  docker run --name "${POSTGRES_CONTAINER}" -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16 >/dev/null
+  docker run --name "${POSTGRES_CONTAINER}" -e POSTGRES_PASSWORD=postgres -d postgres:16 >/dev/null
   for _ in $(seq 1 30); do
     if docker exec "${POSTGRES_CONTAINER}" pg_isready -U postgres >/dev/null 2>&1; then break; fi
     sleep 2
