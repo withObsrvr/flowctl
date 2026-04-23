@@ -353,7 +353,15 @@ func TestControlPlaneWrapper_Register(t *testing.T) {
 		ServiceId:        "my-service-id",
 		ComponentId:      "my-component-id",
 		ServiceType:      flowctlpb.ServiceType_SERVICE_TYPE_SOURCE,
+		InputEventTypes:  []string{"source.input"},
 		OutputEventTypes: []string{"test.event"},
+		HealthEndpoint:   "127.0.0.1:1234",
+		Metadata: map[string]string{
+			"source_name":        "My Source",
+			"source_version":     "1.2.3",
+			"source_description": "test source",
+			"network":            "testnet",
+		},
 	}
 
 	ack, err := wrapper.Register(ctx, serviceInfo)
@@ -369,6 +377,26 @@ func TestControlPlaneWrapper_Register(t *testing.T) {
 	// The service should be stored under the correct key
 	if _, ok := server.services["my-service-id"]; !ok {
 		t.Error("Service not stored under the correct ServiceId key")
+	}
+
+	stored := server.services["my-service-id"]
+	if stored.Info.Id != "my-component-id" {
+		t.Fatalf("expected component id to be propagated, got %q", stored.Info.Id)
+	}
+	if stored.Info.Name != "My Source" || stored.Info.Version != "1.2.3" || stored.Info.Description != "test source" {
+		t.Fatalf("expected wrapper to propagate basic metadata, got %+v", stored.Info)
+	}
+	if stored.Info.Endpoint != "127.0.0.1:1234" {
+		t.Fatalf("expected endpoint to be propagated, got %q", stored.Info.Endpoint)
+	}
+	if len(stored.Info.InputEventTypes) != 1 || stored.Info.InputEventTypes[0] != "source.input" {
+		t.Fatalf("expected input event types to be propagated, got %v", stored.Info.InputEventTypes)
+	}
+	if len(stored.Info.OutputEventTypes) != 1 || stored.Info.OutputEventTypes[0] != "test.event" {
+		t.Fatalf("expected output event types to be propagated, got %v", stored.Info.OutputEventTypes)
+	}
+	if stored.Info.Metadata["network"] != "testnet" {
+		t.Fatalf("expected metadata to be propagated, got %v", stored.Info.Metadata)
 	}
 
 	// Heartbeat should work with the returned ServiceId

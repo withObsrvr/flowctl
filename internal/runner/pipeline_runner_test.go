@@ -83,6 +83,32 @@ func TestNewPipelineRunner(t *testing.T) {
 	}
 }
 
+func TestNewPipelineRunnerPreservesAutoPortSelection(t *testing.T) {
+	pipeline := &model.Pipeline{
+		APIVersion: "v1",
+		Kind:       "Pipeline",
+		Metadata: model.Metadata{Name: "test-pipeline"},
+		Spec: model.Spec{},
+	}
+
+	runner, err := NewPipelineRunner(pipeline, Config{
+		OrchestratorType:    "process",
+		ControlPlanePort:    0,
+		ControlPlaneAddress: "127.0.0.1",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create pipeline runner: %v", err)
+	}
+
+	if runner.config.ControlPlanePort != 0 {
+		t.Fatalf("Expected control plane port 0 to be preserved, got %d", runner.config.ControlPlanePort)
+	}
+
+	if got := runner.GetControlPlaneEndpoint(); got != "127.0.0.1:0" {
+		t.Fatalf("Expected endpoint 127.0.0.1:0 before startup, got %s", got)
+	}
+}
+
 func TestLoadPipelineFromBytes(t *testing.T) {
 	testYAML := `apiVersion: v1
 kind: Pipeline

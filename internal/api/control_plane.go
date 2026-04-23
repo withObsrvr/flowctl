@@ -689,12 +689,33 @@ func NewControlPlaneWrapper(server *ControlPlaneServer) *ControlPlaneWrapper {
 
 // Register implements flowctlpb.ControlPlane.Register
 func (w *ControlPlaneWrapper) Register(ctx context.Context, req *flowctlpb.ServiceInfo) (*flowctlpb.RegistrationAck, error) {
+	componentID := req.ComponentId
+	if componentID == "" {
+		componentID = req.ServiceId
+	}
+
 	v1Req := &flowctlv1.RegisterRequest{
 		ComponentId: req.ServiceId,
 		Component: &flowctlv1.ComponentInfo{
-			Id:   req.ComponentId,
-			Type: convertToV1ComponentType(req.ServiceType),
+			Id:               componentID,
+			Type:             convertToV1ComponentType(req.ServiceType),
+			InputEventTypes:  append([]string(nil), req.InputEventTypes...),
+			OutputEventTypes: append([]string(nil), req.OutputEventTypes...),
+			Metadata:         copyStringMap(req.Metadata),
 		},
+	}
+
+	if req.HealthEndpoint != "" {
+		v1Req.Component.Endpoint = req.HealthEndpoint
+	}
+	if name := firstNonEmpty(req.Metadata["processor_name"], req.Metadata["source_name"], req.Metadata["sink_name"], req.Metadata["name"]); name != "" {
+		v1Req.Component.Name = name
+	}
+	if version := firstNonEmpty(req.Metadata["processor_version"], req.Metadata["source_version"], req.Metadata["sink_version"], req.Metadata["version"]); version != "" {
+		v1Req.Component.Version = version
+	}
+	if description := firstNonEmpty(req.Metadata["processor_description"], req.Metadata["source_description"], req.Metadata["sink_description"], req.Metadata["description"]); description != "" {
+		v1Req.Component.Description = description
 	}
 
 	resp, err := w.server.RegisterComponent(ctx, v1Req)
@@ -762,6 +783,26 @@ func (w *ControlPlaneWrapper) ListPipelineRuns(ctx context.Context, req *flowctl
 
 func (w *ControlPlaneWrapper) StopPipelineRun(ctx context.Context, req *flowctlpb.StopPipelineRunRequest) (*flowctlpb.PipelineRun, error) {
 	return w.server.StopPipelineRun(ctx, req)
+}
+
+func copyStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return map[string]string{}
+	}
+	cloned := make(map[string]string, len(src))
+	for k, v := range src {
+		cloned[k] = v
+	}
+	return cloned
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func mergeStringMaps(base, updates map[string]string) map[string]string {

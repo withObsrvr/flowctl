@@ -17,7 +17,7 @@ spec:
         network_passphrase: "Test SDF Network ; September 2015"
         backend_type: RPC
         rpc_endpoint: https://soroban-testnet.stellar.org
-        start_ledger: 54000000
+        start_ledger: 2187805
 
   processors:
     - id: contract-events

@@ -3,14 +3,17 @@ package runner
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/google/uuid"
 	"github.com/withobsrvr/flowctl/internal/controlplane"
 	"github.com/withobsrvr/flowctl/internal/model"
@@ -61,9 +64,8 @@ func NewPipelineRunner(pipeline *model.Pipeline, config Config) (*PipelineRunner
 	if config.ControlPlaneAddress == "" {
 		config.ControlPlaneAddress = "127.0.0.1"
 	}
-	if config.ControlPlanePort == 0 {
-		config.ControlPlanePort = 8080
-	}
+	// Preserve port 0 so the embedded control plane can auto-select a free port.
+	// CLI callers already default to 8080 unless the user explicitly passes 0.
 	if config.OrchestratorType == "" {
 		config.OrchestratorType = "process"
 	}
@@ -179,6 +181,11 @@ func (r *PipelineRunner) Run() error {
 			return fmt.Errorf("failed to start control plane: %w", err)
 		}
 
+		if err := r.syncEmbeddedControlPlaneEndpoint(); err != nil {
+			r.controlPlane.Stop()
+			return fmt.Errorf("failed to sync embedded control plane endpoint: %w", err)
+		}
+
 		// Wait for control plane to be ready
 		if err := r.waitForControlPlaneReady(); err != nil {
 			r.controlPlane.Stop()
@@ -212,6 +219,10 @@ func (r *PipelineRunner) Run() error {
 			r.controlPlane.Stop()
 		}
 		return err
+	}
+
+	if err := r.enrichRegisteredComponents(); err != nil {
+		logger.Warn("Failed to enrich registered component metadata", zap.Error(err))
 	}
 
 	// Wire components together for data flow
@@ -572,7 +583,10 @@ func (r *PipelineRunner) shutdown() error {
 
 // GetControlPlaneEndpoint returns the control plane endpoint
 func (r *PipelineRunner) GetControlPlaneEndpoint() string {
-	return r.controlPlane.GetEndpoint()
+	if r.controlPlane != nil {
+		return r.controlPlane.GetEndpoint()
+	}
+	return fmt.Sprintf("%s:%d", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
 }
 
 // GetPipelineStatus returns the current status of the pipeline
@@ -594,6 +608,43 @@ func (r *PipelineRunner) IsHealthy() bool {
 	}
 
 	return true
+}
+
+func (r *PipelineRunner) syncEmbeddedControlPlaneEndpoint() error {
+	endpoint := r.controlPlane.GetEndpoint()
+	host, portStr, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return fmt.Errorf("invalid control plane endpoint %q: %w", endpoint, err)
+	}
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("invalid control plane port %q: %w", portStr, err)
+	}
+
+	r.config.ControlPlaneAddress = host
+	r.config.ControlPlanePort = port
+
+	// Recreate the orchestrator so components receive the real endpoint,
+	// especially when the requested port was 0 and the OS picked a free port.
+	switch r.config.OrchestratorType {
+	case "process":
+		processOrch, err := orchestrator.NewProcessOrchestrator(endpoint)
+		if err != nil {
+			return fmt.Errorf("failed to recreate process orchestrator: %w", err)
+		}
+		r.orchestrator = processOrch
+	case "container", "docker":
+		dockerOrch, err := orchestrator.NewDockerOrchestrator(endpoint)
+		if err != nil {
+			return fmt.Errorf("failed to recreate docker orchestrator: %w", err)
+		}
+		r.orchestrator = dockerOrch
+	default:
+		return fmt.Errorf("unknown orchestrator type: %s", r.config.OrchestratorType)
+	}
+
+	return nil
 }
 
 // waitForControlPlaneReady waits for the control plane to be ready
@@ -641,8 +692,12 @@ func (r *PipelineRunner) waitForControlPlaneReady() error {
 }
 
 // getControlPlaneClient returns a gRPC client for the control plane
+func (r *PipelineRunner) controlPlaneEndpoint() string {
+	return fmt.Sprintf("%s:%d", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
+}
+
 func (r *PipelineRunner) getControlPlaneClient() (flowctlpb.ControlPlaneClient, *grpc.ClientConn, error) {
-	endpoint := fmt.Sprintf("%s:%d", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
+	endpoint := r.controlPlaneEndpoint()
 
 	ctx, cancel := context.WithTimeout(r.ctx, 2*time.Second)
 	defer cancel()
@@ -656,6 +711,24 @@ func (r *PipelineRunner) getControlPlaneClient() (flowctlpb.ControlPlaneClient, 
 	}
 
 	client := flowctlpb.NewControlPlaneClient(conn)
+	return client, conn, nil
+}
+
+func (r *PipelineRunner) getV1ControlPlaneClient() (flowctlv1.ControlPlaneServiceClient, *grpc.ClientConn, error) {
+	endpoint := r.controlPlaneEndpoint()
+
+	ctx, cancel := context.WithTimeout(r.ctx, 2*time.Second)
+	defer cancel()
+
+	conn, err := grpc.DialContext(ctx, endpoint,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to connect to control plane at %s: %w", endpoint, err)
+	}
+
+	client := flowctlv1.NewControlPlaneServiceClient(conn)
 	return client, conn, nil
 }
 
@@ -680,6 +753,101 @@ func (r *PipelineRunner) getComponentIDs() []string {
 }
 
 // createPipelineRun creates a run record in the control plane
+func componentTypeForRole(role string) flowctlv1.ComponentType {
+	switch role {
+	case "source":
+		return flowctlv1.ComponentType_COMPONENT_TYPE_SOURCE
+	case "processor":
+		return flowctlv1.ComponentType_COMPONENT_TYPE_PROCESSOR
+	case "sink":
+		return flowctlv1.ComponentType_COMPONENT_TYPE_CONSUMER
+	default:
+		return flowctlv1.ComponentType_COMPONENT_TYPE_UNSPECIFIED
+	}
+}
+
+func (r *PipelineRunner) enrichRegisteredComponents() error {
+	client, conn, err := r.getV1ControlPlaneClient()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(r.ctx, 10*time.Second)
+	defer cancel()
+
+	components := []struct {
+		role string
+		comp model.Component
+	}{ }
+	for _, source := range r.pipeline.Spec.Sources {
+		components = append(components, struct {
+			role string
+			comp model.Component
+		}{role: "source", comp: source})
+	}
+	for _, processor := range r.pipeline.Spec.Processors {
+		components = append(components, struct {
+			role string
+			comp model.Component
+		}{role: "processor", comp: processor})
+	}
+	for _, sink := range r.pipeline.Spec.Sinks {
+		components = append(components, struct {
+			role string
+			comp model.Component
+		}{role: "sink", comp: sink})
+	}
+
+	for _, item := range components {
+		status, err := client.GetComponentStatus(ctx, &flowctlv1.ComponentStatusRequest{ServiceId: item.comp.ID})
+		if err != nil || status.GetComponent() == nil {
+			continue
+		}
+
+		info := status.Component
+		needsEnrichment := len(info.InputEventTypes) == 0 && len(item.comp.InputEventTypes) > 0 ||
+			len(info.OutputEventTypes) == 0 && len(item.comp.OutputEventTypes) > 0
+		if !needsEnrichment {
+			continue
+		}
+
+		enriched := &flowctlv1.ComponentInfo{
+			Id:               info.Id,
+			Type:             info.Type,
+			Name:             info.Name,
+			Version:          info.Version,
+			Description:      info.Description,
+			Endpoint:         info.Endpoint,
+			InputEventTypes:  append([]string(nil), info.InputEventTypes...),
+			OutputEventTypes: append([]string(nil), info.OutputEventTypes...),
+			Metadata:         make(map[string]string, len(info.Metadata)),
+		}
+		for k, v := range info.Metadata {
+			enriched.Metadata[k] = v
+		}
+		if len(enriched.InputEventTypes) == 0 && len(item.comp.InputEventTypes) > 0 {
+			enriched.InputEventTypes = append([]string(nil), item.comp.InputEventTypes...)
+		}
+		if len(enriched.OutputEventTypes) == 0 && len(item.comp.OutputEventTypes) > 0 {
+			enriched.OutputEventTypes = append([]string(nil), item.comp.OutputEventTypes...)
+		}
+		if enriched.Type == flowctlv1.ComponentType_COMPONENT_TYPE_UNSPECIFIED {
+			enriched.Type = componentTypeForRole(item.role)
+		}
+
+		_, err = client.RegisterComponent(ctx, &flowctlv1.RegisterRequest{
+			ComponentId: item.comp.ID,
+			Component:   enriched,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to enrich component %s: %w", item.comp.ID, err)
+		}
+	}
+
+	return nil
+}
+
 func (r *PipelineRunner) createPipelineRun() {
 	// Generate run ID
 	r.runID = uuid.New().String()

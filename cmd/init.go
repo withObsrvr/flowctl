@@ -51,7 +51,7 @@ func init() {
 	initCmd.Flags().StringVarP(&outputFile, "output", "o", "", "output file (default: <pipeline-name>.yaml)")
 	initCmd.Flags().BoolVar(&initNonInteractive, "non-interactive", false, "non-interactive mode (requires --network, --destination)")
 	initCmd.Flags().StringVar(&networkFlag, "network", "", "network (testnet, mainnet)")
-	initCmd.Flags().StringVar(&destinationFlag, "destination", "", "destination (postgres, duckdb, csv)")
+	initCmd.Flags().StringVar(&destinationFlag, "destination", "", "destination (postgres, duckdb)")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -74,6 +74,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		network = networkFlag
 		destination = destinationFlag
+		if destination != "postgres" && destination != "duckdb" {
+			return fmt.Errorf("unsupported destination %q (supported: postgres, duckdb)", destination)
+		}
 		name = fmt.Sprintf("%s-pipeline", blockchain)
 	} else {
 		// Interactive prompts
@@ -134,7 +137,7 @@ func promptNetwork(reader *bufio.Reader) string {
 }
 
 func promptDestination(reader *bufio.Reader) string {
-	options := []string{"PostgreSQL database", "DuckDB file", "CSV files"}
+	options := []string{"PostgreSQL database", "DuckDB file"}
 
 	fmt.Println("? What do you want to do with the data?")
 	for i, opt := range options {
@@ -149,7 +152,7 @@ func promptDestination(reader *bufio.Reader) string {
 	choice := readIntWithDefault(reader, 1, 1, len(options))
 
 	// Map display names to event types
-	destMap := []string{"postgres", "duckdb", "csv"}
+	destMap := []string{"postgres", "duckdb"}
 	selected := destMap[choice-1]
 	fmt.Printf("Selected: %s\n\n", options[choice-1])
 	return selected
@@ -258,7 +261,7 @@ func generateIntent(name, fromType, toType, network, startLedger, endLedger, blo
 	if network == "testnet" {
 		sourceConfig["rpc_endpoint"] = "https://soroban-testnet.stellar.org"
 	} else {
-		sourceConfig["rpc_endpoint"] = "https://soroban-rpc.mainnet.stellar.gateway.fm"
+		sourceConfig["rpc_endpoint"] = "https://archive-rpc.lightsail.network"
 	}
 	// For RPC backend, start from a recent ledger (RPC nodes only keep ~24 hours of history)
 	if startLedger != "" {
@@ -320,16 +323,7 @@ func generateIntent(name, fromType, toType, network, startLedger, endLedger, blo
 				"postgres_port":     "5432",
 				"postgres_db":       "stellar_events",
 				"postgres_user":     "postgres",
-				"postgres_password": "${POSTGRES_PASSWORD:-postgres}",
-			},
-			"inputs": []string{"contract-events"},
-		})
-	case "csv":
-		sinks = append(sinks, map[string]interface{}{
-			"id":   "csv-sink",
-			"type": "csv-sink@v1.0.0",
-			"config": map[string]interface{}{
-				"output_dir": "./data",
+				"postgres_password": "postgres",
 			},
 			"inputs": []string{"contract-events"},
 		})

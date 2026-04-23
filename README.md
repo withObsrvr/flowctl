@@ -24,6 +24,11 @@ Container/deployment backends exist in the repo but should be treated as seconda
 
 ## Installation
 
+Prerequisites for the fastest local path:
+- **Go 1.21+**
+- **Git**
+- Internet access to download components on first run
+
 ```bash
 # Clone the repository
 git clone https://github.com/withobsrvr/flowctl.git
@@ -32,15 +37,29 @@ cd flowctl
 # Build the binary
 make build
 
-# Install dependencies
-make deps
+# Verify installation
+./bin/flowctl version
 ```
+
+`make deps` is only needed if you want to refresh Go module dependencies while developing.
 
 ## Quick Start
 
 If you are new to flowctl, start here.
 
-### 5-minute path
+### Fastest path to a working repo checkout
+
+```bash
+# 1. Build flowctl
+git clone https://github.com/withobsrvr/flowctl.git && cd flowctl && make build
+
+# 2. Optional: use the helper script to generate and validate a starter pipeline
+./scripts/quickstart.sh
+```
+
+That script builds `flowctl` if needed, generates `stellar-pipeline.yaml`, and validates it.
+
+### 5-minute real pipeline path
 
 ```bash
 # 1. Build flowctl
@@ -66,7 +85,10 @@ In another terminal:
 ./bin/flowctl pipelines active
 ```
 
-Components are automatically downloaded on first run.
+Notes:
+- The DuckDB path is the simplest way to get started.
+- Components are downloaded automatically on first run.
+- **A Docker daemon is not required** for the default DuckDB quickstart.
 
 ### Core operator workflow
 
@@ -100,11 +122,13 @@ Components are automatically downloaded on first run.
 
 ### DuckDB (Simplest - No Setup Required)
 
+This is the recommended first run for anyone cloning the repo.
+
 ```bash
 ./bin/flowctl init --non-interactive --network testnet --destination duckdb
 ./bin/flowctl run stellar-pipeline.yaml
 
-# Query your data
+# Stop the pipeline first, then query your data
 duckdb stellar-pipeline.duckdb "SELECT event_type, COUNT(*) FROM contract_events GROUP BY event_type"
 ```
 
@@ -118,6 +142,9 @@ docker exec flowctl-postgres createdb -U postgres stellar_events
 # Create and run pipeline
 ./bin/flowctl init --non-interactive --network testnet --destination postgres
 ./bin/flowctl run stellar-pipeline.yaml
+
+# If you use a non-default PostgreSQL password, edit stellar-pipeline.yaml
+# and update spec.sinks[0].config.postgres_password before running.
 
 # Query your data
 docker exec flowctl-postgres psql -U postgres -d stellar_events \
@@ -146,9 +173,8 @@ Destination prerequisites:
 |-------------|--------------|
 | `duckdb` | None - embedded database, just works |
 | `postgres` | PostgreSQL running on `localhost:5432` with database `stellar_events` |
-| `csv` | Write access to `./data` directory |
 
-Components are downloaded automatically on first run and cached in `~/.flowctl/components/`.
+Components are downloaded automatically on first run and cached locally under `~/.flowctl/`.
 
 Full reference:
 - [docs/init-command.md](docs/init-command.md)
@@ -252,7 +278,7 @@ Available log levels:
 
 Example:
 ```bash
-./bin/flowctl apply -f examples/minimal.yaml --log-level=debug
+./bin/flowctl run examples/quickstart/testnet-duckdb-pipeline.yaml --log-level=debug
 ```
 
 ## Translation and Docker-based Workflows

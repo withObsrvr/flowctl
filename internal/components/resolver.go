@@ -78,15 +78,8 @@ func (r *Resolver) Resolve(ctx context.Context, ref string) (*Component, error) 
 	metadataPath := r.componentMetadataPath(name, version)
 
 	if _, err := os.Stat(binaryPath); err == nil {
-		// Already cached - load metadata
-		metadata, err := LoadMetadata(metadataPath)
-		if err != nil {
-			// If metadata doesn't exist, create minimal metadata
-			metadata = &Metadata{
-				Name:    name,
-				Version: version,
-			}
-		}
+		// Already cached - load metadata from cache or extracted OCI image.
+		metadata := r.loadMetadataWithFallback(name, version, metadataPath)
 
 		return &Component{
 			Name:       name,
@@ -108,14 +101,7 @@ func (r *Resolver) Resolve(ctx context.Context, ref string) (*Component, error) 
 	}
 
 	// Load metadata
-	metadata, err := LoadMetadata(metadataPath)
-	if err != nil {
-		// If metadata doesn't exist, create minimal metadata
-		metadata = &Metadata{
-			Name:    name,
-			Version: version,
-		}
-	}
+	metadata := r.loadMetadataWithFallback(name, version, metadataPath)
 
 	fmt.Printf("✓ Downloaded %s@%s\n", name, version)
 
@@ -256,6 +242,29 @@ func (r *Resolver) buildImageReference(name, version string) (*registry.ImageRef
 // componentBinaryPath returns the filesystem path for a component binary
 // Structure: ~/.flowctl/components/<name>/<version>/component
 // Example: ~/.flowctl/components/stellar-live-source/v1.0.0/component
+func (r *Resolver) loadMetadataWithFallback(name, version, metadataPath string) *Metadata {
+	metadata, err := LoadMetadata(metadataPath)
+	if err == nil {
+		return metadata
+	}
+
+	// Fall back to metadata in the extracted OCI image cache if present.
+	imgRef, refErr := r.buildImageReference(name, version)
+	if refErr == nil {
+		extractedMetadataPath := filepath.Join(r.client.ExtractedPath(imgRef), "metadata.json")
+		if extractedMetadata, extractedErr := LoadMetadata(extractedMetadataPath); extractedErr == nil {
+			_ = os.MkdirAll(filepath.Dir(metadataPath), 0755)
+			_ = SaveMetadata(metadataPath, extractedMetadata)
+			return extractedMetadata
+		}
+	}
+
+	return &Metadata{
+		Name:    name,
+		Version: version,
+	}
+}
+
 func (r *Resolver) componentBinaryPath(name, version string) string {
 	// Use name directly (handles slashes)
 	// e.g., "stellar-live-source" or "withobsrvr/stellar-live-source"
