@@ -1,10 +1,12 @@
 #!/usr/bin/env sh
 set -eu
 
-REPO="withobsrvr/flowctl"
+REPO="withObsrvr/flowctl"
 BIN="flowctl"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
 VERSION="${VERSION:-latest}"
+TAG_VERSION=""
+ASSET_VERSION=""
 
 need() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -53,23 +55,35 @@ case "$arch" in
 esac
 
 if [ "$VERSION" = "latest" ]; then
-  VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | \
+  TAG_VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | \
     grep '"tag_name":' | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
+  ASSET_VERSION="${TAG_VERSION#v}"
+else
+  case "$VERSION" in
+    v*)
+      TAG_VERSION="$VERSION"
+      ASSET_VERSION="${VERSION#v}"
+      ;;
+    *)
+      TAG_VERSION="v$VERSION"
+      ASSET_VERSION="$VERSION"
+      ;;
+  esac
 fi
 
-if [ -z "$VERSION" ]; then
+if [ -z "$TAG_VERSION" ] || [ -z "$ASSET_VERSION" ]; then
   echo "error: failed to resolve release version" >&2
   exit 1
 fi
 
-archive="${BIN}_${VERSION}_${os}_${arch}.tar.gz"
-url="https://github.com/${REPO}/releases/download/${VERSION}/${archive}"
-checksum_url="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
+archive="${BIN}_${ASSET_VERSION}_${os}_${arch}.tar.gz"
+url="https://github.com/${REPO}/releases/download/${TAG_VERSION}/${archive}"
+checksum_url="https://github.com/${REPO}/releases/download/${TAG_VERSION}/checksums.txt"
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
 
-echo "Installing ${BIN} ${VERSION} for ${os}/${arch}..."
+echo "Installing ${BIN} ${TAG_VERSION} for ${os}/${arch}..."
 echo "Downloading ${url}"
 
 curl -fL "$url" -o "$tmpdir/$archive"

@@ -24,6 +24,6 @@ spec:
             backend_type: RPC
             network_passphrase: Test SDF Network ; September 2015
             rpc_endpoint: https://soroban-testnet.stellar.org
-            start_ledger: 567876
+            start_ledger: 2191326
           id: stellar-source
           type: stellar-live-source@v1.0.0
