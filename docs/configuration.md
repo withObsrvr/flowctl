@@ -99,11 +99,46 @@ All components (sources, processors, sinks) share a common structure:
 ```yaml
 id: component-identifier        # Required: Unique component ID
 command: ["/path/to/binary"]    # Required: Path to executable
+type: my-component@v1.2.3       # Optional: auto-resolved component reference
 inputs: ["upstream-id"]         # Optional: Connect to upstream components
 env:                            # Optional: Environment variables
   KEY: "value"
   ANOTHER_KEY: "another_value"
 ```
+
+#### Auto-resolved component references
+
+For the process-runtime starter path, `flowctl` can resolve component references in the form:
+
+```yaml
+type: component-name@v1.2.3
+```
+
+Short names default to Docker Hub under the `withobsrvr` organization:
+
+```yaml
+type: stellar-live-source@v1.0.0
+```
+
+This resolves to:
+
+```text
+docker.io/withobsrvr/stellar-live-source:v1.0.0
+```
+
+If you want to use a component from a different Docker Hub organization, specify `org/name@version`:
+
+```yaml
+type: myorg/custom-source@v1.2.3
+```
+
+This resolves to:
+
+```text
+docker.io/myorg/custom-source:v1.2.3
+```
+
+If you do not want auto-download/resolution, use an explicit local binary path with `command:` instead.
 
 #### Sources
 

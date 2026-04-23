@@ -214,6 +214,12 @@ Full reference:
 - **Processors**: Transform data (e.g., extract contract events, filter transactions)
 - **Sinks**: Consume data (e.g., PostgreSQL, webhooks, file storage)
 
+For auto-resolved component refs in `type:`:
+- `stellar-live-source@v1.0.0` resolves to `docker.io/withobsrvr/stellar-live-source:v1.0.0`
+- `myorg/custom-source@v1.2.3` resolves to `docker.io/myorg/custom-source:v1.2.3`
+
+If you do not want auto-download/resolution, use an explicit local binary path with `command:`.
+
 To build your own components, use the [flowctl-sdk](https://github.com/withObsrvr/flowctl-sdk) which provides:
 - Component registration and health checks
 - Automatic heartbeat management
