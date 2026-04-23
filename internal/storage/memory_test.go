@@ -5,33 +5,35 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/withobsrvr/flowctl/proto"
+	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func createTestMemoryService(id string) *ServiceInfo {
 	now := time.Now()
 	return &ServiceInfo{
-		Info: &pb.ServiceInfo{
-			ServiceId:       id,
-			ServiceType:     pb.ServiceType_SERVICE_TYPE_SOURCE,
-			InputEventTypes: []string{},
+		Info: &flowctlv1.ComponentInfo{
+			Id:               id,
+			Type:             flowctlv1.ComponentType_COMPONENT_TYPE_SOURCE,
+			InputEventTypes:  []string{},
 			OutputEventTypes: []string{"event1", "event2"},
-			HealthEndpoint:  "localhost:8080/health",
-			MaxInflight:     100,
+			Endpoint:         "localhost:8080",
 			Metadata: map[string]string{
 				"version": "1.0",
 				"owner":   "test",
 			},
 		},
-		Status: &pb.ServiceStatus{
-			ServiceId:     id,
-			ServiceType:   pb.ServiceType_SERVICE_TYPE_SOURCE,
-			IsHealthy:     true,
+		Status: &flowctlv1.ComponentStatusResponse{
+			Component: &flowctlv1.ComponentInfo{
+				Id:   id,
+				Type: flowctlv1.ComponentType_COMPONENT_TYPE_SOURCE,
+			},
+			Status:        flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY,
 			LastHeartbeat: timestamppb.New(now),
-			Metrics: map[string]float64{
-				"requests": 100,
-				"errors":   0,
+			RegisteredAt:  timestamppb.New(now),
+			Metrics: map[string]string{
+				"requests": "100",
+				"errors":   "0",
 			},
 		},
 		LastSeen: now,
@@ -54,18 +56,18 @@ func TestMemoryStorage_Basic(t *testing.T) {
 	}
 	
 	// Test retrieval
-	retrieved, err := storage.GetService(ctx, service.Info.ServiceId)
+	retrieved, err := storage.GetService(ctx, service.Info.Id)
 	if err != nil {
 		t.Fatalf("Failed to get service: %v", err)
 	}
-	if retrieved.Info.ServiceId != service.Info.ServiceId {
+	if retrieved.Info.Id != service.Info.Id {
 		t.Errorf("Retrieved service ID does not match: got %s, want %s", 
-			retrieved.Info.ServiceId, service.Info.ServiceId)
+			retrieved.Info.Id, service.Info.Id)
 	}
 	
 	// Test update
-	err = storage.UpdateService(ctx, service.Info.ServiceId, func(s *ServiceInfo) error {
-		s.Status.IsHealthy = false
+	err = storage.UpdateService(ctx, service.Info.Id, func(s *ServiceInfo) error {
+		s.Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_UNHEALTHY
 		return nil
 	})
 	if err != nil {
@@ -73,11 +75,11 @@ func TestMemoryStorage_Basic(t *testing.T) {
 	}
 	
 	// Verify update
-	retrieved, err = storage.GetService(ctx, service.Info.ServiceId)
+	retrieved, err = storage.GetService(ctx, service.Info.Id)
 	if err != nil {
 		t.Fatalf("Failed to get service after update: %v", err)
 	}
-	if retrieved.Status.IsHealthy {
+	if retrieved.Status.Status != flowctlv1.HealthStatus_HEALTH_STATUS_UNHEALTHY {
 		t.Errorf("Update to service health did not take effect")
 	}
 	
@@ -91,12 +93,12 @@ func TestMemoryStorage_Basic(t *testing.T) {
 	}
 	
 	// Test delete
-	if err := storage.DeleteService(ctx, service.Info.ServiceId); err != nil {
+	if err := storage.DeleteService(ctx, service.Info.Id); err != nil {
 		t.Fatalf("Failed to delete service: %v", err)
 	}
 	
 	// Verify deletion
-	_, err = storage.GetService(ctx, service.Info.ServiceId)
+	_, err = storage.GetService(ctx, service.Info.Id)
 	if !IsNotFound(err) {
 		t.Errorf("Expected NotFound error after deletion, got: %v", err)
 	}
@@ -146,8 +148,8 @@ func TestMemoryStorage_Transaction(t *testing.T) {
 	// Test transaction with error
 	err = storage.WithTransaction(ctx, func(txn Transaction) error {
 		// Update a service
-		if err := txn.UpdateService(service1.Info.ServiceId, func(s *ServiceInfo) error {
-			s.Status.IsHealthy = false
+		if err := txn.UpdateService(service1.Info.Id, func(s *ServiceInfo) error {
+			s.Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_UNHEALTHY
 			return nil
 		}); err != nil {
 			return err
@@ -166,11 +168,11 @@ func TestMemoryStorage_Transaction(t *testing.T) {
 	
 	// In memory storage doesn't support true transactions (rollback)
 	// so we need to check if the update was applied despite the error
-	retrieved, err := storage.GetService(ctx, service1.Info.ServiceId)
+	retrieved, err := storage.GetService(ctx, service1.Info.Id)
 	if err != nil {
 		t.Fatalf("Failed to get service: %v", err)
 	}
-	if retrieved.Status.IsHealthy {
+	if retrieved.Status.Status != flowctlv1.HealthStatus_HEALTH_STATUS_UNHEALTHY {
 		t.Errorf("Memory transaction doesn't support rollback, but this test still verifies behavior")
 	}
 }

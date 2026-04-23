@@ -12,9 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/registry"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // ProcessOrchestrator manages components as local processes
@@ -28,13 +31,13 @@ type ProcessOrchestrator struct {
 
 // ProcessInfo holds information about a running process
 type ProcessInfo struct {
-	Component   *Component
-	Cmd         *exec.Cmd
-	Status      string
-	StartTime   time.Time
-	LogFile     *os.File
-	Error       error
-	PID         int
+	Component *Component
+	Cmd       *exec.Cmd
+	Status    string
+	StartTime time.Time
+	LogFile   *os.File
+	Error     error
+	PID       int
 }
 
 // ProcessLogStream implements LogStream for process logs
@@ -112,7 +115,7 @@ func (p *ProcessOrchestrator) StartComponent(ctx context.Context, component *Com
 	processInfo := &ProcessInfo{
 		Component: component,
 		Cmd:       cmd,
-		Status:    StatusStarting,
+		Status:    StatusRunning,
 		StartTime: time.Now(),
 		LogFile:   logFile,
 		PID:       cmd.Process.Pid,
@@ -122,6 +125,7 @@ func (p *ProcessOrchestrator) StartComponent(ctx context.Context, component *Com
 
 	// Monitor process in background
 	go p.monitorProcess(component.ID, processInfo)
+	go p.heartbeatProcess(component.ID)
 
 	logger.Info("Started component process",
 		zap.String("id", component.ID),
@@ -406,11 +410,11 @@ func (p *ProcessOrchestrator) prepareImageBinary(ctx context.Context, component 
 	}
 
 	possiblePaths := []string{
-		filepath.Join(extractedPath, "app", binaryName),         // /app/ (Component Image Spec)
-		filepath.Join(extractedPath, "bin", binaryName),          // /bin/ (common)
-		filepath.Join(extractedPath, "usr", "bin", binaryName),   // /usr/bin/ (system)
+		filepath.Join(extractedPath, "app", binaryName),                 // /app/ (Component Image Spec)
+		filepath.Join(extractedPath, "bin", binaryName),                 // /bin/ (common)
+		filepath.Join(extractedPath, "usr", "bin", binaryName),          // /usr/bin/ (system)
 		filepath.Join(extractedPath, "usr", "local", "bin", binaryName), // /usr/local/bin/
-		filepath.Join(extractedPath, binaryName),                 // Root (fallback)
+		filepath.Join(extractedPath, binaryName),                        // Root (fallback)
 	}
 
 	for _, path := range possiblePaths {
@@ -431,6 +435,15 @@ func (p *ProcessOrchestrator) prepareImageBinary(ctx context.Context, component 
 func (p *ProcessOrchestrator) buildEnvironment(component *Component) []string {
 	env := os.Environ()
 
+	componentEnv := map[string]string{}
+	for key, value := range component.Environment {
+		componentEnv[key] = value
+	}
+
+	if _, ok := componentEnv["HEALTH_PORT"]; !ok {
+		componentEnv["HEALTH_PORT"] = fmt.Sprintf("%d", 18080+len(p.processes)+1)
+	}
+
 	// Add flowctl integration environment variables
 	env = append(env,
 		"ENABLE_FLOWCTL=true",
@@ -441,10 +454,8 @@ func (p *ProcessOrchestrator) buildEnvironment(component *Component) []string {
 	)
 
 	// Add component-specific environment variables
-	if component.Environment != nil {
-		for key, value := range component.Environment {
-			env = append(env, fmt.Sprintf("%s=%s", key, value))
-		}
+	for key, value := range componentEnv {
+		env = append(env, fmt.Sprintf("%s=%s", key, value))
 	}
 
 	return env
@@ -465,6 +476,65 @@ func (p *ProcessOrchestrator) createLogFile(componentID string) (*os.File, error
 	}
 
 	return file, nil
+}
+
+// heartbeatProcess sends synthetic heartbeats for process-managed components.
+// This keeps control plane liveness accurate even when a component only registers
+// once or does not maintain its own heartbeat loop reliably.
+func (p *ProcessOrchestrator) heartbeatProcess(componentID string) {
+	conn, err := grpc.Dial(p.controlPlaneEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		logger.Warn("Failed to create heartbeat connection",
+			zap.String("id", componentID),
+			zap.Error(err))
+		return
+	}
+	defer conn.Close()
+
+	client := flowctlv1.NewControlPlaneServiceClient(conn)
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	send := func() {
+		p.mu.RLock()
+		info, exists := p.processes[componentID]
+		p.mu.RUnlock()
+		if !exists {
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		_, err := client.Heartbeat(ctx, &flowctlv1.HeartbeatRequest{
+			ServiceId: componentID,
+			Status:    flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY,
+			Metrics: map[string]string{
+				"orchestrator": "process",
+				"pid":          fmt.Sprintf("%d", info.PID),
+			},
+		})
+		if err != nil {
+			logger.Debug("Failed to send synthetic heartbeat",
+				zap.String("id", componentID),
+				zap.Error(err))
+		}
+	}
+
+	// Send one shortly after startup so LastSeen moves past registration time.
+	time.Sleep(2 * time.Second)
+	send()
+
+	for range ticker.C {
+		p.mu.RLock()
+		info, exists := p.processes[componentID]
+		stopped := !exists || info.Status == StatusStopped || info.Status == StatusFailed || info.Status == StatusStopping
+		p.mu.RUnlock()
+		if stopped {
+			return
+		}
+		send()
+	}
 }
 
 // monitorProcess monitors a process and updates its status

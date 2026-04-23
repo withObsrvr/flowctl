@@ -2,8 +2,6 @@ package test
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"net"
 	"os"
 	"os/exec"
@@ -13,17 +11,19 @@ import (
 
 	"github.com/withobsrvr/flowctl/internal/api"
 	"github.com/withobsrvr/flowctl/internal/config"
-	"github.com/withobsrvr/flowctl/internal/storage"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	pb "github.com/withobsrvr/flowctl/proto"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // genTLSCertificates generates self-signed certificates for testing.
 // It returns the paths to the generated certificate files.
 func genTLSCertificates(t *testing.T) (certFile, keyFile, caFile string) {
+	if _, err := exec.LookPath("openssl"); err != nil {
+		t.Skip("openssl not available in environment")
+	}
+
 	// Create a temporary directory for certificates
 	tmpDir, err := os.MkdirTemp("", "flowctl-tls-test")
 	if err != nil {
@@ -92,7 +92,7 @@ func setupTLSServer(t *testing.T, tlsConfig *config.TLSConfig) (string, func()) 
 	
 	// Create the control plane server
 	controlPlane := api.NewControlPlaneServer(nil) // In-memory storage for tests
-	pb.RegisterControlPlaneServer(server, controlPlane)
+	pb.RegisterControlPlaneServer(server, api.NewControlPlaneWrapper(controlPlane))
 	
 	// Start the server
 	go func() {
@@ -117,7 +117,7 @@ func TestTLSConnection(t *testing.T) {
 	}
 	
 	// Initialize logger for tests
-	logger.InitLogger(logger.Options{LogLevel: "error"})
+	_ = logger.Init("error")
 	
 	// Generate certificates for testing
 	certFile, keyFile, caFile := genTLSCertificates(t)

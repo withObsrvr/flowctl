@@ -29,13 +29,14 @@ type Service struct {
 type ControlPlaneServer struct {
 	flowctlv1.UnimplementedControlPlaneServiceServer
 	mu               sync.RWMutex
-	services         map[string]*Service // In-memory cache of services
+	services         map[string]*Service    // In-memory cache of services
 	storage          storage.ServiceStorage // Persistent storage
 	heartbeatTTL     time.Duration
 	janitorInterval  time.Duration
 	done             chan struct{}
 	janitorStarted   bool
 	janitorWaitGroup sync.WaitGroup
+	runStoppers      map[string]func()
 }
 
 // NewControlPlaneServer creates a new control plane server with default settings.
@@ -53,6 +54,7 @@ func NewControlPlaneServer(storage storage.ServiceStorage) *ControlPlaneServer {
 		janitorInterval: 10 * time.Second, // Default janitor interval is 10 seconds
 		done:            make(chan struct{}),
 		janitorStarted:  false,
+		runStoppers:     make(map[string]func()),
 	}
 }
 
@@ -90,14 +92,14 @@ func (s *ControlPlaneServer) SetJanitorInterval(interval time.Duration) {
 func (s *ControlPlaneServer) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	// Initialize storage if provided
 	if s.storage != nil {
 		logger.Info("Initializing persistent storage")
 		if err := s.storage.Open(); err != nil {
 			return fmt.Errorf("failed to initialize storage: %w", err)
 		}
-		
+
 		// Load persisted services
 		if err := s.loadServices(); err != nil {
 			return fmt.Errorf("failed to load services from storage: %w", err)
@@ -105,16 +107,16 @@ func (s *ControlPlaneServer) Start() error {
 	} else {
 		logger.Info("Using in-memory service registry (no persistence)")
 	}
-	
+
 	if !s.janitorStarted {
 		s.janitorStarted = true
 		s.janitorWaitGroup.Add(1)
 		go s.runJanitor()
-		logger.Info("Health check janitor started", 
-			zap.Duration("heartbeat_ttl", s.heartbeatTTL), 
+		logger.Info("Health check janitor started",
+			zap.Duration("heartbeat_ttl", s.heartbeatTTL),
 			zap.Duration("janitor_interval", s.janitorInterval))
 	}
-	
+
 	return nil
 }
 
@@ -123,13 +125,13 @@ func (s *ControlPlaneServer) loadServices() error {
 	if s.storage == nil {
 		return nil
 	}
-	
+
 	ctx := context.Background()
 	services, err := s.storage.ListServices(ctx)
 	if err != nil {
 		return err
 	}
-	
+
 	count := 0
 	for _, storedService := range services {
 		service := &Service{
@@ -140,7 +142,7 @@ func (s *ControlPlaneServer) loadServices() error {
 		s.services[service.Info.Id] = service
 		count++
 	}
-	
+
 	logger.Info("Loaded services from persistent storage", zap.Int("count", count))
 	return nil
 }
@@ -155,10 +157,10 @@ func (s *ControlPlaneServer) Close() error {
 		s.janitorStarted = false
 	}
 	s.mu.Unlock()
-	
+
 	// Wait for janitor to complete
 	s.janitorWaitGroup.Wait()
-	
+
 	// Close storage if available
 	if s.storage != nil {
 		logger.Info("Closing persistent storage")
@@ -166,7 +168,7 @@ func (s *ControlPlaneServer) Close() error {
 			return fmt.Errorf("failed to close storage: %w", err)
 		}
 	}
-	
+
 	logger.Info("Control plane server closed")
 	return nil
 }
@@ -267,7 +269,11 @@ func (s *ControlPlaneServer) Heartbeat(ctx context.Context, req *flowctlv1.Heart
 	now := time.Now()
 	service.LastSeen = now
 	service.Status.Metrics = req.Metrics
-	service.Status.Status = req.Status
+	if req.Status == flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN {
+		service.Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY
+	} else {
+		service.Status.Status = req.Status
+	}
 	service.Status.LastHeartbeat = timestamppb.New(now)
 
 	// Update in persistent storage if available
@@ -275,7 +281,11 @@ func (s *ControlPlaneServer) Heartbeat(ctx context.Context, req *flowctlv1.Heart
 		err := s.storage.UpdateService(ctx, req.ServiceId, func(storedService *storage.ServiceInfo) error {
 			storedService.LastSeen = now
 			storedService.Status.Metrics = req.Metrics
-			storedService.Status.Status = req.Status
+			if req.Status == flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN {
+				storedService.Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY
+			} else {
+				storedService.Status.Status = req.Status
+			}
 			storedService.Status.LastHeartbeat = timestamppb.New(now)
 			return nil
 		})
@@ -411,12 +421,12 @@ func (s *ControlPlaneServer) DiscoverComponents(ctx context.Context, req *flowct
 // and marks them as unhealthy
 func (s *ControlPlaneServer) runJanitor() {
 	defer s.janitorWaitGroup.Done()
-	
+
 	// Make a copy of the settings to avoid holding a lock
 	s.mu.RLock()
 	interval := s.janitorInterval
 	s.mu.RUnlock()
-	
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -470,6 +480,29 @@ func (s *ControlPlaneServer) checkServiceHealth() {
 	}
 }
 
+// RegisterRunStopper registers a callback that can stop a live pipeline run.
+// This is used by embedded runners so StopPipelineRun can trigger actual shutdown.
+func (s *ControlPlaneServer) RegisterRunStopper(runID string, stopper func()) {
+	if runID == "" || stopper == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runStoppers[runID] = stopper
+}
+
+// UnregisterRunStopper removes a previously registered pipeline stop callback.
+func (s *ControlPlaneServer) UnregisterRunStopper(runID string) {
+	if runID == "" {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.runStoppers, runID)
+}
+
 // Pipeline run management RPC methods
 
 // CreatePipelineRun implements the CreatePipelineRun RPC
@@ -478,7 +511,7 @@ func (s *ControlPlaneServer) CreatePipelineRun(ctx context.Context, req *flowctl
 
 	run := &flowctlpb.PipelineRun{
 		RunId:        req.RunId,
-		PipelineId:   req.PipelineName,  // Use pipeline name as ID for now
+		PipelineId:   req.PipelineName, // Use pipeline name as ID for now
 		PipelineName: req.PipelineName,
 		Status:       flowctlpb.RunStatus_RUN_STATUS_STARTING,
 		StartTime:    timestamppb.New(now),
@@ -526,8 +559,8 @@ func (s *ControlPlaneServer) UpdatePipelineRun(ctx context.Context, req *flowctl
 
 			// Set end time if completed, failed, or stopped
 			if req.Status == flowctlpb.RunStatus_RUN_STATUS_COMPLETED ||
-			   req.Status == flowctlpb.RunStatus_RUN_STATUS_FAILED ||
-			   req.Status == flowctlpb.RunStatus_RUN_STATUS_STOPPED {
+				req.Status == flowctlpb.RunStatus_RUN_STATUS_FAILED ||
+				req.Status == flowctlpb.RunStatus_RUN_STATUS_STOPPED {
 				runInfo.Run.EndTime = timestamppb.New(time.Now())
 			}
 		}
@@ -608,7 +641,15 @@ func (s *ControlPlaneServer) StopPipelineRun(ctx context.Context, req *flowctlpb
 		return nil, fmt.Errorf("storage not configured")
 	}
 
-	// Update the run status to stopped
+	s.mu.RLock()
+	stopper := s.runStoppers[req.RunId]
+	s.mu.RUnlock()
+	if stopper != nil {
+		go stopper()
+	}
+
+	// Update the run status to stopped immediately so operator commands reflect intent,
+	// while the embedded runner performs actual shutdown asynchronously.
 	var stoppedRun *flowctlpb.PipelineRun
 	err := s.storage.UpdatePipelineRun(ctx, req.RunId, func(runInfo *storage.PipelineRunInfo) error {
 		runInfo.Run.Status = flowctlpb.RunStatus_RUN_STATUS_STOPPED
@@ -627,8 +668,9 @@ func (s *ControlPlaneServer) StopPipelineRun(ctx context.Context, req *flowctlpb
 		return nil, fmt.Errorf("failed to stop pipeline run: %w", err)
 	}
 
-	logger.Info("Pipeline run stopped",
-		zap.String("run_id", req.RunId))
+	logger.Info("Pipeline run stop requested",
+		zap.String("run_id", req.RunId),
+		zap.Bool("has_stopper", stopper != nil))
 
 	return stoppedRun, nil
 }

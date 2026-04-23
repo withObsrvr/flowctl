@@ -240,14 +240,19 @@ func (v *Validator) validatePorts(result *ValidationResult) {
 	}
 }
 
-// validateCommands checks that command files exist
+// validateCommands checks that components are executable via command, image, or type.
+// If a local command is specified, it also verifies that the binary path exists.
 func (v *Validator) validateCommands(result *ValidationResult) {
-	checkCommand := func(id string, command []string, compType string) {
+	checkCommand := func(id string, command []string, image, typeRef, compType string) {
 		if len(command) == 0 {
+			if image != "" || typeRef != "" {
+				return
+			}
+
 			result.Errors = append(result.Errors, ValidationError{
-				Field:   fmt.Sprintf("%s.%s.command", compType, id),
-				Message: fmt.Sprintf("Component '%s' has no command specified", id),
-				Fix:     "Add a command to start the component",
+				Field:   fmt.Sprintf("%s.%s", compType, id),
+				Message: fmt.Sprintf("Component '%s' has no command, image, or type specified", id),
+				Fix:     "Add a local command, container image, or registry type reference",
 			})
 			return
 		}
@@ -270,15 +275,15 @@ func (v *Validator) validateCommands(result *ValidationResult) {
 	}
 
 	for _, source := range v.pipeline.Spec.Sources {
-		checkCommand(source.ID, source.Command, "source")
+		checkCommand(source.ID, source.Command, source.Image, source.Type, "source")
 	}
 
 	for _, proc := range v.pipeline.Spec.Processors {
-		checkCommand(proc.ID, proc.Command, "processor")
+		checkCommand(proc.ID, proc.Command, proc.Image, proc.Type, "processor")
 	}
 
 	for _, sink := range v.pipeline.Spec.Sinks {
-		checkCommand(sink.ID, sink.Command, "sink")
+		checkCommand(sink.ID, sink.Command, sink.Image, sink.Type, "sink")
 	}
 }
 

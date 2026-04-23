@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/storage"
 	flowctlpb "github.com/withobsrvr/flowctl/proto"
-	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -249,6 +249,45 @@ func TestControlPlaneServer_Janitor(t *testing.T) {
 	}
 	if status.Status != flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY {
 		t.Errorf("Service should be healthy after receiving heartbeat")
+	}
+}
+
+func TestControlPlaneServer_StopPipelineRunInvokesStopper(t *testing.T) {
+	memStorage, cleanup := createTestStorage()
+	defer cleanup()
+
+	server := NewControlPlaneServer(memStorage)
+	if err := server.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer server.Close()
+
+	ctx := context.Background()
+	_, err := server.CreatePipelineRun(ctx, &flowctlpb.CreatePipelineRunRequest{
+		RunId:        "run-stop-test",
+		PipelineName: "test-pipeline",
+	})
+	if err != nil {
+		t.Fatalf("failed to create pipeline run: %v", err)
+	}
+
+	stopped := make(chan struct{}, 1)
+	server.RegisterRunStopper("run-stop-test", func() {
+		stopped <- struct{}{}
+	})
+
+	run, err := server.StopPipelineRun(ctx, &flowctlpb.StopPipelineRunRequest{RunId: "run-stop-test"})
+	if err != nil {
+		t.Fatalf("failed to stop pipeline run: %v", err)
+	}
+	if run.Status != flowctlpb.RunStatus_RUN_STATUS_STOPPED {
+		t.Fatalf("expected stopped status, got %v", run.Status)
+	}
+
+	select {
+	case <-stopped:
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected stop callback to be invoked")
 	}
 }
 

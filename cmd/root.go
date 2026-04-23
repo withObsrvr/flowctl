@@ -27,19 +27,21 @@ var (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "flowctl",
-	Short: "Control plane for data pipelines for the Stellar Blockchain",
+	Use:           "flowctl",
+	Short:         "Control plane for data pipelines for the Stellar Blockchain",
 	Long: `flowctl is a command-line tool for managing data pipelines for the Stellar Blockchain.
 It provides a unified interface for developers, operators, and CI/CD jobs to interact with
 a Flow-powered stack.`,
+	SilenceErrors: true,
+	SilenceUsage:  true,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 func Execute() {
 	defer logger.Sync()
-	
+
 	if err := rootCmd.Execute(); err != nil {
-		logger.Error("Command execution failed", zap.Error(err))
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
 }

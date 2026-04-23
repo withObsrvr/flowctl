@@ -11,24 +11,24 @@ import (
 
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/api"
-	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"github.com/withobsrvr/flowctl/internal/storage"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
+	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"go.uber.org/zap"
 )
 
 // EmbeddedControlPlane wraps the existing control plane server
 // to provide embedded functionality within the pipeline runner
 type EmbeddedControlPlane struct {
-	server          *grpc.Server
-	controlPlane    *api.ControlPlaneServer
-	listener        net.Listener
-	address         string
-	port            int
-	started         bool
-	stopped         bool
-	mu              sync.RWMutex
-	config          Config
+	server       *grpc.Server
+	controlPlane *api.ControlPlaneServer
+	listener     net.Listener
+	address      string
+	port         int
+	started      bool
+	stopped      bool
+	mu           sync.RWMutex
+	config       Config
 }
 
 // Config holds configuration for the embedded control plane
@@ -63,9 +63,16 @@ func (e *EmbeddedControlPlane) Start(ctx context.Context) error {
 	address := fmt.Sprintf("%s:%d", e.address, e.port)
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
+		if e.port != 0 {
+			return fmt.Errorf("failed to create listener on %s: %w\ntry a different port with --control-plane-port or use --control-plane-port 0 to auto-select a free port", address, err)
+		}
 		return fmt.Errorf("failed to create listener: %w", err)
 	}
 	e.listener = listener
+	if tcpAddr, ok := listener.Addr().(*net.TCPAddr); ok {
+		e.port = tcpAddr.Port
+		address = fmt.Sprintf("%s:%d", e.address, e.port)
+	}
 
 	// Create gRPC server with provided options
 	serverOptions := e.config.ServerOptions
@@ -145,6 +152,28 @@ func (e *EmbeddedControlPlane) Stop() error {
 // GetEndpoint returns the control plane endpoint URL
 func (e *EmbeddedControlPlane) GetEndpoint() string {
 	return fmt.Sprintf("%s:%d", e.address, e.port)
+}
+
+// RegisterRunStopper registers a callback used to stop a live embedded pipeline run.
+func (e *EmbeddedControlPlane) RegisterRunStopper(runID string, stopper func()) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if e.controlPlane == nil {
+		return
+	}
+	e.controlPlane.RegisterRunStopper(runID, stopper)
+}
+
+// UnregisterRunStopper removes a previously registered stop callback.
+func (e *EmbeddedControlPlane) UnregisterRunStopper(runID string) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if e.controlPlane == nil {
+		return
+	}
+	e.controlPlane.UnregisterRunStopper(runID)
 }
 
 // GetServiceList retrieves the list of registered services

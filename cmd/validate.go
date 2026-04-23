@@ -14,14 +14,13 @@ var validateCmd = &cobra.Command{
 	Short: "Validate a pipeline configuration file",
 	Long: `Validate a pipeline YAML file before running it.
 
-This command checks for common configuration errors including:
+This command checks for common configuration issues including:
 - YAML structure and required fields
 - Duplicate component IDs
+- Basic pipeline wiring and inputs
 - Port conflicts
-- Command file existence
-- Processor chain length warnings
-- Consumer fan-out warnings
-- Event type compatibility
+- Component executability (command, image, or type)
+- Processor chain and sink fan-out warnings
 
 Examples:
   # Validate a pipeline file

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"time"
 
@@ -13,14 +14,16 @@ import (
 )
 
 var (
-	orchestratorType     string
-	controlPlanePort     int
-	controlPlaneAddress  string
-	useExternalCP        bool
-	showStatus           bool
-	logDir               string
-	heartbeatTTL         time.Duration
-	janitorInterval      time.Duration
+	orchestratorType    string
+	controlPlanePort    int
+	controlPlaneAddress string
+	useExternalCP       bool
+	showStatus          bool
+	logDir              string
+	heartbeatTTL        time.Duration
+	janitorInterval     time.Duration
+	runDBPath           string
+	runNoPersistence    bool
 )
 
 var runCmd = &cobra.Command{
@@ -30,14 +33,17 @@ var runCmd = &cobra.Command{
 The control plane automatically starts and components register themselves for monitoring.
 
 Examples:
-  # Run a pipeline with default settings
+  # Run a pipeline with the default process orchestrator
   flowctl run my-pipeline.yaml
 
   # Run with custom control plane port
   flowctl run --control-plane-port 9090 my-pipeline.yaml
 
-  # Run with container orchestrator
-  flowctl run --orchestrator container my-pipeline.yaml`,
+  # Let flowctl choose a free control plane port automatically
+  flowctl run --control-plane-port 0 my-pipeline.yaml
+
+  # Run against an existing external control plane
+  flowctl run --use-external-control-plane --control-plane-port 9090 my-pipeline.yaml`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Default pipeline file
@@ -64,10 +70,23 @@ func runV1Pipeline(cmd *cobra.Command, pipelineFile string) error {
 		return fmt.Errorf("failed to load pipeline: %w", err)
 	}
 
-	logger.Info("Starting pipeline with embedded control plane",
+	if !useExternalCP && controlPlanePort == 0 {
+		port, err := chooseFreePort(controlPlaneAddress)
+		if err != nil {
+			return fmt.Errorf("failed to choose free control plane port: %w", err)
+		}
+		controlPlanePort = port
+	}
+
+	logMsg := "Starting pipeline with embedded control plane"
+	if useExternalCP {
+		logMsg = "Starting pipeline with external control plane"
+	}
+	logger.Info(logMsg,
 		zap.String("name", pipeline.Metadata.Name),
 		zap.String("file", pipelineFile),
 		zap.String("orchestrator", orchestratorType),
+		zap.String("control_plane_address", controlPlaneAddress),
 		zap.Int("control_plane_port", controlPlanePort))
 
 	// Create logs directory
@@ -94,6 +113,8 @@ func runV1Pipeline(cmd *cobra.Command, pipelineFile string) error {
 		LogDir:              logDir,
 		HeartbeatTTL:        heartbeatTTL,
 		JanitorInterval:     janitorInterval,
+		DBPath:              runDBPath,
+		NoPersistence:       runNoPersistence,
 	}
 
 	// Create pipeline runner with embedded control plane
@@ -106,16 +127,32 @@ func runV1Pipeline(cmd *cobra.Command, pipelineFile string) error {
 	return pipelineRunner.Run()
 }
 
+func chooseFreePort(address string) (int, error) {
+	if address == "" {
+		address = "127.0.0.1"
+	}
+
+	l, err := net.Listen("tcp", fmt.Sprintf("%s:0", address))
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
 func init() {
 	rootCmd.AddCommand(runCmd)
-	
+
 	// Add flags
-	runCmd.Flags().StringVar(&orchestratorType, "orchestrator", "process", "orchestrator type (process|container)")
-	runCmd.Flags().IntVar(&controlPlanePort, "control-plane-port", 8080, "control plane port (embedded or external)")
+	runCmd.Flags().StringVar(&orchestratorType, "orchestrator", "process", "orchestrator type (process|container; process is the primary supported mode)")
+	runCmd.Flags().IntVar(&controlPlanePort, "control-plane-port", 8080, "control plane port (embedded or external; use 0 to auto-select a free port)")
 	runCmd.Flags().StringVar(&controlPlaneAddress, "control-plane-address", "127.0.0.1", "control plane address (embedded or external)")
 	runCmd.Flags().BoolVar(&useExternalCP, "use-external-control-plane", false, "use existing external control plane instead of starting embedded one")
 	runCmd.Flags().BoolVar(&showStatus, "show-status", true, "show periodic status updates")
 	runCmd.Flags().StringVar(&logDir, "log-dir", "logs", "directory for component logs")
 	runCmd.Flags().DurationVar(&heartbeatTTL, "heartbeat-ttl", 30*time.Second, "heartbeat TTL for component health")
 	runCmd.Flags().DurationVar(&janitorInterval, "janitor-interval", 10*time.Second, "interval for health checks")
+	runCmd.Flags().StringVar(&runDBPath, "db-path", "", "path to BoltDB file for embedded control plane persistence")
+	runCmd.Flags().BoolVar(&runNoPersistence, "no-persistence", false, "disable embedded control plane persistence and use in-memory storage")
 }
