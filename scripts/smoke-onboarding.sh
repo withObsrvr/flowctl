@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "scripts/smoke-readmes.sh is deprecated; use scripts/smoke-onboarding.sh" >&2
-exec "$(dirname "$0")/smoke-onboarding.sh" "$@"
+TMP_DIR=$(mktemp -d)
 DUCKDB_PID=""
 POSTGRES_PID=""
 POSTGRES_CONTAINER="flowctl-smoke-postgres"
@@ -235,8 +234,8 @@ fi
 echo "==> PostgreSQL starter pipeline smoke"
 if command -v docker >/dev/null 2>&1; then
   if ! component_image_available "docker.io/withobsrvr/postgres-consumer:v1.0.0"; then
-    echo "postgres component image is not publicly available; skipping postgres quickstart smoke"
-    echo "smoke tests passed"
+    echo "postgres component image is not publicly available; skipping postgres starter pipeline smoke"
+    echo "onboarding smoke tests passed"
     exit 0
   fi
   docker rm -f "${POSTGRES_CONTAINER}" >/dev/null 2>&1 || true
@@ -263,7 +262,7 @@ if command -v docker >/dev/null 2>&1; then
     exit 1
   fi
 else
-  echo "docker not available; skipping postgres quickstart smoke"
+  echo "docker not available; skipping postgres starter pipeline smoke"
 fi
 
-echo "smoke tests passed"
+echo "onboarding smoke tests passed"

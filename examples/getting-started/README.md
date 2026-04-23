@@ -147,13 +147,12 @@ Components connect to the control plane automatically when `ENABLE_FLOWCTL=true`
 
 ## Your First Pipeline
 
-Let's walk through understanding a simple pipeline. We'll use the generated quickstart pipeline shape shown below.
+Let's walk through understanding a simple pipeline. We'll use the generated starter pipeline shape shown below.
 
 ### Step 1: Examine the Configuration
 
 ```bash
-cd /path/to/flowctl
-./bin/flowctl init --non-interactive --network testnet --destination duckdb -o /tmp/stellar-pipeline.yaml
+flowctl init --preset testnet-duckdb -o /tmp/stellar-pipeline.yaml
 cat /tmp/stellar-pipeline.yaml
 ```
 
@@ -218,7 +217,7 @@ Press `Ctrl+C` to stop all components gracefully.
 
 ### Step 4: Understand the Components
 
-This quickstart uses real downloadable components, so it exercises the normal operator path:
+This starter pipeline uses real downloadable components, so it exercises the normal operator path:
 - components register with the control plane
 - health and status commands work
 - data is written to a real DuckDB file

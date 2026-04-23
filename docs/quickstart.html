@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>flowctl // quickstart</title>
+  <meta name="description" content="Install flowctl, generate a starter pipeline, run it, inspect status, and query DuckDB." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            ember: '#ff7f50',
+            signal: '#4dd9e4',
+            ash: '#c6c6c6',
+            ink: '#e5e2e1',
+            coal: '#131313',
+            panel: '#1c1b1b',
+            panel2: '#201f1f'
+          },
+          fontFamily: {
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-coal text-ink font-mono">
+  <header class="border-b border-white/10 bg-coal/95 sticky top-0 z-10">
+    <div class="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
+      <div>
+        <div class="text-2xl font-bold tracking-tight">flowctl // quickstart</div>
+        <div class="text-sm text-ash">the shortest path to a running local pipeline</div>
+      </div>
+      <nav class="flex flex-wrap gap-4 text-sm uppercase">
+        <a href="index.html" class="text-ash hover:text-ember">home</a>
+        <a href="#install" class="text-ash hover:text-ember">install</a>
+        <a href="#run" class="text-ash hover:text-ember">run</a>
+        <a href="#troubleshooting" class="text-ash hover:text-ember">troubleshooting</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-6 py-12 pb-24">
+    <section class="mb-12">
+      <div class="text-xs uppercase text-signal mb-3">quickstart · duckdb-first · no local docker daemon required</div>
+      <h1 class="text-4xl md:text-5xl font-bold mb-6">From install to a running pipeline in a few commands.</h1>
+      <p class="text-lg text-ash max-w-3xl leading-relaxed">
+        This is the recommended first-run path for <span class="text-ember">flowctl</span>.
+        It creates a standard <span class="text-signal">flowctl/v1</span> pipeline, starts an embedded control plane,
+        and writes contract events to a local DuckDB file.
+      </p>
+    </section>
+
+    <section id="install" class="mb-12 bg-panel border border-white/10 p-6">
+      <div class="text-xs uppercase text-signal mb-3">01 install</div>
+      <pre class="text-sm whitespace-pre-wrap text-ink">go install github.com/withobsrvr/flowctl@latest
+export PATH="$HOME/go/bin:$PATH"
+flowctl version</pre>
+      <p class="text-sm text-ash mt-4">Alternative: <code>curl -sSL https://flowctl.withobsrvr.com/install.sh | sh</code></p>
+    </section>
+
+    <section class="mb-12 grid gap-6">
+      <div class="bg-panel border border-white/10 p-6">
+        <div class="text-xs uppercase text-signal mb-3">02 generate</div>
+        <pre class="text-sm whitespace-pre-wrap text-ink">flowctl init --preset testnet-duckdb</pre>
+        <p class="text-sm text-ash mt-4">Equivalent explicit form:</p>
+        <pre class="text-sm whitespace-pre-wrap text-ash">flowctl init --non-interactive --network testnet --destination duckdb</pre>
+      </div>
+
+      <div class="bg-panel border border-white/10 p-6">
+        <div class="text-xs uppercase text-signal mb-3">03 validate</div>
+        <pre class="text-sm whitespace-pre-wrap text-ink">flowctl validate stellar-pipeline.yaml</pre>
+      </div>
+
+      <div id="run" class="bg-panel border border-white/10 p-6">
+        <div class="text-xs uppercase text-signal mb-3">04 run</div>
+        <pre class="text-sm whitespace-pre-wrap text-ink">flowctl run stellar-pipeline.yaml</pre>
+        <p class="text-sm text-ash mt-4">On first run, flowctl resolves and downloads components, starts the control plane, launches components, and wires the pipeline.</p>
+      </div>
+
+      <div class="bg-panel border border-white/10 p-6">
+        <div class="text-xs uppercase text-signal mb-3">05 inspect</div>
+        <pre class="text-sm whitespace-pre-wrap text-ink"># in another terminal
+flowctl status
+flowctl pipelines active</pre>
+      </div>
+
+      <div class="bg-panel2 border border-white/10 p-6">
+        <div class="text-xs uppercase text-signal mb-3">06 query</div>
+        <pre class="text-sm whitespace-pre-wrap text-ink">duckdb stellar-pipeline.duckdb "SELECT event_type, COUNT(*) FROM contract_events GROUP BY event_type"</pre>
+        <p class="text-sm text-ash mt-4">Stop the pipeline first if you want exclusive access to the DuckDB file from the CLI.</p>
+      </div>
+    </section>
+
+    <section id="troubleshooting" class="mb-12">
+      <div class="text-xs uppercase text-signal mb-3">troubleshooting</div>
+      <div class="grid lg:grid-cols-2 gap-6">
+        <div class="bg-panel border border-white/10 p-6">
+          <h2 class="text-lg font-bold mb-3">Port collision</h2>
+          <pre class="text-sm whitespace-pre-wrap text-ash">flowctl run --control-plane-port 0 stellar-pipeline.yaml</pre>
+        </div>
+        <div class="bg-panel border border-white/10 p-6">
+          <h2 class="text-lg font-bold mb-3">Component download problem</h2>
+          <pre class="text-sm whitespace-pre-wrap text-ash">flowctl run stellar-pipeline.yaml --log-level=debug</pre>
+        </div>
+        <div class="bg-panel border border-white/10 p-6">
+          <h2 class="text-lg font-bold mb-3">Status cannot connect</h2>
+          <pre class="text-sm whitespace-pre-wrap text-ash">flowctl status --control-plane-address 127.0.0.1 --control-plane-port 9090</pre>
+        </div>
+        <div class="bg-panel border border-white/10 p-6">
+          <h2 class="text-lg font-bold mb-3">No DuckDB CLI installed</h2>
+          <p class="text-sm text-ash">That only affects ad-hoc querying from your shell. The pipeline can still write the DuckDB file successfully.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="border-t border-white/10 pt-8 text-sm text-ash">
+      <div class="flex flex-wrap gap-4">
+        <a class="hover:text-ember" href="index.html">home</a>
+        <a class="hover:text-ember" href="init-command.md">init command</a>
+        <a class="hover:text-ember" href="flowctl-vs-nebu.md">flowctl vs nebu</a>
+        <a class="hover:text-ember" href="../examples/quickstart/README.md">starter pipeline guide</a>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -24,115 +24,117 @@ Container/deployment backends exist in the repo but should be treated as seconda
 
 ## Installation
 
-Prerequisites for the fastest local path:
-- **Go 1.21+**
-- **Git**
-- Internet access to download components on first run
+The fastest user path does **not** require cloning this repository.
+
+### Option 1: `go install`
 
 ```bash
-# Clone the repository
+go install github.com/withobsrvr/flowctl@latest
+export PATH="$HOME/go/bin:$PATH"
+flowctl version
+```
+
+### Option 2: curl installer
+
+```bash
+curl -sSL https://flowctl.withobsrvr.com/install.sh | sh
+flowctl version
+```
+
+### Option 3: build from source
+
+```bash
 git clone https://github.com/withobsrvr/flowctl.git
 cd flowctl
-
-# Build the binary
 make build
-
-# Verify installation
 ./bin/flowctl version
 ```
 
-`make deps` is only needed if you want to refresh Go module dependencies while developing.
+Notes:
+- Internet access is required on first run so flowctl can download pipeline components.
+- The default DuckDB starter path does **not** require a local Docker daemon.
+- `make deps` is only needed if you are developing in this repository.
 
 ## Quick Start
 
-If you are new to flowctl, start here.
+If you are new to flowctl, use this path first.
 
-### Fastest path to a working repo checkout
-
-```bash
-# 1. Build flowctl
-git clone https://github.com/withobsrvr/flowctl.git && cd flowctl && make build
-
-# 2. Optional: use the helper script to generate and validate a starter pipeline
-./scripts/quickstart.sh
-```
-
-That script builds `flowctl` if needed, generates `stellar-pipeline.yaml`, and validates it.
-
-### 5-minute real pipeline path
+### 2-minute first pipeline
 
 ```bash
-# 1. Build flowctl
-git clone https://github.com/withobsrvr/flowctl.git && cd flowctl && make build
+# 1. Install flowctl
+go install github.com/withobsrvr/flowctl@latest
+export PATH="$HOME/go/bin:$PATH"
 
 # 2. Generate a starter pipeline
-./bin/flowctl init --non-interactive --network testnet --destination duckdb
+flowctl init --preset testnet-duckdb
 
 # 3. Validate it
-./bin/flowctl validate stellar-pipeline.yaml
+flowctl validate stellar-pipeline.yaml
 
 # 4. Run it
-./bin/flowctl run stellar-pipeline.yaml
+flowctl run stellar-pipeline.yaml
 ```
 
 In another terminal:
 
 ```bash
 # 5. Check component health
-./bin/flowctl status
+flowctl status
 
 # 6. Inspect active runs
-./bin/flowctl pipelines active
+flowctl pipelines active
 ```
 
-Notes:
-- The DuckDB path is the simplest way to get started.
-- Components are downloaded automatically on first run.
-- **A Docker daemon is not required** for the default DuckDB quickstart.
+Optional, after stopping the pipeline:
+
+```bash
+duckdb stellar-pipeline.duckdb "SELECT event_type, COUNT(*) FROM contract_events GROUP BY event_type"
+```
 
 ### Core operator workflow
 
 ```bash
-./bin/flowctl init
-./bin/flowctl validate stellar-pipeline.yaml
-./bin/flowctl run stellar-pipeline.yaml
-./bin/flowctl status
-./bin/flowctl pipelines active
-./bin/flowctl pipelines run-info <run-id>
-./bin/flowctl pipelines stop <run-id>
+flowctl init
+flowctl validate stellar-pipeline.yaml
+flowctl run stellar-pipeline.yaml
+flowctl status
+flowctl pipelines active
+flowctl pipelines run-info <run-id>
+flowctl pipelines stop <run-id>
 ```
 
 ### Recommended operator flags
 
 ```bash
 # Use a non-default control plane port
-./bin/flowctl run --control-plane-port 9090 stellar-pipeline.yaml
-./bin/flowctl status --control-plane-address 127.0.0.1 --control-plane-port 9090
-./bin/flowctl pipelines active --control-plane-address 127.0.0.1 --control-plane-port 9090
+flowctl run --control-plane-port 9090 stellar-pipeline.yaml
+flowctl status --control-plane-address 127.0.0.1 --control-plane-port 9090
+flowctl pipelines active --control-plane-address 127.0.0.1 --control-plane-port 9090
 
 # Let flowctl auto-select a free control plane port
-./bin/flowctl run --control-plane-port 0 stellar-pipeline.yaml
+flowctl run --control-plane-port 0 stellar-pipeline.yaml
 
 # Persist embedded run history explicitly
-./bin/flowctl run --db-path ~/.flowctl/flowctl-service-registry.db stellar-pipeline.yaml
+flowctl run --db-path ~/.flowctl/flowctl-service-registry.db stellar-pipeline.yaml
 
 # Or disable persistence for a one-off local run
-./bin/flowctl run --no-persistence stellar-pipeline.yaml
+flowctl run --no-persistence stellar-pipeline.yaml
 ```
 
-### DuckDB (Simplest - No Setup Required)
-
-This is the recommended first run for anyone cloning the repo.
+### DuckDB (Recommended first run)
 
 ```bash
-./bin/flowctl init --non-interactive --network testnet --destination duckdb
-./bin/flowctl run stellar-pipeline.yaml
-
-# Stop the pipeline first, then query your data
-duckdb stellar-pipeline.duckdb "SELECT event_type, COUNT(*) FROM contract_events GROUP BY event_type"
+flowctl init --preset testnet-duckdb
+flowctl run stellar-pipeline.yaml
 ```
 
-### PostgreSQL (When the PostgreSQL sink component is available)
+This path is the recommended first success story because:
+- components are downloaded automatically on first run
+- data is written locally to `stellar-pipeline.duckdb`
+- **a Docker daemon is not required**
+
+### PostgreSQL (when you want an external database)
 
 ```bash
 # Start PostgreSQL (if not already running)
@@ -140,8 +142,8 @@ docker run --name flowctl-postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d
 docker exec flowctl-postgres createdb -U postgres stellar_events
 
 # Create and run pipeline
-./bin/flowctl init --non-interactive --network testnet --destination postgres
-./bin/flowctl run stellar-pipeline.yaml
+flowctl init --non-interactive --network testnet --destination postgres
+flowctl run stellar-pipeline.yaml
 
 # If you use a non-default PostgreSQL password, edit stellar-pipeline.yaml
 # and update spec.sinks[0].config.postgres_password before running.
@@ -151,9 +153,9 @@ docker exec flowctl-postgres psql -U postgres -d stellar_events \
   -c "SELECT event_type, COUNT(*) FROM contract_events GROUP BY event_type"
 ```
 
-If the `postgres-consumer@v1.0.0` component image is not published in your registry yet, use the DuckDB quickstart path instead.
+If the `postgres-consumer@v1.0.0` component image is not published in your registry yet, use the DuckDB path instead.
 
-**See also:** [Quickstart Examples](examples/quickstart/) | [flowctl init Reference](docs/init-command.md)
+**See also:** [Starter pipeline examples](examples/quickstart/) | [HTML quickstart](docs/quickstart.html) | [flowctl init reference](docs/init-command.md) | [Onboarding plan](docs/ONBOARDING_PLAN.md)
 
 ---
 
@@ -164,9 +166,9 @@ The `flowctl init` command creates starter pipelines through an interactive wiza
 Common examples:
 
 ```bash
-./bin/flowctl init
-./bin/flowctl init --non-interactive --network testnet --destination duckdb
-./bin/flowctl init --non-interactive --network mainnet --destination postgres -o prod-pipeline.yaml
+flowctl init
+flowctl init --preset testnet-duckdb
+flowctl init --non-interactive --network mainnet --destination postgres -o prod-pipeline.yaml
 ```
 
 Destination prerequisites:
@@ -181,6 +183,7 @@ Components are downloaded automatically on first run and cached locally under `~
 Full reference:
 - [docs/init-command.md](docs/init-command.md)
 - [examples/quickstart/](examples/quickstart/)
+- [docs/quickstart.html](docs/quickstart.html)
 
 ## Understanding Components
 
@@ -260,8 +263,8 @@ spec:
 - Component `env` - Environment variables for configuration
 
 For more examples, see:
-- `examples/quickstart/testnet-duckdb-pipeline.yaml` - Quickstart DuckDB pipeline
-- `examples/quickstart/testnet-postgres-pipeline.yaml` - Quickstart PostgreSQL pipeline
+- `examples/quickstart/testnet-duckdb-pipeline.yaml` - Starter DuckDB pipeline
+- `examples/quickstart/testnet-postgres-pipeline.yaml` - Starter PostgreSQL pipeline
 - `examples/config/example.yaml` - Configuration example
 - **[Real-world demo](https://github.com/withObsrvr/flowctl-sdk/tree/main/examples/contract-events-pipeline)** - Complete Stellar contract events pipeline with PostgreSQL
 
@@ -280,7 +283,7 @@ Available log levels:
 
 Example:
 ```bash
-./bin/flowctl run examples/quickstart/testnet-duckdb-pipeline.yaml --log-level=debug
+flowctl run examples/quickstart/testnet-duckdb-pipeline.yaml --log-level=debug
 ```
 
 ## Translation and Docker-based Workflows
