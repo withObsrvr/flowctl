@@ -132,7 +132,7 @@ This is the recommended first run for anyone cloning the repo.
 duckdb stellar-pipeline.duckdb "SELECT event_type, COUNT(*) FROM contract_events GROUP BY event_type"
 ```
 
-### PostgreSQL (Production-Ready)
+### PostgreSQL (When the PostgreSQL sink component is available)
 
 ```bash
 # Start PostgreSQL (if not already running)
@@ -150,6 +150,8 @@ docker exec flowctl-postgres createdb -U postgres stellar_events
 docker exec flowctl-postgres psql -U postgres -d stellar_events \
   -c "SELECT event_type, COUNT(*) FROM contract_events GROUP BY event_type"
 ```
+
+If the `postgres-consumer@v1.0.0` component image is not published in your registry yet, use the DuckDB quickstart path instead.
 
 **See also:** [Quickstart Examples](examples/quickstart/) | [flowctl init Reference](docs/init-command.md)
 
