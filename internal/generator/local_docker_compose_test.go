@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -66,9 +67,12 @@ func TestDockerComposeLocalGenerator_Generate(t *testing.T) {
 
 	// Create generator
 	generator := NewLocalGenerator()
+	tempDir := t.TempDir()
 
 	// Generate Docker Compose configuration
-	result, err := generator.Generate(pipeline, model.TranslationOptions{})
+	result, err := generator.Generate(pipeline, model.TranslationOptions{
+		OutputPath: filepath.Join(tempDir, "docker-compose.yaml"),
+	})
 	if err != nil {
 		t.Fatalf("Failed to generate Docker Compose configuration: %v", err)
 	}
