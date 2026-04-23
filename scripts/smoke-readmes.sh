@@ -25,22 +25,33 @@ need make
 query_duckdb() {
   local db_path="$1"
   local sql="$2"
+  local attempt output
 
-  if command -v duckdb >/dev/null 2>&1; then
-    duckdb -csv "$db_path" "$sql" | tail -n 1 | tr -d '[:space:]'
-    return
-  fi
-
-  if command -v python3 >/dev/null 2>&1; then
-    python3 - <<PY
+  for attempt in $(seq 1 30); do
+    if command -v duckdb >/dev/null 2>&1; then
+      if output=$(duckdb -readonly -csv "$db_path" "$sql" 2>/dev/null); then
+        printf '%s\n' "$output" | tail -n 1 | tr -d '[:space:]'
+        return
+      fi
+    elif command -v python3 >/dev/null 2>&1; then
+      if output=$(python3 - <<PY 2>/dev/null
 import duckdb
 print(duckdb.connect(r'''$db_path''', read_only=True).execute(r'''$sql''').fetchone()[0])
 PY
-    return
-  fi
+); then
+        printf '%s\n' "$output" | tail -n 1 | tr -d '[:space:]'
+        return
+      fi
+    else
+      echo "need duckdb CLI or python3 with duckdb module" >&2
+      exit 1
+    fi
 
-  echo "need duckdb CLI or python3 with duckdb module" >&2
-  exit 1
+    sleep 1
+  done
+
+  echo "failed to query DuckDB after waiting for file lock to clear: $db_path" >&2
+  return 1
 }
 
 if [[ ! -f "go.mod" || ! -f "Makefile" ]]; then
