@@ -69,6 +69,8 @@ func runV1Pipeline(cmd *cobra.Command, pipelineFile string) error {
 		return fmt.Errorf("failed to load pipeline: %w", err)
 	}
 
+	printRunPreflight(pipelineFile, pipeline.Metadata.Name)
+
 	logMsg := "Starting pipeline with embedded control plane"
 	if useExternalCP {
 		logMsg = "Starting pipeline with external control plane"
@@ -116,6 +118,29 @@ func runV1Pipeline(cmd *cobra.Command, pipelineFile string) error {
 
 	// Run pipeline with integrated control plane
 	return pipelineRunner.Run()
+}
+
+func printRunPreflight(pipelineFile, pipelineName string) {
+	fmt.Println("Starting pipeline")
+	fmt.Println("-----------------")
+	fmt.Printf("Pipeline:      %s\n", pipelineName)
+	fmt.Printf("Config file:   %s\n", pipelineFile)
+	fmt.Printf("Orchestrator:  %s\n", orchestratorType)
+	if useExternalCP {
+		fmt.Printf("Control plane: external (%s:%d)\n", controlPlaneAddress, controlPlanePort)
+	} else if controlPlanePort == 0 {
+		fmt.Printf("Control plane: embedded (%s:auto)\n", controlPlaneAddress)
+	} else {
+		fmt.Printf("Control plane: embedded (%s:%d)\n", controlPlaneAddress, controlPlanePort)
+	}
+	fmt.Printf("Logs:          %s\n", logDir)
+	fmt.Println()
+	fmt.Println("What happens next:")
+	fmt.Println("  1. flowctl resolves and downloads any referenced components")
+	fmt.Println("  2. the control plane starts")
+	fmt.Println("  3. components launch and register")
+	fmt.Println("  4. the pipeline is wired and starts running")
+	fmt.Println()
 }
 
 func init() {

@@ -8,7 +8,7 @@ RUN_PIPELINE=0
 
 usage() {
   cat <<'EOF'
-flowctl quickstart helper
+flowctl starter pipeline helper
 
 Usage:
   ./scripts/quickstart.sh [options]
@@ -98,7 +98,7 @@ echo "==> Validating ${OUTPUT}"
 
 cat <<EOF
 
-Quickstart complete.
+Starter pipeline setup complete.
 
 Generated pipeline: ${OUTPUT}
 Network:            ${NETWORK}

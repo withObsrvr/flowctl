@@ -16,10 +16,11 @@ import (
 )
 
 var (
-	outputFile        string
+	outputFile         string
 	initNonInteractive bool
-	networkFlag       string
-	destinationFlag   string
+	networkFlag        string
+	destinationFlag    string
+	presetFlag         string
 )
 
 // initCmd represents the init command
@@ -41,6 +42,9 @@ Examples:
 
   # Non-interactive mode (use flags)
   flowctl init --non-interactive --network testnet --destination duckdb
+
+  # Preset for the recommended first-run path
+  flowctl init --preset testnet-duckdb
 `,
 	RunE: runInit,
 }
@@ -49,14 +53,17 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 
 	initCmd.Flags().StringVarP(&outputFile, "output", "o", "", "output file (default: <pipeline-name>.yaml)")
-	initCmd.Flags().BoolVar(&initNonInteractive, "non-interactive", false, "non-interactive mode (requires --network, --destination)")
+	initCmd.Flags().BoolVar(&initNonInteractive, "non-interactive", false, "non-interactive mode (requires --network/--destination unless --preset is used)")
 	initCmd.Flags().StringVar(&networkFlag, "network", "", "network (testnet, mainnet)")
 	initCmd.Flags().StringVar(&destinationFlag, "destination", "", "destination (postgres, duckdb)")
+	initCmd.Flags().StringVar(&presetFlag, "preset", "", "starter preset (testnet-duckdb, testnet-postgres, mainnet-duckdb, mainnet-postgres)")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	fmt.Println("\n🚀 Welcome to flowctl!")
-	fmt.Println("Let's create your first Stellar data pipeline.")
+	if !initNonInteractive && presetFlag == "" {
+		fmt.Println("\n🚀 Welcome to flowctl!")
+		fmt.Println("Let's create your first Stellar data pipeline.")
+	}
 
 	reader := bufio.NewReader(os.Stdin)
 
@@ -67,13 +74,21 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// flowctl is Stellar-only, so we hardcode this
 	blockchain = "stellar"
 
-	if initNonInteractive {
-		// Validate required flags
-		if networkFlag == "" || destinationFlag == "" {
-			return fmt.Errorf("non-interactive mode requires --network and --destination flags")
+	if initNonInteractive || presetFlag != "" {
+		if presetFlag != "" {
+			presetNetwork, presetDestination, err := resolveInitPreset(presetFlag)
+			if err != nil {
+				return err
+			}
+			network = presetNetwork
+			destination = presetDestination
+		} else {
+			if networkFlag == "" || destinationFlag == "" {
+				return fmt.Errorf("non-interactive mode requires --network and --destination flags unless --preset is used")
+			}
+			network = networkFlag
+			destination = destinationFlag
 		}
-		network = networkFlag
-		destination = destinationFlag
 		if destination != "postgres" && destination != "duckdb" {
 			return fmt.Errorf("unsupported destination %q (supported: postgres, duckdb)", destination)
 		}
@@ -112,6 +127,21 @@ func runInit(cmd *cobra.Command, args []string) error {
 	printSummary(intent, filename, blockchain, network, destination)
 
 	return nil
+}
+
+func resolveInitPreset(preset string) (network string, destination string, err error) {
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case "testnet-duckdb":
+		return "testnet", "duckdb", nil
+	case "testnet-postgres":
+		return "testnet", "postgres", nil
+	case "mainnet-duckdb":
+		return "mainnet", "duckdb", nil
+	case "mainnet-postgres":
+		return "mainnet", "postgres", nil
+	default:
+		return "", "", fmt.Errorf("unsupported preset %q (supported: testnet-duckdb, testnet-postgres, mainnet-duckdb, mainnet-postgres)", preset)
+	}
 }
 
 func promptNetwork(reader *bufio.Reader) string {
@@ -388,39 +418,76 @@ func writeIntentToFile(intent map[string]interface{}, filename string) error {
 func printSummary(intent map[string]interface{}, filename, blockchain, network, destination string) {
 	spec := intent["spec"].(map[string]interface{})
 
-	fmt.Println("Your pipeline will:")
-	fmt.Printf("  1. Read %s ledgers (%s)\n", blockchain, network)
-	fmt.Println("  2. Extract Soroban contract events")
-	fmt.Printf("  3. Store in %s\n", destination)
+	fmt.Println("Pipeline summary")
+	fmt.Println("----------------")
+	fmt.Printf("Source:      %s ledgers (%s)\n", blockchain, network)
+	fmt.Println("Processor:   contract-events")
+	fmt.Printf("Destination: %s\n", destination)
+	fmt.Printf("File:        %s\n", filename)
 
 	// Show configuration details
-	fmt.Println("\nPipeline configuration:")
-	fmt.Printf("  Network: %s\n", network)
-
-	// Check for ledger range in source config
 	if sources, ok := spec["sources"].([]map[string]interface{}); ok && len(sources) > 0 {
 		if config, ok := sources[0]["config"].(map[string]interface{}); ok {
-			if startLedger, ok := config["start_ledger"].(string); ok && startLedger != "" {
-				if endLedger, ok := config["end_ledger"].(string); ok && endLedger != "" {
-					fmt.Printf("  Ledgers: %s to %s\n", startLedger, endLedger)
+			startLedger := configValueString(config["start_ledger"])
+			endLedger := configValueString(config["end_ledger"])
+			if startLedger != "" {
+				if endLedger != "" {
+					fmt.Printf("Ledgers:     %s to %s\n", startLedger, endLedger)
 				} else {
-					fmt.Printf("  Start Ledger: %s\n", startLedger)
+					fmt.Printf("Start at:    %s\n", startLedger)
 				}
 			} else {
-				fmt.Println("  Mode: Continuous")
+				fmt.Println("Mode:        continuous")
 			}
 		}
 	}
+	fmt.Println("Format:      flowctl/v1")
 
-	fmt.Println("  Format: v1 (with automatic component downloads)")
+	fmt.Println("\nNext:")
+	fmt.Printf("  flowctl validate %s\n", filename)
+	fmt.Printf("  flowctl run %s\n", filename)
+	fmt.Println("\nThen, in another terminal:")
+	fmt.Println("  flowctl status")
+	fmt.Println("  flowctl pipelines active")
 
-	fmt.Println("\nNext steps:")
-	fmt.Printf("  $ flowctl run %s\n", filename)
-	fmt.Println("\n  Components will be automatically downloaded from Docker Hub on first run!")
+	if destination == "duckdb" {
+		duckdbFile := duckDBPathFromIntent(spec)
+		fmt.Println("\nOptional, after stopping the pipeline:")
+		fmt.Printf("  duckdb %s \"SELECT event_type, COUNT(*) FROM contract_events GROUP BY event_type\"\n", duckdbFile)
+		fmt.Println("\nDuckDB is the recommended first-run path and does not require a local Docker daemon.")
+	} else {
+		fmt.Println("\nNote: ensure PostgreSQL is running and the sink credentials in the pipeline file are correct.")
+	}
 
-	fmt.Println("\nLearn more:")
-	fmt.Println("  flowctl --help     # All commands")
-	fmt.Println("  cat " + filename + "    # View your pipeline")
+	fmt.Println("\nComponents are downloaded automatically on first run and cached under ~/.flowctl/.")
+}
 
-	fmt.Println("\nHappy data processing! 🎉")
+func configValueString(v interface{}) string {
+	switch value := v.(type) {
+	case string:
+		return value
+	case fmt.Stringer:
+		return value.String()
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return fmt.Sprint(value)
+	default:
+		return ""
+	}
+}
+
+func duckDBPathFromIntent(spec map[string]interface{}) string {
+	sinks, ok := spec["sinks"].([]map[string]interface{})
+	if !ok {
+		return "stellar-pipeline.duckdb"
+	}
+	for _, sink := range sinks {
+		config, ok := sink["config"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if path := configValueString(config["database_path"]); path != "" {
+			return path
+		}
+	}
+	return "stellar-pipeline.duckdb"
 }

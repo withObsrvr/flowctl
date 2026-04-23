@@ -19,7 +19,7 @@ Reference processors do four jobs at once:
 
 1. **teach the processor model**
 2. **prove the nebu → flowctl promotion path**
-3. **support example and quickstart pipelines**
+3. **support example and starter pipelines**
 4. **give the flagship runtime real, documented building blocks**
 
 Per the flagship scope, this is exactly the kind of work that strengthens `flowctl` as the production layer.
@@ -54,7 +54,7 @@ We want the starter set to cover the most important processor shapes:
 - already present in flowctl examples and metadata
 - highly relevant to Soroban/Stellar users
 - natural demonstration of `stellar.ledger.v1 -> stellar.contract.events.v1`
-- directly supports flagship quickstarts
+- directly supports flagship starter pipelines
 
 **Input type**
 - `stellar.ledger.v1`

@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/google/uuid"
+	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/controlplane"
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/orchestrator"
@@ -191,6 +191,8 @@ func (r *PipelineRunner) Run() error {
 			r.controlPlane.Stop()
 			return fmt.Errorf("control plane not ready: %w", err)
 		}
+
+		fmt.Printf("✓ Control plane ready at %s\n", r.GetControlPlaneEndpoint())
 	} else {
 		// Verify external control plane is accessible
 		if err := r.waitForControlPlaneReady(); err != nil {
@@ -198,12 +200,14 @@ func (r *PipelineRunner) Run() error {
 				r.config.ControlPlaneAddress, r.config.ControlPlanePort, err)
 		}
 		logger.Info("External control plane is accessible")
+		fmt.Printf("✓ Connected to external control plane at %s\n", r.GetControlPlaneEndpoint())
 	}
 
 	// Create pipeline run record
 	r.createPipelineRun()
 
 	// Start components in dependency order
+	fmt.Println("→ Launching components...")
 	if err := r.startComponents(); err != nil {
 		r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_FAILED)
 		if r.controlPlane != nil {
@@ -213,6 +217,7 @@ func (r *PipelineRunner) Run() error {
 	}
 
 	// Wait for all components to register
+	fmt.Println("→ Waiting for components to register...")
 	if err := r.waitForComponentRegistration(); err != nil {
 		r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_FAILED)
 		if r.controlPlane != nil {
@@ -225,7 +230,7 @@ func (r *PipelineRunner) Run() error {
 		logger.Warn("Failed to enrich registered component metadata", zap.Error(err))
 	}
 
-	// Wire components together for data flow
+	fmt.Println("→ Wiring data flow between components...")
 	streamOrch := NewStreamOrchestrator(r.ctx, r.controlPlane, r.pipeline)
 	if err := streamOrch.WireAll(); err != nil {
 		r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_FAILED)
@@ -255,6 +260,14 @@ func (r *PipelineRunner) Run() error {
 	}
 
 	logger.Info("Pipeline started successfully with control plane integration")
+	fmt.Println("✓ Pipeline is running")
+	fmt.Println()
+	fmt.Println("Next, in another terminal:")
+	fmt.Printf("  flowctl status --control-plane-address %s --control-plane-port %d\n", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
+	fmt.Printf("  flowctl pipelines active --control-plane-address %s --control-plane-port %d\n", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
+	fmt.Println()
+	fmt.Printf("Component logs are being written under %s/\n", r.config.LogDir)
+	fmt.Println("Press Ctrl+C to stop the pipeline.")
 
 	// Set up signal handling
 	sigChan := make(chan os.Signal, 1)
@@ -804,7 +817,7 @@ func (r *PipelineRunner) enrichRegisteredComponents() error {
 	components := []struct {
 		role string
 		comp model.Component
-	}{ }
+	}{}
 	for _, source := range r.pipeline.Spec.Sources {
 		components = append(components, struct {
 			role string

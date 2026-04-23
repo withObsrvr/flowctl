@@ -19,7 +19,8 @@ The init command guides you through creating a v1 pipeline configuration with au
 | `--network` | string | (interactive) | Stellar network: `testnet` or `mainnet` |
 | `--destination` | string | (interactive) | Sink type: `postgres` or `duckdb` |
 | `--output`, `-o` | string | `stellar-pipeline.yaml` | Output filename |
-| `--non-interactive` | bool | false | Skip interactive prompts (requires `--network` and `--destination`) |
+| `--non-interactive` | bool | false | Skip interactive prompts (requires `--network` and `--destination`, unless `--preset` is used) |
+| `--preset` | string | `""` | Starter preset: `testnet-duckdb`, `testnet-postgres`, `mainnet-duckdb`, `mainnet-postgres` |
 | `-h`, `--help` | bool | false | Show help |
 
 ### Global Flags
@@ -34,7 +35,7 @@ The init command guides you through creating a v1 pipeline configuration with au
 Run without flags for an interactive wizard:
 
 ```bash
-./bin/flowctl init
+flowctl init
 ```
 
 The wizard prompts for:
@@ -52,11 +53,14 @@ The wizard prompts for:
 For automation, CI/CD, or scripting:
 
 ```bash
-# Basic usage
-./bin/flowctl init --non-interactive --network testnet --destination duckdb
+# Recommended first-run preset
+flowctl init --preset testnet-duckdb
+
+# Basic explicit usage
+flowctl init --non-interactive --network testnet --destination duckdb
 
 # Custom output file
-./bin/flowctl init --non-interactive --network mainnet --destination postgres -o prod-pipeline.yaml
+flowctl init --non-interactive --network mainnet --destination postgres -o prod-pipeline.yaml
 ```
 
 ## Examples
@@ -64,7 +68,7 @@ For automation, CI/CD, or scripting:
 ### Create a Testnet DuckDB Pipeline
 
 ```bash
-./bin/flowctl init --non-interactive --network testnet --destination duckdb
+flowctl init --preset testnet-duckdb
 ```
 
 Generates `stellar-pipeline.yaml`:
@@ -105,7 +109,7 @@ spec:
 ### Create a Mainnet PostgreSQL Pipeline
 
 ```bash
-./bin/flowctl init --non-interactive --network mainnet --destination postgres -o mainnet.yaml
+flowctl init --preset mainnet-postgres -o mainnet.yaml
 ```
 
 ## Component Auto-Download
@@ -208,7 +212,7 @@ After creating your first pipeline:
 
 ## See Also
 
-- [Quickstart Guide](../examples/quickstart/README.md)
+- [Starter pipeline guide](../examples/quickstart/README.md)
 - [Processor Discovery](processor-discovery.md)
 - [Configuration Guide](configuration.md)
 - [Building Components](building-components.md)

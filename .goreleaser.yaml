@@ -1,0 +1,47 @@
+version: 2
+
+project_name: flowctl
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: flowctl
+    main: .
+    binary: flowctl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/withobsrvr/flowctl/cmd/version.Version={{ .Version }}
+        -X github.com/withobsrvr/flowctl/cmd/version.Commit={{ .Commit }}
+        -X github.com/withobsrvr/flowctl/cmd/version.BuildDate={{ .Date }}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'

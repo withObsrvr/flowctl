@@ -4,12 +4,12 @@ This directory contains example pipeline configurations demonstrating various fl
 
 ## 📚 Navigation
 
-### Quickstart (2 Minutes)
+### Starter Pipeline (2 Minutes)
 
 **Get running immediately:**
 
-1. **[Quickstart Guide](quickstart/README.md)** ⭐ **Fastest Start!**
-   - Run `./scripts/quickstart.sh` or create a pipeline with `flowctl init`
+1. **[Starter Pipeline Guide](quickstart/README.md)** ⭐ **Fastest Start!**
+   - Run `flowctl init --preset testnet-duckdb` or use `./scripts/quickstart.sh` if you are working from a repository checkout
    - Auto-download components from Docker Hub
    - Run your first Stellar data pipeline
    - Sample pipelines for testnet/mainnet
@@ -188,7 +188,7 @@ spec:
 
 **Beginner:**
 1. Read [Getting Started Guide](getting-started/README.md)
-2. Try the [Quickstart Guide](quickstart/README.md) to create your first pipeline with `flowctl init`
+2. Try the [Starter Pipeline Guide](quickstart/README.md) to create your first pipeline with `flowctl init --preset testnet-duckdb`
 
 **Intermediate:**
 1. Read [Building Components Guide](../docs/building-components.md)
@@ -264,7 +264,7 @@ curl http://localhost:8088/health
 ENABLE_FLOWCTL=false PORT=:50051 /path/to/component
 
 # Generate a sample pipeline to study
-./bin/flowctl init --non-interactive --network testnet --destination duckdb
+flowctl init --preset testnet-duckdb
 cat stellar-pipeline.yaml
 
 # Build components with flowctl-sdk for proper integration

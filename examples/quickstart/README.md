@@ -1,30 +1,34 @@
-# Quickstart Guide
+# Starter Pipeline Guide
 
 Get your first Stellar data pipeline running in 2 minutes.
 
 ## Prerequisites
 
-- **Go 1.21+** - [Install Go](https://go.dev/doc/install)
-- **Git** - For cloning the repository
 - Internet access to download components on first run
 - Optional: `duckdb` CLI if you want to query the DuckDB file from your shell
 
-> The default DuckDB quickstart uses `driver: process` and downloads component binaries directly from OCI images. You do **not** need a local Docker daemon for this path.
+> The default DuckDB starter path uses `driver: process` and downloads component binaries directly from OCI images. You do **not** need a local Docker daemon for this path.
 
 ## Installation
 
 ```bash
-# Clone the repository
+# Recommended: install without cloning the repo
+go install github.com/withobsrvr/flowctl@latest
+export PATH="$HOME/go/bin:$PATH"
+flowctl version
+
+# Alternative: curl installer
+curl -sSL https://flowctl.withobsrvr.com/install.sh | sh
+flowctl version
+```
+
+If you are contributing in this repository, you can still use:
+
+```bash
 git clone https://github.com/withobsrvr/flowctl.git
 cd flowctl
-
-# Build flowctl
 make build
-
-# Verify installation
 ./bin/flowctl version
-
-# Optional: generate + validate a starter pipeline automatically
 ./scripts/quickstart.sh
 ```
 
@@ -33,7 +37,7 @@ make build
 ### Option 1: Interactive Mode (Recommended)
 
 ```bash
-./bin/flowctl init
+flowctl init
 ```
 
 Follow the prompts:
@@ -49,17 +53,20 @@ This creates a `stellar-pipeline.yaml` file.
 For automation or CI/CD:
 
 ```bash
-# Create a testnet pipeline with DuckDB sink
-./bin/flowctl init --non-interactive --network testnet --destination duckdb
+# Recommended preset for first run
+flowctl init --preset testnet-duckdb
+
+# Equivalent explicit form
+flowctl init --non-interactive --network testnet --destination duckdb
 
 # Create a mainnet pipeline with PostgreSQL sink
-./bin/flowctl init --non-interactive --network mainnet --destination postgres -o mainnet-pipeline.yaml
+flowctl init --non-interactive --network mainnet --destination postgres -o mainnet-pipeline.yaml
 ```
 
 ## Run the Pipeline
 
 ```bash
-./bin/flowctl run stellar-pipeline.yaml
+flowctl run stellar-pipeline.yaml
 ```
 
 **What happens:**
@@ -86,7 +93,7 @@ duckdb stellar-pipeline.duckdb "SELECT * FROM contract_events LIMIT 5"
 psql -h localhost -U postgres -d stellar_events -c "SELECT * FROM contract_events LIMIT 5"
 ```
 
-> Note: this path requires the `postgres-consumer@v1.0.0` component image to be available in your registry. If it is not published yet, use the DuckDB quickstart path.
+> Note: this path requires the `postgres-consumer@v1.0.0` component image to be available in your registry. If it is not published yet, use the DuckDB starter path.
 
 ## Sample Pipelines
 
@@ -153,7 +160,7 @@ find ~/.flowctl -maxdepth 4 -type f | head
 
 Re-run with debug logging to see the exact pull failure:
 ```bash
-./bin/flowctl run stellar-pipeline.yaml --log-level=debug
+flowctl run stellar-pipeline.yaml --log-level=debug
 ```
 
 Common causes:
@@ -172,7 +179,7 @@ lsof -i :8080
 
 1. Check component logs:
    ```bash
-   ./bin/flowctl run stellar-pipeline.yaml --log-level=debug
+   flowctl run stellar-pipeline.yaml --log-level=debug
    ```
 
 2. Verify network connectivity to Stellar Horizon
