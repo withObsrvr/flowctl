@@ -86,7 +86,9 @@ Decide what you need:
 
 ### Step 2: Build Components
 
-Use the [flowctl-sdk](https://github.com/withObsrvr/flowctl-sdk) to build components:
+Use one of the flowctl SDKs to build components:
+
+#### Go SDK
 
 ```bash
 # Clone the SDK
@@ -97,6 +99,15 @@ cd flowctl-sdk/examples/
 
 # Build your component
 # See: docs/building-components.md
+```
+
+#### JavaScript / TypeScript SDK
+
+```bash
+npm install @withobsrvr/js-flowctl-sdk
+
+# See the repo for examples and a full flowctl E2E pipeline
+# https://github.com/withObsrvr/js-flowctl-sdk
 ```
 
 ### Step 3: Create Pipeline Configuration
@@ -144,7 +155,7 @@ spec:
         HEALTH_PORT: "8090"
 ```
 
-**Note:** See the [Contract Events Pipeline](https://github.com/withObsrvr/flowctl-sdk/tree/main/examples/contract-events-pipeline) for a complete working example, or use `flowctl init` to generate a pipeline.
+**Note:** See the [Contract Events Pipeline](https://github.com/withObsrvr/flowctl-sdk/tree/main/examples/contract-events-pipeline) for a complete Go example, or the [JS flowctl E2E example](https://github.com/withObsrvr/js-flowctl-sdk/tree/main/examples/flowctl-e2e) for a complete JavaScript/TypeScript example. You can also use `flowctl init` to generate a pipeline.
 
 ### Step 4: Run and Test
 

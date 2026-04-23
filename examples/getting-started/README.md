@@ -71,7 +71,9 @@ make build
 ./bin/flowctl version
 ```
 
-### Install flowctl-sdk (for building components)
+### Install an SDK (for building components)
+
+#### Go SDK
 
 ```bash
 # Clone the SDK repository
@@ -80,6 +82,18 @@ cd flowctl-sdk
 
 # The SDK is a Go module - you'll use it as a dependency
 # See "Building Components" section below
+```
+
+#### JavaScript / TypeScript SDK
+
+```bash
+npm install @withobsrvr/js-flowctl-sdk
+
+# Optional focused packages
+npm install @withobsrvr/js-flowctl-source
+npm install @withobsrvr/js-flowctl-processor
+npm install @withobsrvr/js-flowctl-consumer
+npm install @withobsrvr/js-flowctl-stellar
 ```
 
 ## Core Concepts
@@ -92,19 +106,19 @@ Components are **separate programs** that do the actual data processing:
 - Produce data for the pipeline
 - Examples: Stellar ledger streams, Kafka consumers, API pollers
 - No inputs, only outputs
-- Built using `flowctl-sdk/pkg/source`
+- Built using `flowctl-sdk/pkg/source` in Go, or `@withobsrvr/js-flowctl-sdk` / `@withobsrvr/js-flowctl-source` in JS/TS
 
 #### Processors (Data Transformers)
 - Transform data as it flows through
 - Examples: Event extractors, filters, aggregators
 - Receive input from sources or other processors
-- Built using `flowctl-sdk/pkg/processor`
+- Built using `flowctl-sdk/pkg/processor` in Go, or `@withobsrvr/js-flowctl-sdk` / `@withobsrvr/js-flowctl-processor` in JS/TS
 
 #### Sinks (Data Consumers)
 - Consume data (terminal nodes)
 - Examples: PostgreSQL, webhooks, file writers
 - Receive input from sources or processors
-- Built using `flowctl-sdk/pkg/consumer` (legacy) or `flowctl-sdk/pkg/sink`
+- Built using `flowctl-sdk/pkg/consumer` (legacy) or `flowctl-sdk/pkg/sink` in Go, or `@withobsrvr/js-flowctl-sdk` / `@withobsrvr/js-flowctl-consumer` in JS/TS
 
 ### Pipeline Configuration
 

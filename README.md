@@ -220,11 +220,18 @@ For auto-resolved component refs in `type:`:
 
 If you do not want auto-download/resolution, use an explicit local binary path with `command:`.
 
-To build your own components, use the [flowctl-sdk](https://github.com/withObsrvr/flowctl-sdk) which provides:
+To build your own components, you now have two SDK options:
+
+- **Go**: [flowctl-sdk](https://github.com/withObsrvr/flowctl-sdk)
+- **JavaScript / TypeScript**: [js-flowctl-sdk](https://github.com/withObsrvr/js-flowctl-sdk) (`npm install @withobsrvr/js-flowctl-sdk`)
+
+Both SDKs provide:
 - Component registration and health checks
 - Automatic heartbeat management
 - gRPC streaming infrastructure
 - Standardized configuration patterns
+
+The JavaScript SDK also includes a working `flowctl` process-mode end-to-end example for non-Go teams.
 
 **Learn more:** [Getting Started Guide](examples/getting-started/README.md) | [Architecture Details](docs/architecture.md)
 
