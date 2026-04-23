@@ -2,6 +2,21 @@
 
 This guide covers building custom sources, processors, and sinks using the flowctl-sdk.
 
+If you are specifically building **processors**, read this first:
+
+- [`docs/BUILDING_PROCESSORS.md`](./BUILDING_PROCESSORS.md) — focused guide for processor authors
+- [`docs/REFERENCE_PROCESSORS.md`](./REFERENCE_PROCESSORS.md) — the initial reference processor set for the flagship cycle
+
+Those documents make the intended path explicit:
+
+```text
+Prototype in nebu
+  ↓
+stabilize schema and behavior
+  ↓
+promote to a production-ready flowctl processor
+```
+
 ## Table of Contents
 
 - [Overview](#overview)

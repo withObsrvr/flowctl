@@ -46,7 +46,7 @@ This directory contains example pipeline configurations demonstrating various fl
 → Start with [Getting Started Guide](getting-started/README.md)
 
 **"I want to build a custom pipeline"**
-→ Study the [Building Components Guide](../docs/building-components.md) and see the [Contract Events Pipeline](https://github.com/withObsrvr/flowctl-sdk/tree/main/examples/contract-events-pipeline) for a real working example
+→ Study the [Building Components Guide](../docs/building-components.md), the focused [Building Processors Guide](../docs/BUILDING_PROCESSORS.md), and see the [Contract Events Pipeline](https://github.com/withObsrvr/flowctl-sdk/tree/main/examples/contract-events-pipeline) for a real working example
 
 **"I want to see a real production pipeline"**
 → Check out the [Contract Events Pipeline](https://github.com/withObsrvr/flowctl-sdk/tree/main/examples/contract-events-pipeline) - a complete working pipeline with Stellar source, processor, and PostgreSQL consumer
@@ -166,6 +166,7 @@ spec:
 - **[Main README](../README.md)** - flowctl overview and installation
 - **[Configuration Guide](../docs/configuration.md)** - Complete schema reference
 - **[Building Components Guide](../docs/building-components.md)** - How to build sources, processors, sinks
+- **[Building Processors Guide](../docs/BUILDING_PROCESSORS.md)** - How to prototype in nebu and graduate processors into flowctl
 - **[Getting Started](getting-started/README.md)** - Comprehensive beginner guide
 
 ### Real-World Examples
@@ -191,7 +192,7 @@ spec:
 
 **Intermediate:**
 1. Read [Building Components Guide](../docs/building-components.md)
-2. Build a simple source or sink
+2. Build a simple processor, source, or sink
 3. Create your own pipeline based on the template above
 
 **Advanced:**
