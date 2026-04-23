@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR=$(pwd)
 TMP_DIR=$(mktemp -d)
 DUCKDB_PID=""
 POSTGRES_PID=""
 POSTGRES_CONTAINER="flowctl-smoke-postgres"
 
+stop_component_processes() {
+  pkill -f '/\.flowctl/components/(duckdb-consumer|postgres-consumer|contract-events-processor|stellar-live-source)/.*/component' >/dev/null 2>&1 || true
+}
+
 cleanup() {
   if [[ -n "${DUCKDB_PID}" ]]; then kill "${DUCKDB_PID}" >/dev/null 2>&1 || true; fi
   if [[ -n "${POSTGRES_PID}" ]]; then kill "${POSTGRES_PID}" >/dev/null 2>&1 || true; fi
+  stop_component_processes
   docker rm -f "${POSTGRES_CONTAINER}" >/dev/null 2>&1 || true
   rm -rf "${TMP_DIR}"
 }
@@ -21,6 +25,77 @@ need() {
 
 need go
 need make
+
+wait_for_control_plane() {
+  local port="$1"
+  local timeout_seconds="${2:-120}"
+  local start_time
+  start_time=$(date +%s)
+
+  while true; do
+    if ./bin/flowctl status --control-plane-address 127.0.0.1 --control-plane-port "$port" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      echo "timed out waiting for control plane on port $port" >&2
+      return 1
+    fi
+
+    sleep 2
+  done
+}
+
+wait_for_duckdb_unlock() {
+  local db_path="$1"
+  local timeout_seconds="${2:-120}"
+  local start_time
+  start_time=$(date +%s)
+
+  while true; do
+    if command -v lsof >/dev/null 2>&1; then
+      if ! lsof "$db_path" >/dev/null 2>&1; then
+        return 0
+      fi
+    elif command -v fuser >/dev/null 2>&1; then
+      if ! fuser "$db_path" >/dev/null 2>&1; then
+        return 0
+      fi
+    else
+      if ! pgrep -f '/\.flowctl/components/duckdb-consumer/.*/component' >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      echo "timed out waiting for DuckDB lock to clear: $db_path" >&2
+      return 1
+    fi
+
+    sleep 2
+  done
+}
+
+wait_for_log_pattern() {
+  local file_path="$1"
+  local pattern="$2"
+  local timeout_seconds="${3:-120}"
+  local start_time
+  start_time=$(date +%s)
+
+  while true; do
+    if [[ -f "$file_path" ]] && grep -q "$pattern" "$file_path"; then
+      return 0
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      echo "timed out waiting for log pattern '$pattern' in $file_path" >&2
+      return 1
+    fi
+
+    sleep 2
+  done
+}
 
 query_duckdb() {
   local db_path="$1"
@@ -79,15 +154,16 @@ perl -0pi -e "s#\./stellar-pipeline\.duckdb#${TMP_DIR}/stellar-pipeline.duckdb#g
 echo "==> DuckDB quickstart smoke"
 nohup ./bin/flowctl run --control-plane-port 9090 --no-persistence "${TMP_DIR}/stellar-pipeline.yaml" >"${TMP_DIR}/duckdb.log" 2>&1 &
 DUCKDB_PID=$!
-sleep 25
-./bin/flowctl status --control-plane-address 127.0.0.1 --control-plane-port 9090 >/dev/null
+wait_for_control_plane 9090 180
 ./bin/flowctl processors list --endpoint 127.0.0.1:9090 >/dev/null
 ./bin/flowctl processors find --input stellar.ledger.v1 --endpoint 127.0.0.1:9090 >/dev/null
 ./bin/flowctl processors find --output stellar.contract.events.v1 --endpoint 127.0.0.1:9090 >/dev/null
+wait_for_log_pattern "${TMP_DIR}/duckdb.log" "Stored [0-9][0-9]* contract events" 180
 kill "${DUCKDB_PID}" >/dev/null 2>&1 || true
 wait "${DUCKDB_PID}" || true
 DUCKDB_PID=""
-sleep 2
+stop_component_processes
+wait_for_duckdb_unlock "${TMP_DIR}/stellar-pipeline.duckdb" 180
 
 count=$(query_duckdb "${TMP_DIR}/stellar-pipeline.duckdb" "SELECT COUNT(*) FROM contract_events;")
 if [[ -z "${count}" || "${count}" == "0" ]]; then
@@ -109,11 +185,18 @@ if command -v docker >/dev/null 2>&1; then
   ./bin/flowctl init --non-interactive --network testnet --destination postgres -o "${TMP_DIR}/postgres-pipeline.yaml" >/dev/null
   nohup ./bin/flowctl run --control-plane-port 9091 --no-persistence "${TMP_DIR}/postgres-pipeline.yaml" >"${TMP_DIR}/postgres.log" 2>&1 &
   POSTGRES_PID=$!
-  sleep 25
-  ./bin/flowctl status --control-plane-address 127.0.0.1 --control-plane-port 9091 >/dev/null
+  wait_for_control_plane 9091 180
+  for _ in $(seq 1 90); do
+    pg_count=$(docker exec "${POSTGRES_CONTAINER}" psql -U postgres -d stellar_events -tAc "SELECT COUNT(*) FROM contract_events;" 2>/dev/null || echo 0)
+    if [[ -n "${pg_count}" && "${pg_count}" != "0" ]]; then
+      break
+    fi
+    sleep 2
+  done
   kill "${POSTGRES_PID}" >/dev/null 2>&1 || true
   wait "${POSTGRES_PID}" || true
   POSTGRES_PID=""
+  stop_component_processes
 
   pg_count=$(docker exec "${POSTGRES_CONTAINER}" psql -U postgres -d stellar_events -tAc "SELECT COUNT(*) FROM contract_events;")
   if [[ -z "${pg_count}" || "${pg_count}" == "0" ]]; then

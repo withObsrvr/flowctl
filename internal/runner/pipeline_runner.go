@@ -624,6 +624,7 @@ func (r *PipelineRunner) syncEmbeddedControlPlaneEndpoint() error {
 
 	r.config.ControlPlaneAddress = host
 	r.config.ControlPlanePort = port
+	r.updatePipelineControlPlaneEndpoint(endpoint)
 
 	// Recreate the orchestrator so components receive the real endpoint,
 	// especially when the requested port was 0 and the OS picked a free port.
@@ -648,6 +649,30 @@ func (r *PipelineRunner) syncEmbeddedControlPlaneEndpoint() error {
 }
 
 // waitForControlPlaneReady waits for the control plane to be ready
+func (r *PipelineRunner) updatePipelineControlPlaneEndpoint(endpoint string) {
+	updateEnv := func(comp *model.Component) {
+		if comp.Env == nil {
+			comp.Env = make(map[string]string)
+		}
+		if _, enabled := comp.Env["ENABLE_FLOWCTL"]; enabled || len(comp.Command) > 0 || comp.Type != "" || comp.Image != "" {
+			comp.Env["FLOWCTL_ENDPOINT"] = endpoint
+		}
+	}
+
+	for i := range r.pipeline.Spec.Sources {
+		updateEnv(&r.pipeline.Spec.Sources[i])
+	}
+	for i := range r.pipeline.Spec.Processors {
+		updateEnv(&r.pipeline.Spec.Processors[i])
+	}
+	for i := range r.pipeline.Spec.Sinks {
+		updateEnv(&r.pipeline.Spec.Sinks[i])
+	}
+	for i := range r.pipeline.Spec.Pipelines {
+		updateEnv(&r.pipeline.Spec.Pipelines[i])
+	}
+}
+
 func (r *PipelineRunner) waitForControlPlaneReady() error {
 	timeout := time.After(30 * time.Second)
 	ticker := time.NewTicker(100 * time.Millisecond)

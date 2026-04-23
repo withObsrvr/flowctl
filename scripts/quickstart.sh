@@ -14,9 +14,9 @@ Usage:
   ./scripts/quickstart.sh [options]
 
 Options:
-  --network <testnet|mainnet>        Network to use (default: testnet)
-  --destination <duckdb|postgres|csv> Destination to use (default: duckdb)
-  --output <file>                    Output pipeline file (default: stellar-pipeline.yaml)
+  --network <testnet|mainnet>         Network to use (default: testnet)
+  --destination <duckdb|postgres>     Destination to use (default: duckdb)
+  --output <file>                     Output pipeline file (default: stellar-pipeline.yaml)
   --run                              Run the pipeline after generating and validating it
   -h, --help                         Show this help
 
@@ -56,6 +56,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${DESTINATION}" != "duckdb" && "${DESTINATION}" != "postgres" ]]; then
+  echo "Unsupported destination: ${DESTINATION} (supported: duckdb, postgres)" >&2
+  exit 1
+fi
 
 if [[ ! -f "go.mod" || ! -f "Makefile" ]]; then
   echo "Run this script from the repository root." >&2
