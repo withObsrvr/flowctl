@@ -58,3 +58,32 @@ jobs:
 
       - name: Run test suite
         run: make test
+
+  # smoke:
+  #   name: README smoke tests
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 25
+
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+
+  #     - name: Set up Go
+  #       uses: actions/setup-go@v5
+  #       with:
+  #         go-version-file: go.mod
+  #         cache: true
+
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.x'
+
+  #     - name: Install DuckDB Python package
+  #       run: python3 -m pip install duckdb
+
+  #     - name: Download dependencies
+  #       run: go mod download
+
+  #     - name: Run README smoke tests
+  #       run: ./scripts/smoke-readmes.sh

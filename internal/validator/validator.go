@@ -56,8 +56,10 @@ func (v *Validator) Validate() *ValidationResult {
 
 	// Run all validation checks
 	v.validateMetadata(result)
+	v.validateDriver(result)
 	v.validateComponents(result)
 	v.validateDuplicateIDs(result)
+	v.validateComponentDetails(result)
 	v.validatePorts(result)
 	v.validateCommands(result)
 	v.validateProcessorChain(result)
@@ -76,6 +78,30 @@ func (v *Validator) validateMetadata(result *ValidationResult) {
 			Field:   "metadata.name",
 			Message: "Pipeline name is required",
 			Fix:     "Add a name to the pipeline metadata",
+		})
+	}
+}
+
+func (v *Validator) validateDriver(result *ValidationResult) {
+	if v.pipeline.Spec.Driver == "" {
+		return
+	}
+
+	validDrivers := map[string]bool{
+		"process":    true,
+		"container":  true,
+		"docker":     true,
+		"kubernetes": true,
+		"k8s":        true,
+		"nomad":      true,
+		"local":      true,
+	}
+
+	if !validDrivers[v.pipeline.Spec.Driver] {
+		result.Errors = append(result.Errors, ValidationError{
+			Field:   "spec.driver",
+			Message: fmt.Sprintf("Invalid driver %q", v.pipeline.Spec.Driver),
+			Fix:     "Use one of: process, container, docker, kubernetes, k8s, nomad, local",
 		})
 	}
 }
@@ -153,6 +179,76 @@ func (v *Validator) validateDuplicateIDs(result *ValidationResult) {
 			})
 		}
 		seen[sink.ID] = "sink"
+	}
+}
+
+func (v *Validator) validateComponentDetails(result *ValidationResult) {
+	for _, source := range v.pipeline.Spec.Sources {
+		if source.HealthCheck != "" && source.HealthPort == 0 {
+			result.Errors = append(result.Errors, ValidationError{
+				Field:   fmt.Sprintf("spec.sources[%s].health_port", source.ID),
+				Message: fmt.Sprintf("Source %q has health_check but no health_port specified", source.ID),
+				Fix:     "Add health_port or remove health_check",
+			})
+		}
+	}
+
+	knownInputs := make(map[string]bool)
+	for _, source := range v.pipeline.Spec.Sources {
+		knownInputs[source.ID] = true
+	}
+
+	for _, proc := range v.pipeline.Spec.Processors {
+		if proc.Replicas < 0 {
+			result.Errors = append(result.Errors, ValidationError{
+				Field:   fmt.Sprintf("spec.processors[%s].replicas", proc.ID),
+				Message: fmt.Sprintf("Processor %q replicas cannot be negative", proc.ID),
+				Fix:     "Set replicas to 0 or a positive integer",
+			})
+		}
+		if len(proc.Inputs) == 0 {
+			result.Errors = append(result.Errors, ValidationError{
+				Field:   fmt.Sprintf("spec.processors[%s].inputs", proc.ID),
+				Message: fmt.Sprintf("Processor %q must have at least one input", proc.ID),
+				Fix:     "Connect the processor to a source or upstream processor",
+			})
+		}
+		for _, input := range proc.Inputs {
+			if !knownInputs[input] {
+				result.Errors = append(result.Errors, ValidationError{
+					Field:   fmt.Sprintf("spec.processors[%s].inputs", proc.ID),
+					Message: fmt.Sprintf("Processor %q references unknown input %q", proc.ID, input),
+					Fix:     "Use an existing source or processor ID in inputs",
+				})
+			}
+		}
+		knownInputs[proc.ID] = true
+	}
+
+	for _, sink := range v.pipeline.Spec.Sinks {
+		if sink.Replicas < 0 {
+			result.Errors = append(result.Errors, ValidationError{
+				Field:   fmt.Sprintf("spec.sinks[%s].replicas", sink.ID),
+				Message: fmt.Sprintf("Sink %q replicas cannot be negative", sink.ID),
+				Fix:     "Set replicas to 0 or a positive integer",
+			})
+		}
+		if len(sink.Inputs) == 0 {
+			result.Errors = append(result.Errors, ValidationError{
+				Field:   fmt.Sprintf("spec.sinks[%s].inputs", sink.ID),
+				Message: fmt.Sprintf("Sink %q must have at least one input", sink.ID),
+				Fix:     "Connect the sink to a source or processor",
+			})
+		}
+		for _, input := range sink.Inputs {
+			if !knownInputs[input] {
+				result.Errors = append(result.Errors, ValidationError{
+					Field:   fmt.Sprintf("spec.sinks[%s].inputs", sink.ID),
+					Message: fmt.Sprintf("Sink %q references unknown input %q", sink.ID, input),
+					Fix:     "Use an existing source or processor ID in inputs",
+				})
+			}
+		}
 	}
 }
 

@@ -9,7 +9,7 @@ This directory contains example pipeline configurations demonstrating various fl
 **Get running immediately:**
 
 1. **[Quickstart Guide](quickstart/README.md)** ⭐ **Fastest Start!**
-   - Create a pipeline with `flowctl init`
+   - Run `./scripts/quickstart.sh` or create a pipeline with `flowctl init`
    - Auto-download components from Docker Hub
    - Run your first Stellar data pipeline
    - Sample pipelines for testnet/mainnet
@@ -72,7 +72,7 @@ This directory contains example pipeline configurations demonstrating various fl
 
 **Use with:**
 ```bash
-./bin/flowctl sandbox start --services examples/sandbox.yaml --pipeline examples/sandbox-pipeline.yaml
+./bin/flowctl sandbox start --services examples/sandbox.yaml --pipeline <your-pipeline.yaml>
 ```
 
 ## 🏗️ Building Custom Pipelines
@@ -150,7 +150,7 @@ spec:
 
 ```bash
 # Validate configuration
-./bin/flowctl run --dry-run my-pipeline.yaml
+./bin/flowctl validate my-pipeline.yaml
 
 # Run pipeline
 ./bin/flowctl run my-pipeline.yaml
@@ -251,7 +251,7 @@ processors:
 ./bin/flowctl run pipeline.yaml 2>&1 | grep "component-id"
 
 # Validate before running
-./bin/flowctl run --dry-run pipeline.yaml
+./bin/flowctl validate pipeline.yaml
 
 # Check component health while running
 curl http://localhost:8088/health

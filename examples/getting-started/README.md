@@ -147,13 +147,14 @@ Components connect to the control plane automatically when `ENABLE_FLOWCTL=true`
 
 ## Your First Pipeline
 
-Let's walk through understanding a simple pipeline. We'll use the `minimal.yaml` example.
+Let's walk through understanding a simple pipeline. We'll use the generated quickstart pipeline shape shown below.
 
 ### Step 1: Examine the Configuration
 
 ```bash
 cd /path/to/flowctl
-cat examples/minimal.yaml
+./bin/flowctl init --non-interactive --network testnet --destination duckdb -o /tmp/stellar-pipeline.yaml
+cat /tmp/stellar-pipeline.yaml
 ```
 
 You'll see:
@@ -162,42 +163,44 @@ You'll see:
 apiVersion: flowctl/v1
 kind: Pipeline
 metadata:
-  name: minimal-pipeline
-  description: A minimal pipeline demonstrating basic source->processor->sink flow
+  name: stellar-pipeline
+  description: Process stellar contract events on testnet
 
 spec:
   driver: process
 
   sources:
-    - id: mock-source
-      command: ["sh", "-c", "while true; do echo '{...}'; sleep 1; done"]
-      env:
-        LOG_LEVEL: "info"
+    - id: stellar-source
+      type: stellar-live-source@v1.0.0
+      config:
+        network_passphrase: "Test SDF Network ; September 2015"
+        backend_type: RPC
+        rpc_endpoint: https://soroban-testnet.stellar.org
 
   processors:
-    - id: pass-through
-      command: ["sh", "-c", "while read line; do echo \"[PROCESSED] $line\"; done"]
-      inputs: ["mock-source"]
-      env:
-        LOG_LEVEL: "info"
+    - id: contract-events
+      type: contract-events-processor@v1.0.0
+      config:
+        network_passphrase: "Test SDF Network ; September 2015"
+      inputs: ["stellar-source"]
 
   sinks:
-    - id: stdout-sink
-      command: ["sh", "-c", "while read line; do echo \"[OUTPUT] $line\"; done"]
-      inputs: ["pass-through"]
-      env:
-        LOG_LEVEL: "info"
+    - id: duckdb-sink
+      type: duckdb-consumer@v1.0.0
+      config:
+        database_path: ./stellar-pipeline.duckdb
+      inputs: ["contract-events"]
 ```
 
 **Understanding the flow:**
-1. `mock-source` generates JSON data every second
-2. `pass-through` receives data, adds `[PROCESSED]` prefix
-3. `stdout-sink` receives processed data, adds `[OUTPUT]` prefix
+1. `stellar-source` streams Stellar ledgers from RPC
+2. `contract-events` extracts Soroban contract events
+3. `duckdb-sink` stores the extracted events in DuckDB
 
 ### Step 2: Run the Pipeline
 
 ```bash
-./bin/flowctl run examples/minimal.yaml
+./bin/flowctl run /tmp/stellar-pipeline.yaml
 ```
 
 **What happens:**
@@ -207,25 +210,18 @@ spec:
 4. Monitors component health
 5. Logs all activity
 
-You'll see output like:
-```
-[OUTPUT] [PROCESSED] {"timestamp": "2024-01-15T10:30:00Z", "value": "12345"}
-[OUTPUT] [PROCESSED] {"timestamp": "2024-01-15T10:30:01Z", "value": "67890"}
-```
+You'll see output like component startup logs followed by contract event extraction and sink writes.
 
 ### Step 3: Stop the Pipeline
 
 Press `Ctrl+C` to stop all components gracefully.
 
-### Step 4: Understand the Limitations
+### Step 4: Understand the Components
 
-**Important:** The minimal example uses **shell commands for demonstration only**.
-
-Real pipelines need **actual component binaries** built with flowctl-sdk because:
-- Shell commands don't register with the control plane
-- No health checks or metrics
-- No proper error handling
-- Can't use typed Protobuf messages
+This quickstart uses real downloadable components, so it exercises the normal operator path:
+- components register with the control plane
+- health and status commands work
+- data is written to a real DuckDB file
 
 ## Building Real Components
 
@@ -590,10 +586,11 @@ sinks:
 ./bin/flowctl run pipeline.yaml
 
 # Validate without running
-./bin/flowctl run --dry-run pipeline.yaml
+./bin/flowctl validate pipeline.yaml
 
-# Translate to deployment format
-./bin/flowctl translate -f pipeline.yaml -o docker-compose
+# Translate image-based pipelines to deployment format
+# (the default `flowctl init` starter pipelines are meant to run directly with `flowctl run`)
+./bin/flowctl translate -f image-based-pipeline.yaml -o docker-compose
 
 # Check version
 ./bin/flowctl version

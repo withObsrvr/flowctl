@@ -19,7 +19,7 @@ spec:
         network_passphrase: "Test SDF Network ; September 2015"
         backend_type: RPC
         rpc_endpoint: https://soroban-testnet.stellar.org
-        start_ledger: 54000000
+        start_ledger: 2187805
 
   processors:
     - id: contract-events
@@ -36,5 +36,5 @@ spec:
         postgres_port: "5432"
         postgres_db: stellar_events
         postgres_user: postgres
-        postgres_password: "${POSTGRES_PASSWORD:-postgres}"
+        postgres_password: "postgres"
       inputs: ["contract-events"]

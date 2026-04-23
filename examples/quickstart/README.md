@@ -6,7 +6,10 @@ Get your first Stellar data pipeline running in 2 minutes.
 
 - **Go 1.21+** - [Install Go](https://go.dev/doc/install)
 - **Git** - For cloning the repository
-- **Docker** - For running containerized components
+- Internet access to download components on first run
+- Optional: `duckdb` CLI if you want to query the DuckDB file from your shell
+
+> The default DuckDB quickstart uses `driver: process` and downloads component binaries directly from OCI images. You do **not** need a local Docker daemon for this path.
 
 ## Installation
 
@@ -20,6 +23,9 @@ make build
 
 # Verify installation
 ./bin/flowctl version
+
+# Optional: generate + validate a starter pipeline automatically
+./scripts/quickstart.sh
 ```
 
 ## Create Your First Pipeline
@@ -35,7 +41,6 @@ Follow the prompts:
 2. **Destination**: Select where to store data:
    - `duckdb` - Embedded analytics database (easiest)
    - `postgres` - PostgreSQL database
-   - `csv` - CSV files
 
 This creates a `stellar-pipeline.yaml` file.
 
@@ -81,13 +86,7 @@ duckdb stellar-pipeline.duckdb "SELECT * FROM contract_events LIMIT 5"
 psql -h localhost -U postgres -d stellar_events -c "SELECT * FROM contract_events LIMIT 5"
 ```
 
-### CSV
-
-```bash
-# Check the CSV files
-ls -la data/
-head data/contract_events.csv
-```
+> Note: this path requires the `postgres-consumer@v1.0.0` component image to be available in your registry. If it is not published yet, use the DuckDB quickstart path.
 
 ## Sample Pipelines
 
@@ -119,7 +118,7 @@ spec:
         network_passphrase: "Test SDF Network ; September 2015"
         backend_type: RPC
         rpc_endpoint: https://soroban-testnet.stellar.org
-        start_ledger: 54000000
+        start_ledger: 2187805
 
   processors:
     - id: contract-events
@@ -147,15 +146,20 @@ spec:
 
 ### "Component not found" or "Image pull failed"
 
-Check Docker is running:
+Check whether the component was cached locally:
 ```bash
-docker ps
+find ~/.flowctl -maxdepth 4 -type f | head
 ```
 
-Manually pull the image:
+Re-run with debug logging to see the exact pull failure:
 ```bash
-docker pull docker.io/withobsrvr/stellar-live-source:v1.0.0
+./bin/flowctl run stellar-pipeline.yaml --log-level=debug
 ```
+
+Common causes:
+- no network access
+- registry rate limiting or temporary registry errors
+- a typo in the component reference
 
 ### "Connection refused" to control plane
 
@@ -184,7 +188,7 @@ ls -la .
 
 - **Add processors**: Transform data with processors between source and sink
 - **Monitor pipelines**: Use `flowctl dashboard` for real-time monitoring
-- **Deploy to production**: Use `flowctl translate` for Docker Compose or Kubernetes
+- **Deploy to production**: for image-based pipelines, use `flowctl translate`; `flowctl init` starter pipelines are primarily intended for direct `flowctl run` process execution
 
 ## Resources
 

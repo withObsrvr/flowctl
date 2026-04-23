@@ -17,7 +17,7 @@ The init command guides you through creating a v1 pipeline configuration with au
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--network` | string | (interactive) | Stellar network: `testnet` or `mainnet` |
-| `--destination` | string | (interactive) | Sink type: `postgres`, `duckdb`, or `csv` |
+| `--destination` | string | (interactive) | Sink type: `postgres` or `duckdb` |
 | `--output`, `-o` | string | `stellar-pipeline.yaml` | Output filename |
 | `--non-interactive` | bool | false | Skip interactive prompts (requires `--network` and `--destination`) |
 | `-h`, `--help` | bool | false | Show help |
@@ -46,7 +46,6 @@ The wizard prompts for:
 2. **Destination Selection**
    - `duckdb` - Embedded analytics database (easiest setup)
    - `postgres` - PostgreSQL database (production-ready)
-   - `csv` - CSV file output (simplest format)
 
 ## Non-Interactive Mode
 
@@ -87,7 +86,6 @@ spec:
         network_passphrase: "Test SDF Network ; September 2015"
         backend_type: RPC
         rpc_endpoint: https://soroban-testnet.stellar.org
-        start_ledger: 54000000
 
   processors:
     - id: contract-events
@@ -110,12 +108,6 @@ spec:
 ./bin/flowctl init --non-interactive --network mainnet --destination postgres -o mainnet.yaml
 ```
 
-### Create a CSV Export Pipeline
-
-```bash
-./bin/flowctl init --non-interactive --network testnet --destination csv -o export.yaml
-```
-
 ## Component Auto-Download
 
 When you run a pipeline created by `flowctl init`, components are automatically downloaded from Docker Hub on first run.
@@ -127,7 +119,6 @@ When you run a pipeline created by `flowctl init`, components are automatically 
 | Stellar Live Source | `docker.io/withobsrvr/stellar-live-source:v1.0.0` | Source | Streams Stellar ledger data in real-time |
 | DuckDB Consumer | `docker.io/withobsrvr/duckdb-consumer:v1.0.0` | Sink | Writes data to embedded DuckDB database |
 | PostgreSQL Sink | `docker.io/withobsrvr/postgres-sink:v1.0.0` | Sink | Writes data to PostgreSQL database |
-| CSV Sink | `docker.io/withobsrvr/csv-sink:v1.0.0` | Sink | Writes data to CSV files |
 
 ### Registry Information
 
@@ -143,7 +134,6 @@ To pre-download components:
 docker pull docker.io/withobsrvr/stellar-live-source:v1.0.0
 docker pull docker.io/withobsrvr/duckdb-consumer:v1.0.0
 docker pull docker.io/withobsrvr/postgres-sink:v1.0.0
-docker pull docker.io/withobsrvr/csv-sink:v1.0.0
 ```
 
 ## Generated Configuration Structure
@@ -203,8 +193,8 @@ After creating a pipeline:
 # Run with debug logging
 ./bin/flowctl run stellar-pipeline.yaml --log-level=debug
 
-# Dry run (validate only)
-./bin/flowctl run --dry-run stellar-pipeline.yaml
+# Validate without running
+./bin/flowctl validate stellar-pipeline.yaml
 ```
 
 ## Next Steps

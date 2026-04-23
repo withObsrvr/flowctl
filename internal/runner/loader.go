@@ -100,6 +100,13 @@ func resolveComponent(ctx context.Context, comp *model.Component, resolver *comp
 	// Translate config to env vars
 	configEnv := components.TranslateConfig(comp.Config, resolvedComp.Metadata)
 
+	if len(comp.InputEventTypes) == 0 && len(resolvedComp.Metadata.Consumes) > 0 {
+		comp.InputEventTypes = append([]string(nil), resolvedComp.Metadata.Consumes...)
+	}
+	if len(comp.OutputEventTypes) == 0 && len(resolvedComp.Metadata.Produces) > 0 {
+		comp.OutputEventTypes = append([]string(nil), resolvedComp.Metadata.Produces...)
+	}
+
 	// Merge with explicit env vars (explicit takes precedence)
 	comp.Env = components.MergeEnv(configEnv, comp.Env)
 
