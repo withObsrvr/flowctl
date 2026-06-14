@@ -31,6 +31,9 @@ var serviceBucket = []byte("services")
 // pipelineRunBucket is the name of the bucket where pipeline run information is stored
 var pipelineRunBucket = []byte("pipeline_runs")
 
+// chunkRunBucket is the name of the bucket where historical chunk run information is stored.
+var chunkRunBucket = []byte("chunk_runs")
+
 // BoltDBStorage implements the ServiceStorage interface using BoltDB
 type BoltDBStorage struct {
 	db      *bolt.DB
@@ -66,7 +69,7 @@ func NewBoltDBStorage(opts *BoltOptions) *BoltDBStorage {
 	}
 
 	return &BoltDBStorage{
-		path: opts.Path,
+		path:    opts.Path,
 		options: opts,
 	}
 }
@@ -83,7 +86,7 @@ func (s *BoltDBStorage) Open() error {
 	// Open the database
 	opts := &bolt.Options{Timeout: DefaultBoltTimeout}
 	fileMode := DefaultBoltFileMode
-	
+
 	if s.options != nil {
 		if s.options.Timeout > 0 {
 			opts.Timeout = s.options.Timeout
@@ -92,7 +95,7 @@ func (s *BoltDBStorage) Open() error {
 			fileMode = s.options.FileMode
 		}
 	}
-	
+
 	db, err := bolt.Open(s.path, fileMode, opts)
 	if err != nil {
 		return fmt.Errorf("failed to open BoltDB: %w", err)
@@ -108,6 +111,10 @@ func (s *BoltDBStorage) Open() error {
 		_, err = tx.CreateBucketIfNotExists(pipelineRunBucket)
 		if err != nil {
 			return fmt.Errorf("failed to create pipeline_runs bucket: %w", err)
+		}
+		_, err = tx.CreateBucketIfNotExists(chunkRunBucket)
+		if err != nil {
+			return fmt.Errorf("failed to create chunk_runs bucket: %w", err)
 		}
 		return nil
 	})
@@ -513,6 +520,110 @@ func (s *BoltDBStorage) DeletePipelineRun(ctx context.Context, runID string) err
 			return fmt.Errorf("failed to delete pipeline run: %w", err)
 		}
 
+		return nil
+	})
+}
+
+// UpsertChunkRun creates or replaces a chunk run in the registry.
+func (s *BoltDBStorage) UpsertChunkRun(ctx context.Context, chunk *ChunkRunInfo) error {
+	logger.Debug("Upserting chunk run", zap.String("chunk_id", chunk.Chunk.ChunkId))
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(chunkRunBucket)
+		if b == nil {
+			return fmt.Errorf("chunk_runs bucket not found")
+		}
+
+		data, err := json.Marshal(chunk)
+		if err != nil {
+			return fmt.Errorf("failed to marshal chunk run: %w", err)
+		}
+
+		if err := b.Put([]byte(chunk.Chunk.ChunkId), data); err != nil {
+			return fmt.Errorf("failed to store chunk run: %w", err)
+		}
+		return nil
+	})
+}
+
+// GetChunkRun retrieves a chunk run by its ID.
+func (s *BoltDBStorage) GetChunkRun(ctx context.Context, chunkID string) (*ChunkRunInfo, error) {
+	logger.Debug("Getting chunk run", zap.String("chunk_id", chunkID))
+	var chunk *ChunkRunInfo
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(chunkRunBucket)
+		if b == nil {
+			return fmt.Errorf("chunk_runs bucket not found")
+		}
+
+		data := b.Get([]byte(chunkID))
+		if data == nil {
+			return ErrChunkRunNotFound{ChunkID: chunkID}
+		}
+
+		var c ChunkRunInfo
+		if err := json.Unmarshal(data, &c); err != nil {
+			return fmt.Errorf("failed to unmarshal chunk run: %w", err)
+		}
+		chunk = &c
+		return nil
+	})
+	return chunk, err
+}
+
+// ListChunkRuns retrieves chunk runs, optionally filtered by pipeline run, component, and status.
+func (s *BoltDBStorage) ListChunkRuns(ctx context.Context, pipelineRunID string, componentID string, status flowctlpb.ChunkStatus, limit int32) ([]*ChunkRunInfo, error) {
+	logger.Debug("Listing chunk runs", zap.String("pipeline_run_id", pipelineRunID), zap.String("component_id", componentID), zap.Any("status", status), zap.Int32("limit", limit))
+	var chunks []*ChunkRunInfo
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(chunkRunBucket)
+		if b == nil {
+			return fmt.Errorf("chunk_runs bucket not found")
+		}
+
+		count := int32(0)
+		return b.ForEach(func(k, v []byte) error {
+			if limit > 0 && count >= limit {
+				return nil
+			}
+
+			var chunk ChunkRunInfo
+			if err := json.Unmarshal(v, &chunk); err != nil {
+				return fmt.Errorf("failed to unmarshal chunk run: %w", err)
+			}
+			if pipelineRunID != "" && chunk.Chunk.PipelineRunId != pipelineRunID {
+				return nil
+			}
+			if componentID != "" && chunk.Chunk.ComponentId != componentID {
+				return nil
+			}
+			if status != flowctlpb.ChunkStatus_CHUNK_STATUS_UNKNOWN && chunk.Chunk.Status != status {
+				return nil
+			}
+
+			chunks = append(chunks, &chunk)
+			count++
+			return nil
+		})
+	})
+	return chunks, err
+}
+
+// DeleteChunkRun removes a chunk run from the registry.
+func (s *BoltDBStorage) DeleteChunkRun(ctx context.Context, chunkID string) error {
+	logger.Debug("Deleting chunk run", zap.String("chunk_id", chunkID))
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(chunkRunBucket)
+		if b == nil {
+			return fmt.Errorf("chunk_runs bucket not found")
+		}
+
+		key := []byte(chunkID)
+		if b.Get(key) == nil {
+			return ErrChunkRunNotFound{ChunkID: chunkID}
+		}
+		if err := b.Delete(key); err != nil {
+			return fmt.Errorf("failed to delete chunk run: %w", err)
+		}
 		return nil
 	})
 }

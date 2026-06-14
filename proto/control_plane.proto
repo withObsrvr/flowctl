@@ -66,6 +66,30 @@ enum RunStatus {
   RUN_STATUS_STOPPED = 5;
 }
 
+// Historical chunk lifecycle status.
+enum ChunkStatus {
+  CHUNK_STATUS_UNKNOWN = 0;
+  CHUNK_STATUS_PLANNED = 1;
+  CHUNK_STATUS_DISPATCHED = 2;
+  CHUNK_STATUS_RUNNING = 3;
+  CHUNK_STATUS_COMPLETED = 4;
+  CHUNK_STATUS_VERIFIED = 5;
+  CHUNK_STATUS_FAILED = 6;
+  CHUNK_STATUS_RETRY_PENDING = 7;
+  CHUNK_STATUS_ABORTED = 8;
+}
+
+// Typed failure class reported by data-plane components.
+enum FailureClass {
+  FAILURE_CLASS_UNKNOWN = 0;
+  FAILURE_CLASS_RETRYABLE_INFRASTRUCTURE = 1;
+  FAILURE_CLASS_NON_RETRYABLE_DATA = 2;
+  FAILURE_CLASS_NON_RETRYABLE_SCHEMA = 3;
+  FAILURE_CLASS_VERIFICATION = 4;
+  FAILURE_CLASS_ALLOCATION_LOST = 5;
+  FAILURE_CLASS_OOM = 6;
+}
+
 // Metrics for a pipeline run
 message RunMetrics {
   int64 events_processed = 1;
@@ -135,6 +159,50 @@ message StopPipelineRunRequest {
   string run_id = 1;
 }
 
+// Historical chunk run record.
+message ChunkRun {
+  string chunk_id = 1;
+  string pipeline_run_id = 2;
+  string component_id = 3;
+  int64 chunk_start = 4;
+  int64 chunk_end = 5;
+  int32 attempt = 6;
+  ChunkStatus status = 7;
+  FailureClass failure_class = 8;
+  string phase = 9;
+  string error = 10;
+  string recommended_action = 11;
+  google.protobuf.Timestamp started_at = 12;
+  google.protobuf.Timestamp completed_at = 13;
+  google.protobuf.Timestamp verified_at = 14;
+  map<string, int64> row_counts = 15;
+  map<string, string> verification = 16;
+  map<string, string> metadata = 17;
+}
+
+// Upsert chunk run request.
+message UpsertChunkRunRequest {
+  ChunkRun chunk = 1;
+}
+
+// Get chunk run request.
+message GetChunkRunRequest {
+  string chunk_id = 1;
+}
+
+// List chunk runs request.
+message ListChunkRunsRequest {
+  string pipeline_run_id = 1;
+  string component_id = 2;
+  ChunkStatus status = 3;
+  int32 limit = 4;
+}
+
+// List chunk runs response.
+message ListChunkRunsResponse {
+  repeated ChunkRun chunks = 1;
+}
+
 // Control plane service definition
 service ControlPlane {
   // Register a new service with the control plane
@@ -155,4 +223,9 @@ service ControlPlane {
   rpc GetPipelineRun(GetPipelineRunRequest) returns (PipelineRun);
   rpc ListPipelineRuns(ListPipelineRunsRequest) returns (ListPipelineRunsResponse);
   rpc StopPipelineRun(StopPipelineRunRequest) returns (PipelineRun);
+
+  // Historical range chunk management
+  rpc UpsertChunkRun(UpsertChunkRunRequest) returns (ChunkRun);
+  rpc GetChunkRun(GetChunkRunRequest) returns (ChunkRun);
+  rpc ListChunkRuns(ListChunkRunsRequest) returns (ListChunkRunsResponse);
 } 

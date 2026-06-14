@@ -407,3 +407,53 @@ func TestControlPlaneWrapper_Register(t *testing.T) {
 		t.Fatalf("Heartbeat failed with returned ServiceId: %v", err)
 	}
 }
+
+func TestControlPlaneServer_ChunkRuns(t *testing.T) {
+	memStorage, cleanup := createTestStorage()
+	defer cleanup()
+
+	server := NewControlPlaneServer(memStorage)
+	wrapper := NewControlPlaneWrapper(server)
+	ctx := context.Background()
+
+	chunk, err := wrapper.UpsertChunkRun(ctx, &flowctlpb.UpsertChunkRunRequest{Chunk: &flowctlpb.ChunkRun{
+		PipelineRunId: "run-1",
+		ComponentId:   "bronze-history-loader",
+		ChunkStart:    30750003,
+		ChunkEnd:      31000002,
+		Status:        flowctlpb.ChunkStatus_CHUNK_STATUS_RUNNING,
+		Phase:         "ducklake_push",
+		RowCounts: map[string]int64{
+			"ledgers_row_v2": 250000,
+		},
+	}})
+	if err != nil {
+		t.Fatalf("UpsertChunkRun failed: %v", err)
+	}
+	if chunk.ChunkId == "" {
+		t.Fatal("expected generated chunk id")
+	}
+	if chunk.Attempt != 1 {
+		t.Fatalf("expected default attempt 1, got %d", chunk.Attempt)
+	}
+
+	got, err := wrapper.GetChunkRun(ctx, &flowctlpb.GetChunkRunRequest{ChunkId: chunk.ChunkId})
+	if err != nil {
+		t.Fatalf("GetChunkRun failed: %v", err)
+	}
+	if got.Phase != "ducklake_push" {
+		t.Fatalf("expected phase ducklake_push, got %q", got.Phase)
+	}
+
+	list, err := wrapper.ListChunkRuns(ctx, &flowctlpb.ListChunkRunsRequest{
+		PipelineRunId: "run-1",
+		ComponentId:   "bronze-history-loader",
+		Status:        flowctlpb.ChunkStatus_CHUNK_STATUS_RUNNING,
+	})
+	if err != nil {
+		t.Fatalf("ListChunkRuns failed: %v", err)
+	}
+	if len(list.Chunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(list.Chunks))
+	}
+}

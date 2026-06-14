@@ -675,6 +675,89 @@ func (s *ControlPlaneServer) StopPipelineRun(ctx context.Context, req *flowctlpb
 	return stoppedRun, nil
 }
 
+// UpsertChunkRun implements the UpsertChunkRun RPC.
+func (s *ControlPlaneServer) UpsertChunkRun(ctx context.Context, req *flowctlpb.UpsertChunkRunRequest) (*flowctlpb.ChunkRun, error) {
+	if s.storage == nil {
+		return nil, fmt.Errorf("storage not configured")
+	}
+	if req.Chunk == nil {
+		return nil, fmt.Errorf("chunk is required")
+	}
+
+	chunk := req.Chunk
+	if chunk.Attempt == 0 {
+		chunk.Attempt = 1
+	}
+	if chunk.ChunkId == "" {
+		chunk.ChunkId = fmt.Sprintf("%s:%s:%d-%d:%d", chunk.PipelineRunId, chunk.ComponentId, chunk.ChunkStart, chunk.ChunkEnd, chunk.Attempt)
+	}
+
+	if err := s.storage.UpsertChunkRun(ctx, &storage.ChunkRunInfo{Chunk: chunk}); err != nil {
+		logger.Error("Failed to upsert chunk run",
+			zap.String("chunk_id", chunk.ChunkId),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to upsert chunk run: %w", err)
+	}
+
+	logger.Debug("Chunk run upserted",
+		zap.String("chunk_id", chunk.ChunkId),
+		zap.String("pipeline_run_id", chunk.PipelineRunId),
+		zap.String("component_id", chunk.ComponentId),
+		zap.Int64("chunk_start", chunk.ChunkStart),
+		zap.Int64("chunk_end", chunk.ChunkEnd),
+		zap.String("status", chunk.Status.String()))
+
+	return chunk, nil
+}
+
+// GetChunkRun implements the GetChunkRun RPC.
+func (s *ControlPlaneServer) GetChunkRun(ctx context.Context, req *flowctlpb.GetChunkRunRequest) (*flowctlpb.ChunkRun, error) {
+	if s.storage == nil {
+		return nil, fmt.Errorf("storage not configured")
+	}
+
+	chunkInfo, err := s.storage.GetChunkRun(ctx, req.ChunkId)
+	if err != nil {
+		if storage.IsNotFound(err) {
+			return nil, fmt.Errorf("chunk run not found: %s", req.ChunkId)
+		}
+		logger.Error("Failed to get chunk run",
+			zap.String("chunk_id", req.ChunkId),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to get chunk run: %w", err)
+	}
+
+	return chunkInfo.Chunk, nil
+}
+
+// ListChunkRuns implements the ListChunkRuns RPC.
+func (s *ControlPlaneServer) ListChunkRuns(ctx context.Context, req *flowctlpb.ListChunkRunsRequest) (*flowctlpb.ListChunkRunsResponse, error) {
+	if s.storage == nil {
+		return &flowctlpb.ListChunkRunsResponse{Chunks: []*flowctlpb.ChunkRun{}}, nil
+	}
+
+	limit := req.Limit
+	if limit == 0 {
+		limit = 100
+	}
+
+	chunkInfos, err := s.storage.ListChunkRuns(ctx, req.PipelineRunId, req.ComponentId, req.Status, limit)
+	if err != nil {
+		logger.Error("Failed to list chunk runs",
+			zap.String("pipeline_run_id", req.PipelineRunId),
+			zap.String("component_id", req.ComponentId),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to list chunk runs: %w", err)
+	}
+
+	chunks := make([]*flowctlpb.ChunkRun, len(chunkInfos))
+	for i, chunkInfo := range chunkInfos {
+		chunks[i] = chunkInfo.Chunk
+	}
+
+	return &flowctlpb.ListChunkRunsResponse{Chunks: chunks}, nil
+}
+
 // ControlPlaneWrapper wraps ControlPlaneServer to implement the flowctlpb.ControlPlane interface
 // This is needed because flowctlpb and v1 have methods with the same names but different signatures
 type ControlPlaneWrapper struct {
@@ -783,6 +866,18 @@ func (w *ControlPlaneWrapper) ListPipelineRuns(ctx context.Context, req *flowctl
 
 func (w *ControlPlaneWrapper) StopPipelineRun(ctx context.Context, req *flowctlpb.StopPipelineRunRequest) (*flowctlpb.PipelineRun, error) {
 	return w.server.StopPipelineRun(ctx, req)
+}
+
+func (w *ControlPlaneWrapper) UpsertChunkRun(ctx context.Context, req *flowctlpb.UpsertChunkRunRequest) (*flowctlpb.ChunkRun, error) {
+	return w.server.UpsertChunkRun(ctx, req)
+}
+
+func (w *ControlPlaneWrapper) GetChunkRun(ctx context.Context, req *flowctlpb.GetChunkRunRequest) (*flowctlpb.ChunkRun, error) {
+	return w.server.GetChunkRun(ctx, req)
+}
+
+func (w *ControlPlaneWrapper) ListChunkRuns(ctx context.Context, req *flowctlpb.ListChunkRunsRequest) (*flowctlpb.ListChunkRunsResponse, error) {
+	return w.server.ListChunkRuns(ctx, req)
 }
 
 func copyStringMap(src map[string]string) map[string]string {
