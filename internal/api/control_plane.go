@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	gproto "google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -958,7 +959,7 @@ func mergeInt64Maps(base, updates map[string]int64) map[string]int64 {
 }
 
 func mergeChunkRun(existing, update *flowctlpb.ChunkRun) *flowctlpb.ChunkRun {
-	merged := *existing
+	merged := gproto.Clone(existing).(*flowctlpb.ChunkRun)
 	merged.ChunkId = update.ChunkId
 	merged.PipelineRunId = update.PipelineRunId
 	merged.ComponentId = update.ComponentId
@@ -992,7 +993,7 @@ func mergeChunkRun(existing, update *flowctlpb.ChunkRun) *flowctlpb.ChunkRun {
 	merged.RowCounts = mergeInt64Maps(existing.RowCounts, update.RowCounts)
 	merged.Verification = mergeStringMaps(existing.Verification, update.Verification)
 	merged.Metadata = mergeStringMaps(existing.Metadata, update.Metadata)
-	return &merged
+	return merged
 }
 
 // Helper functions to convert between v1 and flowctlpb types
