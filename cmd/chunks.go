@@ -82,7 +82,7 @@ var chunksListCmd = &cobra.Command{
 		fmt.Fprintln(w, "CHUNK ID\tCOMPONENT\tRANGE\tATTEMPT\tSTATUS\tFAILURE\tPHASE\tROWS")
 		for _, chunk := range resp.Chunks {
 			fmt.Fprintf(w, "%s\t%s\t%d-%d\t%d\t%s\t%s\t%s\t%d\n",
-				shortChunkID(chunk.ChunkId),
+				chunk.ChunkId,
 				chunk.ComponentId,
 				chunk.ChunkStart,
 				chunk.ChunkEnd,

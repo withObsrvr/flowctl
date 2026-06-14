@@ -581,9 +581,10 @@ func (s *BoltDBStorage) ListChunkRuns(ctx context.Context, pipelineRunID string,
 		}
 
 		count := int32(0)
-		return b.ForEach(func(k, v []byte) error {
+		cursor := b.Cursor()
+		for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
 			if limit > 0 && count >= limit {
-				return nil
+				break
 			}
 
 			var chunk ChunkRunInfo
@@ -591,19 +592,19 @@ func (s *BoltDBStorage) ListChunkRuns(ctx context.Context, pipelineRunID string,
 				return fmt.Errorf("failed to unmarshal chunk run: %w", err)
 			}
 			if pipelineRunID != "" && chunk.Chunk.PipelineRunId != pipelineRunID {
-				return nil
+				continue
 			}
 			if componentID != "" && chunk.Chunk.ComponentId != componentID {
-				return nil
+				continue
 			}
 			if status != flowctlpb.ChunkStatus_CHUNK_STATUS_UNKNOWN && chunk.Chunk.Status != status {
-				return nil
+				continue
 			}
 
 			chunks = append(chunks, &chunk)
 			count++
-			return nil
-		})
+		}
+		return nil
 	})
 	return chunks, err
 }

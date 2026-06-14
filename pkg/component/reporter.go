@@ -14,7 +14,10 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-const defaultHeartbeatInterval = 10 * time.Second
+const (
+	defaultHeartbeatInterval = 10 * time.Second
+	defaultDialTimeout       = 5 * time.Second
+)
 
 // Config describes the flowctl control-plane connection advertised to a data-plane component.
 type Config struct {
@@ -73,7 +76,14 @@ func NewReporter(ctx context.Context, cfg Config) (*Reporter, error) {
 		return nil, fmt.Errorf("FLOWCTL_COMPONENT_ID is required when ENABLE_FLOWCTL=true")
 	}
 
-	conn, err := grpc.DialContext(ctx, cfg.Endpoint,
+	dialCtx := ctx
+	cancel := func() {}
+	if _, ok := ctx.Deadline(); !ok {
+		dialCtx, cancel = context.WithTimeout(ctx, defaultDialTimeout)
+	}
+	defer cancel()
+
+	conn, err := grpc.DialContext(dialCtx, cfg.Endpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
 	)
