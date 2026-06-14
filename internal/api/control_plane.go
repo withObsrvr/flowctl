@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
+	gproto "google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -675,6 +677,104 @@ func (s *ControlPlaneServer) StopPipelineRun(ctx context.Context, req *flowctlpb
 	return stoppedRun, nil
 }
 
+// UpsertChunkRun implements the UpsertChunkRun RPC.
+func (s *ControlPlaneServer) UpsertChunkRun(ctx context.Context, req *flowctlpb.UpsertChunkRunRequest) (*flowctlpb.ChunkRun, error) {
+	if s.storage == nil {
+		return nil, fmt.Errorf("storage not configured")
+	}
+	if req.Chunk == nil {
+		return nil, fmt.Errorf("chunk is required")
+	}
+
+	chunk := req.Chunk
+	if chunk.PipelineRunId == "" {
+		return nil, fmt.Errorf("chunk pipeline_run_id is required")
+	}
+	if chunk.ComponentId == "" {
+		return nil, fmt.Errorf("chunk component_id is required")
+	}
+	if chunk.ChunkStart > chunk.ChunkEnd {
+		return nil, fmt.Errorf("chunk_start must be less than or equal to chunk_end")
+	}
+	if chunk.Attempt == 0 {
+		chunk.Attempt = 1
+	}
+	if chunk.ChunkId == "" {
+		chunk.ChunkId = fmt.Sprintf("%s:%s:%d-%d:%d", chunk.PipelineRunId, chunk.ComponentId, chunk.ChunkStart, chunk.ChunkEnd, chunk.Attempt)
+	}
+
+	if existing, err := s.storage.GetChunkRun(ctx, chunk.ChunkId); err == nil && existing != nil && existing.Chunk != nil {
+		chunk = mergeChunkRun(existing.Chunk, chunk)
+	} else if err != nil && !storage.IsNotFound(err) {
+		return nil, fmt.Errorf("failed to check existing chunk run: %w", err)
+	}
+
+	if err := s.storage.UpsertChunkRun(ctx, &storage.ChunkRunInfo{Chunk: chunk}); err != nil {
+		logger.Error("Failed to upsert chunk run",
+			zap.String("chunk_id", chunk.ChunkId),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to upsert chunk run: %w", err)
+	}
+
+	logger.Debug("Chunk run upserted",
+		zap.String("chunk_id", chunk.ChunkId),
+		zap.String("pipeline_run_id", chunk.PipelineRunId),
+		zap.String("component_id", chunk.ComponentId),
+		zap.Int64("chunk_start", chunk.ChunkStart),
+		zap.Int64("chunk_end", chunk.ChunkEnd),
+		zap.String("status", chunk.Status.String()))
+
+	return chunk, nil
+}
+
+// GetChunkRun implements the GetChunkRun RPC.
+func (s *ControlPlaneServer) GetChunkRun(ctx context.Context, req *flowctlpb.GetChunkRunRequest) (*flowctlpb.ChunkRun, error) {
+	if s.storage == nil {
+		return nil, fmt.Errorf("storage not configured")
+	}
+
+	chunkInfo, err := s.storage.GetChunkRun(ctx, req.ChunkId)
+	if err != nil {
+		if storage.IsNotFound(err) {
+			return nil, fmt.Errorf("chunk run not found: %s", req.ChunkId)
+		}
+		logger.Error("Failed to get chunk run",
+			zap.String("chunk_id", req.ChunkId),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to get chunk run: %w", err)
+	}
+
+	return chunkInfo.Chunk, nil
+}
+
+// ListChunkRuns implements the ListChunkRuns RPC.
+func (s *ControlPlaneServer) ListChunkRuns(ctx context.Context, req *flowctlpb.ListChunkRunsRequest) (*flowctlpb.ListChunkRunsResponse, error) {
+	if s.storage == nil {
+		return &flowctlpb.ListChunkRunsResponse{Chunks: []*flowctlpb.ChunkRun{}}, nil
+	}
+
+	limit := req.Limit
+	if limit == 0 {
+		limit = 100
+	}
+
+	chunkInfos, err := s.storage.ListChunkRuns(ctx, req.PipelineRunId, req.ComponentId, req.Status, limit)
+	if err != nil {
+		logger.Error("Failed to list chunk runs",
+			zap.String("pipeline_run_id", req.PipelineRunId),
+			zap.String("component_id", req.ComponentId),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to list chunk runs: %w", err)
+	}
+
+	chunks := make([]*flowctlpb.ChunkRun, len(chunkInfos))
+	for i, chunkInfo := range chunkInfos {
+		chunks[i] = chunkInfo.Chunk
+	}
+
+	return &flowctlpb.ListChunkRunsResponse{Chunks: chunks}, nil
+}
+
 // ControlPlaneWrapper wraps ControlPlaneServer to implement the flowctlpb.ControlPlane interface
 // This is needed because flowctlpb and v1 have methods with the same names but different signatures
 type ControlPlaneWrapper struct {
@@ -732,6 +832,7 @@ func (w *ControlPlaneWrapper) Register(ctx context.Context, req *flowctlpb.Servi
 func (w *ControlPlaneWrapper) Heartbeat(ctx context.Context, req *flowctlpb.ServiceHeartbeat) (*emptypb.Empty, error) {
 	v1Req := &flowctlv1.HeartbeatRequest{
 		ServiceId: req.ServiceId,
+		Metrics:   float64MapToStringMap(req.Metrics),
 	}
 
 	return w.server.Heartbeat(ctx, v1Req)
@@ -785,6 +886,18 @@ func (w *ControlPlaneWrapper) StopPipelineRun(ctx context.Context, req *flowctlp
 	return w.server.StopPipelineRun(ctx, req)
 }
 
+func (w *ControlPlaneWrapper) UpsertChunkRun(ctx context.Context, req *flowctlpb.UpsertChunkRunRequest) (*flowctlpb.ChunkRun, error) {
+	return w.server.UpsertChunkRun(ctx, req)
+}
+
+func (w *ControlPlaneWrapper) GetChunkRun(ctx context.Context, req *flowctlpb.GetChunkRunRequest) (*flowctlpb.ChunkRun, error) {
+	return w.server.GetChunkRun(ctx, req)
+}
+
+func (w *ControlPlaneWrapper) ListChunkRuns(ctx context.Context, req *flowctlpb.ListChunkRunsRequest) (*flowctlpb.ListChunkRunsResponse, error) {
+	return w.server.ListChunkRuns(ctx, req)
+}
+
 func copyStringMap(src map[string]string) map[string]string {
 	if len(src) == 0 {
 		return map[string]string{}
@@ -817,6 +930,69 @@ func mergeStringMaps(base, updates map[string]string) map[string]string {
 	for k, v := range updates {
 		merged[k] = v
 	}
+	return merged
+}
+
+func float64MapToStringMap(src map[string]float64) map[string]string {
+	if len(src) == 0 {
+		return map[string]string{}
+	}
+	converted := make(map[string]string, len(src))
+	for k, v := range src {
+		converted[k] = strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	return converted
+}
+
+func mergeInt64Maps(base, updates map[string]int64) map[string]int64 {
+	if len(base) == 0 && len(updates) == 0 {
+		return map[string]int64{}
+	}
+	merged := make(map[string]int64, len(base)+len(updates))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range updates {
+		merged[k] = v
+	}
+	return merged
+}
+
+func mergeChunkRun(existing, update *flowctlpb.ChunkRun) *flowctlpb.ChunkRun {
+	merged := gproto.Clone(existing).(*flowctlpb.ChunkRun)
+	merged.ChunkId = update.ChunkId
+	merged.PipelineRunId = update.PipelineRunId
+	merged.ComponentId = update.ComponentId
+	merged.ChunkStart = update.ChunkStart
+	merged.ChunkEnd = update.ChunkEnd
+	merged.Attempt = update.Attempt
+	if update.Status != flowctlpb.ChunkStatus_CHUNK_STATUS_UNKNOWN {
+		merged.Status = update.Status
+	}
+	if update.FailureClass != flowctlpb.FailureClass_FAILURE_CLASS_UNKNOWN {
+		merged.FailureClass = update.FailureClass
+	}
+	if update.Phase != "" {
+		merged.Phase = update.Phase
+	}
+	if update.Error != "" {
+		merged.Error = update.Error
+	}
+	if update.RecommendedAction != "" {
+		merged.RecommendedAction = update.RecommendedAction
+	}
+	if update.StartedAt != nil {
+		merged.StartedAt = update.StartedAt
+	}
+	if update.CompletedAt != nil {
+		merged.CompletedAt = update.CompletedAt
+	}
+	if update.VerifiedAt != nil {
+		merged.VerifiedAt = update.VerifiedAt
+	}
+	merged.RowCounts = mergeInt64Maps(existing.RowCounts, update.RowCounts)
+	merged.Verification = mergeStringMaps(existing.Verification, update.Verification)
+	merged.Metadata = mergeStringMaps(existing.Metadata, update.Metadata)
 	return merged
 }
 

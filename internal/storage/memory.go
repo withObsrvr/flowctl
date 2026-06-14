@@ -14,6 +14,7 @@ type MemoryStorage struct {
 	mu           sync.RWMutex
 	services     map[string]*ServiceInfo
 	pipelineRuns map[string]*PipelineRunInfo
+	chunkRuns    map[string]*ChunkRunInfo
 }
 
 // NewMemoryStorage creates a new in-memory storage for testing
@@ -21,6 +22,7 @@ func NewMemoryStorage() ServiceStorage {
 	return &MemoryStorage{
 		services:     make(map[string]*ServiceInfo),
 		pipelineRuns: make(map[string]*PipelineRunInfo),
+		chunkRuns:    make(map[string]*ChunkRunInfo),
 	}
 }
 
@@ -236,5 +238,67 @@ func (s *MemoryStorage) DeletePipelineRun(ctx context.Context, runID string) err
 	}
 
 	delete(s.pipelineRuns, runID)
+	return nil
+}
+
+// UpsertChunkRun creates or replaces a chunk run in the registry.
+func (s *MemoryStorage) UpsertChunkRun(ctx context.Context, chunk *ChunkRunInfo) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	logger.Debug("Upserting chunk run in memory", zap.String("chunk_id", chunk.Chunk.ChunkId))
+	s.chunkRuns[chunk.Chunk.ChunkId] = chunk
+	return nil
+}
+
+// GetChunkRun retrieves a chunk run by its ID.
+func (s *MemoryStorage) GetChunkRun(ctx context.Context, chunkID string) (*ChunkRunInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	chunk, ok := s.chunkRuns[chunkID]
+	if !ok {
+		return nil, ErrChunkRunNotFound{ChunkID: chunkID}
+	}
+
+	return chunk, nil
+}
+
+// ListChunkRuns retrieves chunk runs, optionally filtered by pipeline run, component, and status.
+func (s *MemoryStorage) ListChunkRuns(ctx context.Context, pipelineRunID string, componentID string, status flowctlpb.ChunkStatus, limit int32) ([]*ChunkRunInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	chunks := make([]*ChunkRunInfo, 0)
+	count := int32(0)
+	for _, chunk := range s.chunkRuns {
+		if limit > 0 && count >= limit {
+			break
+		}
+		if pipelineRunID != "" && chunk.Chunk.PipelineRunId != pipelineRunID {
+			continue
+		}
+		if componentID != "" && chunk.Chunk.ComponentId != componentID {
+			continue
+		}
+		if status != flowctlpb.ChunkStatus_CHUNK_STATUS_UNKNOWN && chunk.Chunk.Status != status {
+			continue
+		}
+		chunks = append(chunks, chunk)
+		count++
+	}
+
+	return chunks, nil
+}
+
+// DeleteChunkRun removes a chunk run from the registry.
+func (s *MemoryStorage) DeleteChunkRun(ctx context.Context, chunkID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.chunkRuns[chunkID]; !ok {
+		return ErrChunkRunNotFound{ChunkID: chunkID}
+	}
+	delete(s.chunkRuns, chunkID)
 	return nil
 }

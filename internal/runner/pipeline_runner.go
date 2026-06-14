@@ -379,6 +379,17 @@ func (r *PipelineRunner) startComponents() error {
 
 // convertToOrchestratorComponent converts a model.Component to orchestrator.Component
 func (r *PipelineRunner) convertToOrchestratorComponent(modelComp model.Component, componentType string) *orchestrator.Component {
+	env := make(map[string]string, len(modelComp.Env)+2)
+	for key, value := range modelComp.Env {
+		env[key] = value
+	}
+	if r.runID != "" {
+		env["FLOWCTL_RUN_ID"] = r.runID
+	}
+	if _, ok := env["FLOWCTL_ATTEMPT"]; !ok {
+		env["FLOWCTL_ATTEMPT"] = "1"
+	}
+
 	orchComp := &orchestrator.Component{
 		ID:            modelComp.ID,
 		Type:          modelComp.Type,
@@ -386,7 +397,7 @@ func (r *PipelineRunner) convertToOrchestratorComponent(modelComp model.Componen
 		Image:         modelComp.Image,
 		Command:       modelComp.Command,
 		Args:          modelComp.Args,
-		Environment:   modelComp.Env,
+		Environment:   env,
 		Dependencies:  modelComp.Inputs,
 		RestartPolicy: modelComp.RestartPolicy,
 	}

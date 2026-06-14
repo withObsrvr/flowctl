@@ -402,8 +402,108 @@ func TestControlPlaneWrapper_Register(t *testing.T) {
 	// Heartbeat should work with the returned ServiceId
 	_, err = wrapper.Heartbeat(ctx, &flowctlpb.ServiceHeartbeat{
 		ServiceId: ack.ServiceId,
+		Metrics: map[string]float64{
+			"ledgers_processed": 42,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Heartbeat failed with returned ServiceId: %v", err)
+	}
+	if got := stored.Status.Metrics["ledgers_processed"]; got != "42" {
+		t.Fatalf("expected heartbeat metrics to be converted and stored, got %q", got)
+	}
+}
+
+func TestControlPlaneServer_ChunkRuns(t *testing.T) {
+	memStorage, cleanup := createTestStorage()
+	defer cleanup()
+
+	server := NewControlPlaneServer(memStorage)
+	wrapper := NewControlPlaneWrapper(server)
+	ctx := context.Background()
+
+	chunk, err := wrapper.UpsertChunkRun(ctx, &flowctlpb.UpsertChunkRunRequest{Chunk: &flowctlpb.ChunkRun{
+		PipelineRunId: "run-1",
+		ComponentId:   "bronze-history-loader",
+		ChunkStart:    30750003,
+		ChunkEnd:      31000002,
+		Status:        flowctlpb.ChunkStatus_CHUNK_STATUS_RUNNING,
+		Phase:         "ducklake_push",
+		RowCounts: map[string]int64{
+			"ledgers_row_v2": 250000,
+		},
+	}})
+	if err != nil {
+		t.Fatalf("UpsertChunkRun failed: %v", err)
+	}
+	if chunk.ChunkId == "" {
+		t.Fatal("expected generated chunk id")
+	}
+	if chunk.Attempt != 1 {
+		t.Fatalf("expected default attempt 1, got %d", chunk.Attempt)
+	}
+
+	got, err := wrapper.GetChunkRun(ctx, &flowctlpb.GetChunkRunRequest{ChunkId: chunk.ChunkId})
+	if err != nil {
+		t.Fatalf("GetChunkRun failed: %v", err)
+	}
+	if got.Phase != "ducklake_push" {
+		t.Fatalf("expected phase ducklake_push, got %q", got.Phase)
+	}
+
+	completed, err := wrapper.UpsertChunkRun(ctx, &flowctlpb.UpsertChunkRunRequest{Chunk: &flowctlpb.ChunkRun{
+		ChunkId:       chunk.ChunkId,
+		PipelineRunId: "run-1",
+		ComponentId:   "bronze-history-loader",
+		ChunkStart:    30750003,
+		ChunkEnd:      31000002,
+		Attempt:       1,
+		Status:        flowctlpb.ChunkStatus_CHUNK_STATUS_COMPLETED,
+	}})
+	if err != nil {
+		t.Fatalf("terminal UpsertChunkRun failed: %v", err)
+	}
+	if completed.Phase != "ducklake_push" {
+		t.Fatalf("expected terminal update to preserve phase, got %q", completed.Phase)
+	}
+	if completed.RowCounts["ledgers_row_v2"] != 250000 {
+		t.Fatalf("expected terminal update to preserve row counts, got %v", completed.RowCounts)
+	}
+
+	list, err := wrapper.ListChunkRuns(ctx, &flowctlpb.ListChunkRunsRequest{
+		PipelineRunId: "run-1",
+		ComponentId:   "bronze-history-loader",
+		Status:        flowctlpb.ChunkStatus_CHUNK_STATUS_COMPLETED,
+	})
+	if err != nil {
+		t.Fatalf("ListChunkRuns failed: %v", err)
+	}
+	if len(list.Chunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(list.Chunks))
+	}
+}
+
+func TestControlPlaneServer_ChunkRunValidation(t *testing.T) {
+	memStorage, cleanup := createTestStorage()
+	defer cleanup()
+
+	wrapper := NewControlPlaneWrapper(NewControlPlaneServer(memStorage))
+	ctx := context.Background()
+
+	cases := []struct {
+		name  string
+		chunk *flowctlpb.ChunkRun
+	}{
+		{name: "missing run", chunk: &flowctlpb.ChunkRun{ComponentId: "component", ChunkStart: 1, ChunkEnd: 2}},
+		{name: "missing component", chunk: &flowctlpb.ChunkRun{PipelineRunId: "run", ChunkStart: 1, ChunkEnd: 2}},
+		{name: "reversed range", chunk: &flowctlpb.ChunkRun{PipelineRunId: "run", ComponentId: "component", ChunkStart: 3, ChunkEnd: 2}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := wrapper.UpsertChunkRun(ctx, &flowctlpb.UpsertChunkRunRequest{Chunk: tc.chunk}); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
 	}
 }

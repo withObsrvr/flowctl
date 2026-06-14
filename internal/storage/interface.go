@@ -23,26 +23,31 @@ type PipelineRunInfo struct {
 	Run *flowctlpb.PipelineRun
 }
 
+// ChunkRunInfo represents the complete information about a historical chunk run.
+type ChunkRunInfo struct {
+	Chunk *flowctlpb.ChunkRun
+}
+
 // ServiceStorage defines the interface for persistent storage of service registry
 type ServiceStorage interface {
 	// Open initializes the storage and makes it ready for use
 	Open() error
-	
+
 	// Close closes the storage and releases any resources
 	Close() error
-	
+
 	// RegisterService stores a new service in the registry
 	RegisterService(ctx context.Context, service *ServiceInfo) error
-	
+
 	// UpdateService updates an existing service in the registry
 	UpdateService(ctx context.Context, serviceID string, updater func(*ServiceInfo) error) error
-	
+
 	// GetService retrieves a service by its ID
 	GetService(ctx context.Context, serviceID string) (*ServiceInfo, error)
-	
+
 	// ListServices retrieves all services in the registry
 	ListServices(ctx context.Context) ([]*ServiceInfo, error)
-	
+
 	// DeleteService removes a service from the registry
 	DeleteService(ctx context.Context, serviceID string) error
 
@@ -69,22 +74,36 @@ type ServiceStorage interface {
 
 	// DeletePipelineRun removes a pipeline run from the registry
 	DeletePipelineRun(ctx context.Context, runID string) error
+
+	// Chunk run management methods
+
+	// UpsertChunkRun creates or replaces a chunk run record.
+	UpsertChunkRun(ctx context.Context, chunk *ChunkRunInfo) error
+
+	// GetChunkRun retrieves a chunk run by its ID.
+	GetChunkRun(ctx context.Context, chunkID string) (*ChunkRunInfo, error)
+
+	// ListChunkRuns retrieves chunk runs, optionally filtered by pipeline run, component, and status.
+	ListChunkRuns(ctx context.Context, pipelineRunID string, componentID string, status flowctlpb.ChunkStatus, limit int32) ([]*ChunkRunInfo, error)
+
+	// DeleteChunkRun removes a chunk run from the registry.
+	DeleteChunkRun(ctx context.Context, chunkID string) error
 }
 
 // Transaction represents a storage transaction
 type Transaction interface {
 	// RegisterService stores a new service in the registry within a transaction
 	RegisterService(service *ServiceInfo) error
-	
+
 	// UpdateService updates an existing service in the registry within a transaction
 	UpdateService(serviceID string, updater func(*ServiceInfo) error) error
-	
+
 	// GetService retrieves a service by its ID within a transaction
 	GetService(serviceID string) (*ServiceInfo, error)
-	
+
 	// ListServices retrieves all services in the registry within a transaction
 	ListServices() ([]*ServiceInfo, error)
-	
+
 	// DeleteService removes a service from the registry within a transaction
 	DeleteService(serviceID string) error
 }
@@ -109,9 +128,20 @@ func (e ErrPipelineRunNotFound) Error() string {
 	return "pipeline run not found: " + e.RunID
 }
 
-// IsNotFound returns true if the error is ErrServiceNotFound or ErrPipelineRunNotFound
+// ErrChunkRunNotFound is returned when a chunk run with the specified ID is not found.
+type ErrChunkRunNotFound struct {
+	ChunkID string
+}
+
+// Error implements the error interface.
+func (e ErrChunkRunNotFound) Error() string {
+	return "chunk run not found: " + e.ChunkID
+}
+
+// IsNotFound returns true if the error is ErrServiceNotFound, ErrPipelineRunNotFound, or ErrChunkRunNotFound.
 func IsNotFound(err error) bool {
 	_, okService := err.(ErrServiceNotFound)
 	_, okRun := err.(ErrPipelineRunNotFound)
-	return okService || okRun
+	_, okChunk := err.(ErrChunkRunNotFound)
+	return okService || okRun || okChunk
 }
