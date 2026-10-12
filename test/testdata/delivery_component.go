@@ -3,15 +3,18 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
+	"github.com/withObsrvr/flowctl-sdk/pkg/consumer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -29,6 +32,14 @@ type sinkService struct {
 }
 
 func (sourceService) StreamEvents(_ *flowctlv1.StreamRequest, stream grpc.ServerStreamingServer[flowctlv1.Event]) error {
+	if os.Getenv("DELIVERY_MODE") == "drain" || os.Getenv("DELIVERY_MODE") == "drain-stop" {
+		for i := 0; i < 120; i++ {
+			if err := stream.Send(&flowctlv1.Event{Id: strconv.Itoa(i), Type: "test.event"}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if os.Getenv("DELIVERY_MODE") != "fail-before" {
 		if err := stream.Send(&flowctlv1.Event{Id: os.Getenv("FLOWCTL_COMPONENT_ID"), Type: "test.event"}); err != nil {
 			return err
@@ -65,13 +76,16 @@ func (sinkService) Consume(stream grpc.ClientStreamingServer[flowctlv1.Event, fl
 	if os.Getenv("DELIVERY_MODE") == "sink-fail" {
 		return status.Error(codes.Internal, "synthetic sink failure")
 	}
+	var count int64
 	for {
 		event, err := stream.Recv()
 		if err == nil {
+			count++
 			log.Printf("DELIVERY_RECEIVED id=%s", event.Id)
 		}
 		if err == io.EOF {
-			return stream.SendAndClose(&flowctlv1.ConsumeResponse{})
+			log.Print(fmt.Sprintf("DELIVERY_ACK count=%d", count))
+			return stream.SendAndClose(&flowctlv1.ConsumeResponse{EventsConsumed: count})
 		}
 		if err != nil {
 			return err
@@ -97,7 +111,22 @@ func main() {
 		flowctlv1.RegisterProcessorServiceServer(server, processorService{})
 	case "sink":
 		kind = flowctlv1.ComponentType_COMPONENT_TYPE_CONSUMER
-		flowctlv1.RegisterConsumerServiceServer(server, sinkService{})
+		if os.Getenv("DELIVERY_MODE") == "drain" || os.Getenv("DELIVERY_MODE") == "drain-fail" {
+			flowctlv1.RegisterConsumerServiceServer(server, consumer.NewConsumerService(consumer.DefaultConfig(), id, []string{"test.event"}, func(ctx context.Context, event *flowctlv1.Event) error {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(10 * time.Millisecond):
+				}
+				if os.Getenv("DELIVERY_MODE") == "drain-fail" && event.Id == "60" {
+					return fmt.Errorf("synthetic handler failure")
+				}
+				log.Printf("DELIVERY_RECEIVED id=%s", event.Id)
+				return nil
+			}))
+		} else {
+			flowctlv1.RegisterConsumerServiceServer(server, sinkService{})
+		}
 	default:
 		log.Fatal("unknown fixture role")
 	}

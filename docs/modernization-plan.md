@@ -7,8 +7,9 @@
 ## Implementation notes (current checkout)
 
 The runner now waits for supervised source/processor/sink edges and returns
-transport failures as CLI errors. Bounded completion is inferred from the
-source's `END_LEDGER` environment setting; an unbounded source EOF is an error.
+transport failures as CLI errors. Finite sources must set
+`FLOWCTL_SOURCE_BOUNDED: "true"` in their environment; `END_LEDGER` alone is
+not a boundedness signal (`0` can mean unbounded). Unbounded EOF is an error.
 The first failing edge cancels all streams. Fan-out sends synchronously, so a
 slow sink applies backpressure instead of dropping events. The run is marked
 failed on delivery error, completed on bounded completion, and stopped on
@@ -39,10 +40,12 @@ remains a live signal, not the authoritative historical failure reason.
 
 ## Remaining limitation
 
-**Boundedness is inferred from `END_LEDGER`.** Sources with other finite
-termination criteria are currently classified as unbounded and their normal
-EOF fails the run. Introduce an explicit bounded-source setting before
-supporting other finite source types.
+**Bounded completion requires a trustworthy sink.** Each sink stream must
+acknowledge exactly its successful sends, with zero failures/errors. SDK v0.1.5
+counts finished successful handlers; handlers must return only after durable
+commit. v0.0.11 with SDK v0.1.4 could report success before commit. The runner's
+`events_processed` is not a commit metric (currently zero); fan-out acks are
+per stream, not distinct ledgers. Use catalog watermarks for durable proof.
 
 ## Objective
 

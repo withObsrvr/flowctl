@@ -36,12 +36,14 @@ spec:
         DELIVERY_ROLE: source
         DELIVERY_MODE: bounded
         END_LEDGER: "2"
+        FLOWCTL_SOURCE_BOUNDED: "true"
     - id: source-b
       command: [%q]
       env:
         DELIVERY_ROLE: source
         DELIVERY_MODE: bounded
         END_LEDGER: "2"
+        FLOWCTL_SOURCE_BOUNDED: "true"
   sinks:
     - id: sink-a
       command: [%q]

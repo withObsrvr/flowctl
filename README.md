@@ -106,13 +106,19 @@ flowctl pipelines stop <run-id>
 ```
 
 `flowctl run` waits for delivery to complete or for an operator to stop it. A
-bounded run completes successfully once every edge closes and sinks acknowledge;
-a source, processor, or sink delivery failure marks the run failed and exits
-nonzero. An unexpected EOF from an unbounded source is a failure. Currently
-bounded completion is inferred from the source's `END_LEDGER` environment
-variable; a source with a different finite stopping condition will be treated
-as unbounded. On interruption or `pipelines stop`, the run is stopped rather
+bounded run completes successfully only after every edge closes and each sink
+acknowledges exactly the events sent to its stream (zero failures and errors).
+Sinks must use flowctl-sdk v0.1.5 or implement the equivalent contract:
+`EventsConsumed` counts successfully finished handlers, which return only after
+durable commit. A source, processor, or sink delivery failure marks the run
+failed and exits nonzero. An unexpected EOF from an unbounded source is a
+failure. Set `FLOWCTL_SOURCE_BOUNDED: "true"` in each finite source's `env`;
+`END_LEDGER` alone does not declare boundedness (`0` can mean unbounded). On interruption or `pipelines stop`, the run is stopped rather
 than failed. Restart and checkpoints remain the operator's responsibility.
+The current `events_processed` run field is not a transport, handler-completion,
+or durable-commit metric (currently it remains zero). Fan-out counts are per
+sink stream, not distinct ledgers; use catalog watermarks for durable proof.
+flowctl v0.0.11 with SDK v0.1.4 cannot establish complete bounded ingestion.
 
 ### Recommended operator flags
 
@@ -312,9 +318,10 @@ spec:
 ```
 
 A real source-to-sink pipeline should omit `registrationOnly` and supply
-stream-capable components. For now, bounded sources are recognized by
-`END_LEDGER` in the source's `env` (including when a component reference
-translates `config.end_ledger` into that environment variable).
+stream-capable components. Bounded sources must declare
+`FLOWCTL_SOURCE_BOUNDED: "true"` in each finite source's `env`, even when a
+component reference translates `config.end_ledger` to `END_LEDGER`. Never set
+this for an unbounded source (including `END_LEDGER: "0"`).
 
 For more examples, see:
 - `examples/quickstart/testnet-duckdb-pipeline.yaml` - Starter DuckDB pipeline

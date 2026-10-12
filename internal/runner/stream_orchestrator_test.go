@@ -38,6 +38,7 @@ type fakeSink struct {
 	sent              int
 	sendErr, closeErr error
 	response          *flowctlv1.ConsumeResponse
+	nilResponse       bool
 	blocked, release  chan struct{}
 }
 
@@ -49,7 +50,15 @@ func (f *fakeSink) Send(*flowctlv1.Event) error {
 	f.sent++
 	return f.sendErr
 }
-func (f *fakeSink) CloseAndRecv() (*flowctlv1.ConsumeResponse, error) { return f.response, f.closeErr }
+func (f *fakeSink) CloseAndRecv() (*flowctlv1.ConsumeResponse, error) {
+	if f.nilResponse {
+		return nil, f.closeErr
+	}
+	if f.response != nil {
+		return f.response, f.closeErr
+	}
+	return &flowctlv1.ConsumeResponse{EventsConsumed: int64(f.sent)}, f.closeErr
+}
 
 func testOrchestrator(t *testing.T) *StreamOrchestrator {
 	t.Helper()
@@ -117,7 +126,7 @@ func TestFanOutFailuresAndCompletion(t *testing.T) {
 		{name: "sink send", sendErr: failure, want: "send event 1"},
 		{name: "sink close", closeErr: failure, want: "close"},
 		{name: "success"},
-		{name: "sink reports failed event", want: "reported 1 failed events"},
+		{name: "sink reports failed event", want: "failed 1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := testOrchestrator(t)
@@ -140,6 +149,53 @@ func TestFanOutFailuresAndCompletion(t *testing.T) {
 		})
 	}
 }
+func TestFanOutAcknowledgements(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		response *flowctlv1.ConsumeResponse
+		missing  bool
+		want     string
+	}{
+		{"short", &flowctlv1.ConsumeResponse{}, false, "expected 1 acknowledged 0"},
+		{"excess", &flowctlv1.ConsumeResponse{EventsConsumed: 2}, false, "expected 1 acknowledged 2"},
+		{"failed", &flowctlv1.ConsumeResponse{EventsConsumed: 1, EventsFailed: 1}, false, "failed 1"},
+		{"errors", &flowctlv1.ConsumeResponse{EventsConsumed: 1, Errors: []string{"failure"}}, false, "errors 1"},
+		{"nil", nil, true, "missing response"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := testOrchestrator(t)
+			sink := &fakeSink{response: tc.response, nilResponse: tc.missing}
+			err := s.fanOut(&fakeProcessor{events: []*flowctlv1.Event{{Type: "matching"}}}, "source", []sinkStream{{id: "bad-sink", stream: sink}})
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "bad-sink") {
+				t.Fatalf("err=%v", err)
+			}
+		})
+	}
+	for _, events := range [][]*flowctlv1.Event{nil, {{Type: "ignored"}}, {{Type: "matching"}, {Type: "ignored"}}} {
+		s := testOrchestrator(t)
+		a, b := &fakeSink{}, &fakeSink{}
+		err := s.fanOut(&fakeProcessor{events: events}, "source", []sinkStream{{id: "a", accepted: []string{"matching"}, stream: a}, {id: "b", accepted: []string{"ignored"}, stream: b}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSourceBoundedDeclaration(t *testing.T) {
+	for _, tc := range []struct {
+		env  map[string]string
+		want bool
+	}{
+		{map[string]string{"END_LEDGER": "0"}, false},
+		{map[string]string{"END_LEDGER": "120"}, false},
+		{map[string]string{"FLOWCTL_SOURCE_BOUNDED": "true"}, true},
+	} {
+		if got := sourceBounded(tc.env); got != tc.want {
+			t.Fatalf("%v: %v", tc.env, got)
+		}
+	}
+}
+
 func TestFanOutBackpressureDoesNotDropEvent(t *testing.T) {
 	s := testOrchestrator(t)
 	slow := &fakeSink{blocked: make(chan struct{}), release: make(chan struct{})}

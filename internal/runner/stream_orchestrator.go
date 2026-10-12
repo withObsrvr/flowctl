@@ -166,14 +166,14 @@ func (s *StreamOrchestrator) WireAll() error {
 				s.cancel()
 				return fmt.Errorf("pipeline %s source %s has no sink declaring it in inputs", s.pipeline.Metadata.Name, source.ID)
 			}
-			bounded := params["end_ledger"] != ""
+			bounded := sourceBounded(source.Env)
 			s.launch(func() error {
 				return s.fanOut(sourceReceiver{sourceStream, s.ctx, bounded}, source.ID, sinks, "source-sink")
 			})
 			continue
 		}
 		first := s.pipeline.Spec.Processors[0].ID
-		bounded := params["end_ledger"] != ""
+		bounded := sourceBounded(source.Env)
 		s.launch(func() error { return s.forwardSource(sourceStream, streams[0], source.ID, first, bounded) })
 		for i := 0; i < len(streams)-1; i++ {
 			from, to := s.pipeline.Spec.Processors[i].ID, s.pipeline.Spec.Processors[i+1].ID
@@ -183,6 +183,12 @@ func (s *StreamOrchestrator) WireAll() error {
 		s.launch(func() error { return s.fanOut(streams[len(streams)-1], last, sinks) })
 	}
 	return nil
+}
+
+// Boundedness is declared, not inferred from component-specific endpoints.
+// END_LEDGER=0 commonly means unbounded.
+func sourceBounded(env map[string]string) bool {
+	return env["FLOWCTL_SOURCE_BOUNDED"] == "true"
 }
 
 func hasInput(inputs []string, id string) bool {
@@ -281,16 +287,20 @@ func (s *StreamOrchestrator) fanOut(from interface {
 	if len(edgeKind) > 0 {
 		kind = edgeKind[0]
 	}
+	sent := make([]int64, len(sinks))
 	for {
 		event, err := from.Recv()
 		if err == io.EOF {
-			for _, sink := range sinks {
+			for i, sink := range sinks {
 				response, err := sink.stream.CloseAndRecv()
 				if err != nil {
-					return s.edge(fromID, sink.id, kind, "close", nil, err)
+					return s.edge(fromID, sink.id, kind, "close acknowledgement", nil, fmt.Errorf("expected %d: %w", sent[i], err))
 				}
-				if response.GetEventsFailed() > 0 || len(response.GetErrors()) > 0 {
-					return s.edge(fromID, sink.id, kind, "close", nil, fmt.Errorf("sink reported %d failed events (%d errors)", response.GetEventsFailed(), len(response.GetErrors())))
+				if response == nil {
+					return s.edge(fromID, sink.id, kind, "close acknowledgement", nil, fmt.Errorf("expected %d: missing response", sent[i]))
+				}
+				if response.GetEventsFailed() != 0 || len(response.GetErrors()) != 0 || response.GetEventsConsumed() != sent[i] {
+					return s.edge(fromID, sink.id, kind, "close acknowledgement", nil, fmt.Errorf("expected %d acknowledged %d, failed %d, errors %d", sent[i], response.GetEventsConsumed(), response.GetEventsFailed(), len(response.GetErrors())))
 				}
 			}
 			return nil
@@ -298,7 +308,7 @@ func (s *StreamOrchestrator) fanOut(from interface {
 		if err != nil {
 			return s.edge(fromID, "sinks", kind, "recv", nil, err)
 		}
-		for _, sink := range sinks {
+		for i, sink := range sinks {
 			if accepts(sink.accepted, event.Type) {
 				if err := sink.stream.Send(event); err != nil {
 					// gRPC may report EOF on Send while the actual server error is
@@ -310,6 +320,7 @@ func (s *StreamOrchestrator) fanOut(from interface {
 					}
 					return s.edge(fromID, sink.id, kind, "send", event, err)
 				}
+				sent[i]++
 			}
 		}
 	}
