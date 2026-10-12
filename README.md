@@ -1,6 +1,6 @@
 # flowctl
 
-flowctl is a **production pipeline orchestrator** for Stellar data components. It manages sources, processors, and sinks through an embedded control plane so you can define pipelines declaratively, run them as supervised processes, and observe their health and status.
+flowctl orchestrates Stellar data pipelines with a control plane for component registration, run history, and health. In process mode, it launches components and supervises gRPC delivery between sources, optional processors, and sinks.
 
 ## What flowctl is for
 
@@ -9,7 +9,8 @@ flowctl is the **orchestration/production layer** in the ecosystem:
 - resolve and launch components
 - run with an embedded or external control plane
 - track registration, heartbeats, and run state
-- inspect status and active runs
+- fail a run on delivery errors and cancel its other stream edges
+- inspect status, active runs, and recorded failure context
 
 If you are rapidly prototyping processors or doing ad-hoc local analysis, use **nebu** first. When a processor is ready to be operated, monitored, and reused in production, it should live behind **flowctl**.
 
@@ -20,7 +21,7 @@ The primary supported runtime path today is:
 - **Embedded control plane** (default)
 - **`flowctl/v1` pipelines**
 
-Container/deployment backends exist in the repo but should be treated as secondary until they are hardened and fully tested.
+Container/deployment backends exist in the repo but should be treated as secondary until they are hardened and fully tested. Process-mode forwarding currently supports a sequential processor chain (or direct source-to-sink delivery) and fan-out to sinks; it is not an arbitrary DAG runtime.
 
 ## Installation
 
@@ -79,7 +80,7 @@ flowctl run stellar-pipeline.yaml
 In another terminal:
 
 ```bash
-# 5. Check component health
+# 5. Check component health (while the control plane is running)
 flowctl status
 
 # 6. Inspect active runs
@@ -103,6 +104,15 @@ flowctl pipelines active
 flowctl pipelines run-info <run-id>
 flowctl pipelines stop <run-id>
 ```
+
+`flowctl run` waits for delivery to complete or for an operator to stop it. A
+bounded run completes successfully once every edge closes and sinks acknowledge;
+a source, processor, or sink delivery failure marks the run failed and exits
+nonzero. An unexpected EOF from an unbounded source is a failure. Currently
+bounded completion is inferred from the source's `END_LEDGER` environment
+variable; a source with a different finite stopping condition will be treated
+as unbounded. On interruption or `pipelines stop`, the run is stopped rather
+than failed. Restart and checkpoints remain the operator's responsibility.
 
 ### Recommended operator flags
 
@@ -209,7 +219,11 @@ Full reference:
   └──────────────┘    └──────────────┘    └──────────────┘
 ```
 
-**Components are separate programs** that you build or install independently:
+**Components are separate programs** that you build or install independently. A
+component must register a reachable gRPC endpoint and implement its source,
+processor, or consumer stream service to participate in supervised delivery;
+registration and heartbeats alone do not make a data path healthy.
+
 - **Sources**: Produce data (e.g., Stellar ledger streams, Kafka consumers)
 - **Processors**: Transform data (e.g., extract contract events, filter transactions)
 - **Sinks**: Consume data (e.g., PostgreSQL, webhooks, file storage)
@@ -237,16 +251,16 @@ The JavaScript SDK also includes a working `flowctl` process-mode end-to-end exa
 
 ## Configuration
 
-Pipelines are configured using Kubernetes-style YAML files. Here's a minimal example:
+Pipelines are configured using Kubernetes-style YAML files. This example shows the shape of a process pipeline; the three `command` paths must point to binaries that implement the corresponding gRPC stream services:
 
 ```yaml
 apiVersion: flowctl/v1
 kind: Pipeline
 metadata:
   name: hello-world-pipeline
-  description: A simple pipeline demonstrating flowctl basics
 
 spec:
+  description: A simple pipeline demonstrating flowctl basics
   driver: process  # Run components as local processes
 
   sources:
@@ -259,12 +273,14 @@ spec:
   processors:
     - id: data-transformer
       command: ["./bin/data-transformer"]
+      inputs: [data-generator]
       env:
         TRANSFORM_TYPE: "uppercase"
 
   sinks:
     - id: console-logger
       command: ["./bin/console-logger"]
+      inputs: [data-transformer]
       env:
         LOG_FORMAT: "pretty"
 ```
@@ -272,8 +288,33 @@ spec:
 **Key configuration concepts**:
 - `apiVersion: flowctl/v1` - Standard pipeline format
 - `spec.driver` - Execution environment (currently focus on `process`)
-- Component `command` - Full path to the component binary
+- Component `command` - Executable path (relative paths resolve from the working directory where `flowctl run` is invoked)
 - Component `env` - Environment variables for configuration
+- Component `inputs` - Upstream component IDs; processors are wired in list order in process mode
+
+Processors are optional: when none are defined, flowctl wires each source
+directly to sinks that list its ID in `inputs`. Multiple sinks receive matching event types; a slow
+sink applies backpressure rather than causing dropped events. Use
+`spec.registrationOnly: true` **only** for intentional monitor-only pipelines:
+it disables stream wiring and delivery supervision, so `RUNNING` then means
+components registered, not that events are flowing. For example:
+
+```yaml
+spec:
+  registrationOnly: true # intentional control-plane registration/health only
+  sources:
+    - id: my-source
+      command: ["/path/to/source"]
+  sinks:
+    - id: my-sink
+      inputs: [my-source]
+      command: ["/path/to/sink"]
+```
+
+A real source-to-sink pipeline should omit `registrationOnly` and supply
+stream-capable components. For now, bounded sources are recognized by
+`END_LEDGER` in the source's `env` (including when a component reference
+translates `config.end_ledger` into that environment variable).
 
 For more examples, see:
 - `examples/quickstart/testnet-duckdb-pipeline.yaml` - Starter DuckDB pipeline
@@ -283,10 +324,9 @@ For more examples, see:
 
 ### Logging
 
-flowctl uses structured logging powered by Uber's Zap library. You can control the log level using:
-
-- Configuration file: Set the `log_level` field in your YAML configuration
-- Command line: Use the `--log-level` flag (e.g., `--log-level=debug`)
+flowctl uses structured logging powered by Uber's Zap library. Use the
+`--log-level` flag (e.g., `--log-level=debug`) to control **flowctl's** logs;
+component binaries may have separate logging settings.
 
 Available log levels:
 - `debug`: Detailed information for debugging
@@ -317,18 +357,17 @@ If you specifically need Docker Compose translation, local execution generation,
 
 ### DAG-Based Processing
 
-flowctl supports a Directed Acyclic Graph (DAG) based processing pipeline, which allows complex topologies beyond simple linear chains. This enables:
-
-- Parallel processing of data streams
-- Fan-out/fan-in patterns
-- Buffered channels for flow control
-- Strongly typed event connections
-
-For more information, see [DAG-Based Processing](docs/dag-processing.md).
+The repository also contains DAG execution code, but the primary `flowctl run`
+process path currently wires processors in list order and fans out to sinks.
+It does not implement arbitrary DAG fan-in/fan-out or buffered sink queues.
+See [Architecture: DAG event flow](docs/architecture.md#event-flow-dag---diamond-pattern) for the separate DAG model.
 
 ### Secure Communication with TLS
 
-flowctl supports secure communication between components using Transport Layer Security (TLS):
+The repository has TLS configuration for server/client integrations. **The primary
+process-mode stream orchestrator currently connects to component gRPC endpoints
+using insecure transport.** Do not assume the TLS settings below protect the
+`flowctl run` source-to-sink data path. The available TLS options include:
 
 - Server-side TLS for encrypted communication
 - Mutual TLS (mTLS) where both client and server authenticate each other
@@ -344,18 +383,8 @@ flowctl server --port 8080 --tls-cert server.crt --tls-key server.key
 flowctl server --port 8080 --tls-cert server.crt --tls-key server.key --tls-ca-cert ca.crt
 ```
 
-For client configuration, add a `tls` section to your YAML configuration:
-```yaml
-tls:
-  mode: "enabled"  # Options: disabled, enabled, mutual
-  cert_file: "client.crt"
-  key_file: "client.key"
-  ca_file: "ca.crt"  # Required for mutual TLS
-  skip_verify: false
-  server_name: "flowctl-server.example.com"  # For SNI verification
-```
-
-For more information, see [TLS Configuration](docs/tls-configuration.md).
+These server flags do not enable TLS on the process-mode component streams.
+For background, see [Architecture: Communication Security](docs/architecture.md#communication-security).
 
 ## Processor Discovery
 
@@ -415,9 +444,9 @@ Discover and inspect processors registered with the control plane at runtime.
 ls -la /path/to/component
 chmod +x /path/to/component
 
-# 2. Verify absolute path is used (required for driver: process)
-# ✅ Good: /home/user/bin/my-component
-# ❌ Bad: ./bin/my-component
+# 2. Confirm the command path is valid from flowctl's working directory
+# Absolute paths are less sensitive to where you start flowctl.
+# Relative paths such as ./bin/my-component also work from that directory.
 
 # 3. Test component standalone
 /path/to/component
@@ -440,15 +469,18 @@ chmod +x /path/to/component
 ./bin/flowctl run --control-plane-port 9090 pipeline.yaml
 ./bin/flowctl run --control-plane-port 0 pipeline.yaml
 
-# 3. Verify ENABLE_FLOWCTL is set
-# In pipeline YAML:
-env:
-  ENABLE_FLOWCTL: "true"
-  FLOWCTL_ENDPOINT: "127.0.0.1:8080"
+# 3. Check the component's registration, heartbeat, and service logs.
+# SDK packages: github.com/withObsrvr/flowctl-sdk/pkg/{source,processor,consumer}
+```
 
-# 4. Check component built with flowctl-sdk
-# Components must use SDK for registration:
-# github.com/withObsrvr/flowctl-sdk/pkg/{source,processor,consumer}
+A component must register a reachable gRPC stream endpoint. Some SDK-based
+components require these pipeline environment settings (check that component's
+configuration and use the actual control-plane address):
+
+```yaml
+env:
+  ENABLE_FLOWCTL: "true"  # Component-specific, not universal
+  FLOWCTL_ENDPOINT: "127.0.0.1:8080"
 ```
 
 #### No Data Flowing Between Components
@@ -458,20 +490,14 @@ env:
 **Solutions:**
 
 ```bash
-# 1. Verify inputs are correctly specified
-processors:
-  - id: my-processor
-    inputs: ["correct-source-id"]  # Must match source id
+1. Verify that `inputs` names the upstream component ID. Without processors,
+   a sink can name a source directly. Check registered event types too: sinks
+   with a nonempty input type list receive only matching events.
+2. Check `flowctl run`'s exit code and the failing edge in its output. A failed
+   edge cancels the other streams rather than dropping events:
 
-# 2. Check event types match
-# Source OutputType must match Processor InputType
-# Check component code or logs
-
-# 3. Enable debug logging
+```bash
 ./bin/flowctl run pipeline.yaml --log-level=debug
-
-# 4. Check for processing errors
-./bin/flowctl run pipeline.yaml 2>&1 | grep -i error
 ```
 
 #### Port Already in Use
@@ -524,8 +550,7 @@ kill <PID>
 # - apiVersion: flowctl/v1
 # - kind: Pipeline
 # - metadata.name
-# - spec.driver
-# - At least one source and one sink
+# - At least one source and one sink (also required in registration-only mode)
 
 # 3. Verify YAML syntax
 # Use yamllint or online YAML validator
@@ -568,14 +593,14 @@ CONFIG_KEY=value \
 # Active runs on a specific control plane
 ./bin/flowctl pipelines active --control-plane-address 127.0.0.1 --control-plane-port 9090
 
-# Inspect one run in detail (full id or unique prefix)
+# Inspect one run in detail (full id or unique prefix, including delivery error)
 ./bin/flowctl pipelines run-info abc12345 --control-plane-address 127.0.0.1 --control-plane-port 9090
 
 # Stop a running pipeline
 ./bin/flowctl pipelines stop abc12345 --control-plane-address 127.0.0.1 --control-plane-port 9090
 ```
 
-**Persistence note:** embedded control plane mode now uses BoltDB-backed storage by default, so run history can survive process restarts. Use `--db-path` to choose the storage location or `--no-persistence` for ephemeral local runs.
+**Persistence note:** embedded mode uses BoltDB at `~/.flowctl/flowctl-service-registry.db` by default. Use `--db-path` to choose a file or `--no-persistence` for an ephemeral run. A failed run stores the first delivery error as a structured, credential-free record in the run's `Error` field; `run-info` displays it. `pipelines run-info` requires a *running* control plane: after an embedded run exits, start a standalone `flowctl server --db-path <same-file>` (with no other process using the DB) to inspect persisted history.
 
 ### Docker and Container Issues
 
@@ -634,7 +659,7 @@ If you're still having trouble:
 
 ### Sandbox Issues
 
-For sandbox-specific issues, refer to [docs/sandbox.md](docs/sandbox.md) for detailed troubleshooting steps.
+For sandbox and container-related issues, see [Docker and translation workflows](docs/docker-and-translation.md).
 
 ## Development
 
@@ -673,6 +698,7 @@ make run-example
 
 ### Advanced Topics
 - **[Architecture](docs/architecture.md)** - System design, data flow, and component lifecycle
+- **[Delivery modernization](docs/modernization-plan.md)** - Supervised edges, error reporting, and current limitations
 - **[Performance Tuning](docs/performance-tuning.md)** - Optimization strategies and scaling
 
 ### Real-World Example

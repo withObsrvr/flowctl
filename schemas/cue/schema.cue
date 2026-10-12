@@ -39,6 +39,9 @@ package pipeline
 	// Optional driver for deployment
 	driver?: "docker" | "kubernetes" | "k8s" | "nomad" | "local"
 	
+	// Explicit opt-out for components that only register with the control plane.
+	registrationOnly?: bool
+
 	// Sources - can be empty if pipelines are present
 	sources: [...#SourceComponent]
 	

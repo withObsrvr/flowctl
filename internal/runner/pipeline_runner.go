@@ -2,7 +2,10 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -23,7 +26,9 @@ import (
 	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -210,9 +215,7 @@ func (r *PipelineRunner) Run() error {
 	fmt.Println("→ Launching components...")
 	if err := r.startComponents(); err != nil {
 		r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_FAILED)
-		if r.controlPlane != nil {
-			r.controlPlane.Stop()
-		}
+		_ = r.shutdown()
 		return err
 	}
 
@@ -220,9 +223,7 @@ func (r *PipelineRunner) Run() error {
 	fmt.Println("→ Waiting for components to register...")
 	if err := r.waitForComponentRegistration(); err != nil {
 		r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_FAILED)
-		if r.controlPlane != nil {
-			r.controlPlane.Stop()
-		}
+		_ = r.shutdown()
 		return err
 	}
 
@@ -232,12 +233,31 @@ func (r *PipelineRunner) Run() error {
 
 	fmt.Println("→ Wiring data flow between components...")
 	streamOrch := NewStreamOrchestrator(r.ctx, r.controlPlane, r.pipeline)
-	if err := streamOrch.WireAll(); err != nil {
-		r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_FAILED)
-		if r.controlPlane != nil {
-			r.controlPlane.Stop()
+	streamOrch.runID = r.runID
+	streamOrch.controlPlaneEndpoint = r.GetControlPlaneEndpoint()
+	// Registration-only mode is an explicit opt-out of delivery supervision.
+	registrationOnly := r.pipeline.Spec.RegistrationOnly
+	if !registrationOnly {
+		if err := streamOrch.WireAll(); err != nil {
+			groupErr := streamOrch.Stop()
+			// A previously started edge can fail while later sources are still
+			// wiring. Preserve that delivery error rather than a secondary cancel.
+			if groupErr != nil && (errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled) {
+				err = groupErr
+			}
+			r.markDeliveryFailure(err)
+			r.updateRunStatusWithError(flowctlpb.RunStatus_RUN_STATUS_FAILED, err)
+			_ = r.shutdown()
+			return fmt.Errorf("failed to wire components: %w", err)
 		}
-		return fmt.Errorf("failed to wire components: %w", err)
+	}
+
+	defer streamOrch.Stop()
+	terminal := make(chan error, 1)
+	if !registrationOnly {
+		go func() { terminal <- streamOrch.Wait() }()
+	} else {
+		logger.Warn("Registration-only pipeline: delivery is not supervised")
 	}
 
 	// Update status to RUNNING now that pipeline is fully wired
@@ -273,9 +293,19 @@ func (r *PipelineRunner) Run() error {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Wait for shutdown
+	defer signal.Stop(sigChan)
+	// Wait for shutdown or for all delivery edges to terminate.
 	var shutdownStatus flowctlpb.RunStatus
+	var deliveryErr error
 	select {
+	case deliveryErr = <-terminal:
+		if deliveryErr != nil {
+			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_FAILED
+		} else if r.ctx.Err() != nil {
+			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_STOPPED
+		} else {
+			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_COMPLETED
+		}
 	case <-sigChan:
 		logger.Info("Received shutdown signal")
 		shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_STOPPED
@@ -284,14 +314,82 @@ func (r *PipelineRunner) Run() error {
 		if r.stopRequested.Load() {
 			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_STOPPED
 		} else {
-			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_COMPLETED
+			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_STOPPED
 		}
 	}
 
+	// Reap delivery before stopping components. Prefer an already-reported
+	// failure over a simultaneous interrupt, but don't fail on cancellation.
+	if shutdownStatus == flowctlpb.RunStatus_RUN_STATUS_STOPPED && !registrationOnly {
+		var reaped bool
+		deliveryErr, reaped = waitForTerminalOnStop(terminal, streamOrch.cancel)
+		if !reaped {
+			logger.Warn("Timed out waiting for forwarding loops to exit")
+		}
+		if deliveryErr != nil {
+			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_FAILED
+		}
+	}
+	if deliveryErr != nil {
+		logger.Error("Pipeline delivery failed", zap.Error(deliveryErr), zap.String("run_id", r.runID))
+		r.markDeliveryFailure(deliveryErr)
+	}
 	// Update run status before shutdown
-	r.updateRunStatus(shutdownStatus)
+	r.updateRunStatusWithError(shutdownStatus, deliveryErr)
 
-	return r.shutdown()
+	shutdownErr := r.shutdown()
+	if deliveryErr != nil {
+		return deliveryErr
+	}
+	return shutdownErr
+}
+
+// waitForTerminalOnStop preserves a failure already reported or captured by
+// the errgroup while cancellation is in progress. A cancelled edge returns nil.
+func waitForTerminalOnStop(terminal <-chan error, cancel func()) (error, bool) {
+	select {
+	case err := <-terminal:
+		return err, true
+	default:
+	}
+	cancel()
+	select {
+	case err := <-terminal:
+		return err, true
+	case <-time.After(10 * time.Second):
+		return nil, false
+	}
+}
+
+// markDeliveryFailure records which registered component failed. Store only
+// structured edge metadata and the gRPC cause code, never payloads or env vars.
+func (r *PipelineRunner) markDeliveryFailure(err error) {
+	var edge *DeliveryError
+	if !errors.As(err, &edge) {
+		return
+	}
+	id := edge.From
+	if edge.Operation == "send" || edge.Operation == "close" || edge.Operation == "connect" || edge.Operation == "registration" || edge.Operation == "open" {
+		id = edge.To
+	}
+	if id == "sinks" {
+		id = edge.From
+	}
+	client, conn, connectErr := r.getV1ControlPlaneClient()
+	if connectErr != nil {
+		logger.Warn("Cannot mark failed component", zap.Error(connectErr))
+		return
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, heartbeatErr := client.Heartbeat(ctx, &flowctlv1.HeartbeatRequest{
+		ServiceId: id, Status: flowctlv1.HealthStatus_HEALTH_STATUS_UNHEALTHY,
+		Metrics: map[string]string{"delivery_run_id": r.runID, "delivery_edge": edge.Kind, "delivery_operation": edge.Operation, "delivery_cause": status.Code(edge.Err).String()},
+	})
+	if heartbeatErr != nil {
+		logger.Warn("Cannot mark failed component", zap.String("component", id), zap.Error(heartbeatErr))
+	}
 }
 
 // startComponents starts all pipeline components in dependency order
@@ -950,8 +1048,37 @@ func (r *PipelineRunner) Stop() {
 	})
 }
 
-// updateRunStatus updates the run status in the control plane
+// updateRunStatus updates the run status in the control plane.
 func (r *PipelineRunner) updateRunStatus(status flowctlpb.RunStatus) {
+	r.updateRunStatusWithError(status, nil)
+}
+
+// The existing PipelineRun.error protobuf field is persisted in both storage
+// backends. Keep this record structured and free of raw server messages, which
+// may contain secrets; the full error remains available on the CLI at exit.
+func deliveryFailureRecord(err error) string {
+	if err == nil {
+		return ""
+	}
+	var edge *DeliveryError
+	if !errors.As(err, &edge) {
+		return ""
+	}
+	cause := status.Code(edge.Err).String()
+	if errors.Is(edge.Err, io.ErrUnexpectedEOF) {
+		cause = "UNEXPECTED_EOF"
+	} else if errors.Is(edge.Err, io.EOF) {
+		cause = "EOF"
+	}
+	fields := map[string]string{"component": edge.From, "from": edge.From, "to": edge.To, "edge": edge.Kind, "operation": edge.Operation, "cause": cause}
+	if edge.Operation == "send" || edge.Operation == "close" || edge.Operation == "open" || edge.Operation == "connect" || edge.Operation == "registration" {
+		fields["component"] = edge.To
+	}
+	encoded, _ := json.Marshal(fields)
+	return string(encoded)
+}
+
+func (r *PipelineRunner) updateRunStatusWithError(status flowctlpb.RunStatus, failure error) {
 	if r.runID == "" {
 		// No run ID means run tracking failed to initialize
 		return
@@ -989,6 +1116,7 @@ func (r *PipelineRunner) updateRunStatus(status flowctlpb.RunStatus) {
 		RunId:   r.runID,
 		Status:  status,
 		Metrics: metrics,
+		Error:   deliveryFailureRecord(failure),
 	}
 
 	_, err = client.UpdatePipelineRun(r.ctx, req)
