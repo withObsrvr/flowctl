@@ -271,7 +271,7 @@ func (s *ControlPlaneServer) Heartbeat(ctx context.Context, req *flowctlv1.Heart
 	now := time.Now()
 	service.LastSeen = now
 	service.Status.Metrics = mergeStringMaps(service.Status.Metrics, req.Metrics)
-	if req.Status != flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN {
+	if req.Status != flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN && !(service.Status.Metrics["delivery_run_id"] != "" && req.Status == flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY) {
 		service.Status.Status = req.Status
 	} else if service.Status.Status == flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN {
 		service.Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY
@@ -283,7 +283,7 @@ func (s *ControlPlaneServer) Heartbeat(ctx context.Context, req *flowctlv1.Heart
 		err := s.storage.UpdateService(ctx, req.ServiceId, func(storedService *storage.ServiceInfo) error {
 			storedService.LastSeen = now
 			storedService.Status.Metrics = mergeStringMaps(storedService.Status.Metrics, req.Metrics)
-			if req.Status != flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN {
+			if req.Status != flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN && !(storedService.Status.Metrics["delivery_run_id"] != "" && req.Status == flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY) {
 				storedService.Status.Status = req.Status
 			} else if storedService.Status.Status == flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN {
 				storedService.Status.Status = flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY
@@ -569,7 +569,7 @@ func (s *ControlPlaneServer) UpdatePipelineRun(ctx context.Context, req *flowctl
 		if req.Metrics != nil {
 			runInfo.Run.Metrics = req.Metrics
 		}
-		if req.Error != "" {
+		if req.Error != "" && runInfo.Run.Error == "" {
 			runInfo.Run.Error = req.Error
 		}
 		updatedRun = runInfo.Run

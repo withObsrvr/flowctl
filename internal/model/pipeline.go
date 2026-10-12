@@ -1,6 +1,5 @@
 package model
 
-
 // Pipeline represents a data processing pipeline with all components
 type Pipeline struct {
 	APIVersion string   `yaml:"apiVersion" json:"apiVersion"`
@@ -19,36 +18,37 @@ type Metadata struct {
 
 // Spec contains the pipeline specification
 type Spec struct {
-	Description string                 `yaml:"description,omitempty" json:"description,omitempty"`
-	Driver      string                 `yaml:"driver,omitempty" json:"driver,omitempty"`
-	Sources     []Component            `yaml:"sources" json:"sources"`
-	Processors  []Component            `yaml:"processors" json:"processors"`
-	Sinks       []Component            `yaml:"sinks" json:"sinks"`
-	Pipelines   []Component            `yaml:"pipelines,omitempty" json:"pipelines,omitempty"` // New: complete pipelines as components
-	Config      map[string]interface{} `yaml:"config,omitempty" json:"config,omitempty"`
+	Description      string                 `yaml:"description,omitempty" json:"description,omitempty"`
+	Driver           string                 `yaml:"driver,omitempty" json:"driver,omitempty"`
+	RegistrationOnly bool                   `yaml:"registrationOnly,omitempty" json:"registrationOnly,omitempty"`
+	Sources          []Component            `yaml:"sources" json:"sources"`
+	Processors       []Component            `yaml:"processors" json:"processors"`
+	Sinks            []Component            `yaml:"sinks" json:"sinks"`
+	Pipelines        []Component            `yaml:"pipelines,omitempty" json:"pipelines,omitempty"` // New: complete pipelines as components
+	Config           map[string]interface{} `yaml:"config,omitempty" json:"config,omitempty"`
 }
 
 // Component represents a pipeline component (source, processor, sink, or pipeline)
 type Component struct {
-	ID              string                 `yaml:"id" json:"id"`
-	Type            string                 `yaml:"type,omitempty" json:"type,omitempty"`
-	Image           string                 `yaml:"image,omitempty" json:"image,omitempty"` // OCI image reference (alternative to Command)
-	Command         []string               `yaml:"command,omitempty" json:"command,omitempty"` // Local binary path (alternative to Image)
-	Args            []string               `yaml:"args,omitempty" json:"args,omitempty"`                  // Arguments for image/command
-	Inputs          []string               `yaml:"inputs,omitempty" json:"inputs,omitempty"`
-	InputEventTypes []string               `yaml:"input_event_types,omitempty" json:"input_event_types,omitempty"`
-	OutputEventTypes []string              `yaml:"output_event_types,omitempty" json:"output_event_types,omitempty"`
-	Config          map[string]interface{} `yaml:"config,omitempty" json:"config,omitempty"`
-	Env             map[string]string      `yaml:"env,omitempty" json:"env,omitempty"`
-	Volumes         []Volume               `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	Secrets         []SecretMount          `yaml:"secrets,omitempty" json:"secrets,omitempty"`           // New: secret mounts
-	Ports           []Port                 `yaml:"ports,omitempty" json:"ports,omitempty"`
-	HealthCheck     string                 `yaml:"health_check,omitempty" json:"health_check,omitempty"`
-	HealthPort      int                    `yaml:"health_port,omitempty" json:"health_port,omitempty"`
-	Replicas        int                    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
-	Resources       Resources              `yaml:"resources,omitempty" json:"resources,omitempty"`
-	DependsOn       []string               `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`       // New: pipeline dependencies
-	RestartPolicy   string                 `yaml:"restart_policy,omitempty" json:"restart_policy,omitempty"` // New: restart policy for pipelines
+	ID               string                 `yaml:"id" json:"id"`
+	Type             string                 `yaml:"type,omitempty" json:"type,omitempty"`
+	Image            string                 `yaml:"image,omitempty" json:"image,omitempty"`     // OCI image reference (alternative to Command)
+	Command          []string               `yaml:"command,omitempty" json:"command,omitempty"` // Local binary path (alternative to Image)
+	Args             []string               `yaml:"args,omitempty" json:"args,omitempty"`       // Arguments for image/command
+	Inputs           []string               `yaml:"inputs,omitempty" json:"inputs,omitempty"`
+	InputEventTypes  []string               `yaml:"input_event_types,omitempty" json:"input_event_types,omitempty"`
+	OutputEventTypes []string               `yaml:"output_event_types,omitempty" json:"output_event_types,omitempty"`
+	Config           map[string]interface{} `yaml:"config,omitempty" json:"config,omitempty"`
+	Env              map[string]string      `yaml:"env,omitempty" json:"env,omitempty"`
+	Volumes          []Volume               `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Secrets          []SecretMount          `yaml:"secrets,omitempty" json:"secrets,omitempty"` // New: secret mounts
+	Ports            []Port                 `yaml:"ports,omitempty" json:"ports,omitempty"`
+	HealthCheck      string                 `yaml:"health_check,omitempty" json:"health_check,omitempty"`
+	HealthPort       int                    `yaml:"health_port,omitempty" json:"health_port,omitempty"`
+	Replicas         int                    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
+	Resources        Resources              `yaml:"resources,omitempty" json:"resources,omitempty"`
+	DependsOn        []string               `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`         // New: pipeline dependencies
+	RestartPolicy    string                 `yaml:"restart_policy,omitempty" json:"restart_policy,omitempty"` // New: restart policy for pipelines
 }
 
 // Volume represents a volume mount in a component

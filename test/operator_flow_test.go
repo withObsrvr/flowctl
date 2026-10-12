@@ -40,6 +40,7 @@ metadata:
   name: operator-smoke
 spec:
   driver: process
+  registrationOnly: true
   sources:
     - id: test-source
       command: [%q]

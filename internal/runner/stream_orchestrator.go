@@ -2,737 +2,362 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"os"
-	"strconv"
 	"sync"
 	"time"
-
-	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/controlplane"
 	"github.com/withobsrvr/flowctl/internal/model"
-	"github.com/withobsrvr/flowctl/internal/utils/logger"
+	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
-// getSinkBufferSize returns the buffer size for sink channels from environment or default
-func getSinkBufferSize() int {
-	if envVal := os.Getenv("FLOWCTL_SINK_BUFFER_SIZE"); envVal != "" {
-		if size, err := strconv.Atoi(envVal); err == nil && size > 0 {
-			return size
-		}
-	}
-	return 1000 // Default buffer size
+// DeliveryError identifies the edge and operation that failed without exposing
+// component configuration or credentials.
+type DeliveryError struct {
+	Pipeline, RunID, From, To, Kind, Operation string
+	EventID, EventType                         string
+	Err                                        error
 }
 
-// StreamOrchestrator manages data flow between pipeline components
+func (e *DeliveryError) Error() string {
+	context := fmt.Sprintf("pipeline %s/%s edge %s %s -> %s %s", e.Pipeline, e.RunID, e.Kind, e.From, e.To, e.Operation)
+	if e.EventID != "" {
+		context += fmt.Sprintf(" event %s (%s)", e.EventID, e.EventType)
+	}
+	return context + ": " + e.Err.Error()
+}
+func (e *DeliveryError) Unwrap() error { return e.Err }
+
+// StreamOrchestrator owns every transport edge until delivery completes or fails.
 type StreamOrchestrator struct {
-	controlPlane     *controlplane.EmbeddedControlPlane
-	pipeline         *model.Pipeline
-	ctx              context.Context
-	cancel           context.CancelFunc
-	wg               sync.WaitGroup
-	connections      map[string]*grpc.ClientConn
-	processorStreams map[string]flowctlv1.ProcessorService_ProcessClient
-	mu               sync.Mutex
+	controlPlane         *controlplane.EmbeddedControlPlane
+	controlPlaneEndpoint string
+	pipeline             *model.Pipeline
+	runID                string
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	group                *errgroup.Group
+	connections          map[string]*grpc.ClientConn
+	mu                   sync.Mutex
+	started              bool
 }
 
-// NewStreamOrchestrator creates a new stream orchestrator
-func NewStreamOrchestrator(ctx context.Context, controlPlane *controlplane.EmbeddedControlPlane, pipeline *model.Pipeline) *StreamOrchestrator {
-	orchCtx, cancel := context.WithCancel(ctx)
-	return &StreamOrchestrator{
-		controlPlane:     controlPlane,
-		pipeline:         pipeline,
-		ctx:              orchCtx,
-		cancel:           cancel,
-		connections:      make(map[string]*grpc.ClientConn),
-		processorStreams: make(map[string]flowctlv1.ProcessorService_ProcessClient),
-	}
+func NewStreamOrchestrator(ctx context.Context, cp *controlplane.EmbeddedControlPlane, pipeline *model.Pipeline) *StreamOrchestrator {
+	ctx, cancel := context.WithCancel(ctx)
+	group, groupCtx := errgroup.WithContext(ctx)
+	return &StreamOrchestrator{controlPlane: cp, pipeline: pipeline, ctx: groupCtx, cancel: cancel, group: group, connections: make(map[string]*grpc.ClientConn)}
 }
 
-// WireAll wires all components in the pipeline together
-func (s *StreamOrchestrator) WireAll() error {
-	logger.Info("Starting stream orchestrator to wire components")
-
-	// Get all registered components from control plane
-	services, err := s.controlPlane.GetServiceList()
-	if err != nil {
-		return fmt.Errorf("failed to get service list: %w", err)
+func (s *StreamOrchestrator) edge(from, to, kind, operation string, event *flowctlv1.Event, err error) error {
+	e := &DeliveryError{Pipeline: s.pipeline.Metadata.Name, RunID: s.runID, From: from, To: to, Kind: kind, Operation: operation, Err: err}
+	if event != nil {
+		e.EventID, e.EventType = event.Id, event.Type
 	}
-
-	// Build a map of component ID to registered info
-	componentMap := make(map[string]*flowctlv1.ComponentInfo)
-	for _, service := range services {
-		if service.Component != nil {
-			componentMap[service.Component.Id] = service.Component
-		}
-	}
-
-	// Wire sources to first processors (or all if no chaining)
-	for _, source := range s.pipeline.Spec.Sources {
-		_, ok := componentMap[source.ID]
-		if !ok {
-			logger.Error("Source not found in registered components", zap.String("source", source.ID))
-			continue
-		}
-
-		// Find first processor (or processors that accept this source's output)
-		var targetProcessors []model.Component
-		if len(s.pipeline.Spec.Processors) > 0 {
-			// CYCLE 2: Use first processor in chain
-			targetProcessors = []model.Component{s.pipeline.Spec.Processors[0]}
-			logger.Info("Wiring source to first processor in chain",
-				zap.String("source", source.ID),
-				zap.String("first_processor", targetProcessors[0].ID))
-		}
-
-		for _, processor := range targetProcessors {
-			logger.Info("Wiring source to processor",
-				zap.String("source", source.ID),
-				zap.String("processor", processor.ID))
-
-			s.wg.Add(1)
-			go func(src model.Component, proc model.Component) {
-				defer s.wg.Done()
-				processStream, err := s.wireSourceToProcessor(src, proc)
-				if err != nil {
-					logger.Error("Failed to wire source to processor",
-						zap.Error(err),
-						zap.String("source", src.ID),
-						zap.String("processor", proc.ID))
-					return
-				}
-
-				// Store the processor stream for downstream components
-				s.mu.Lock()
-				s.processorStreams[proc.ID] = processStream
-				s.mu.Unlock()
-			}(source, processor)
-		}
-	}
-
-	// CYCLE 2: Wire processor chains (proc[i] -> proc[i+1])
-	for i := 0; i < len(s.pipeline.Spec.Processors)-1; i++ {
-		currentProc := s.pipeline.Spec.Processors[i]
-		nextProc := s.pipeline.Spec.Processors[i+1]
-
-		logger.Info("Wiring processor chain",
-			zap.String("from", currentProc.ID),
-			zap.String("to", nextProc.ID),
-			zap.Int("chain_position", i))
-
-		s.wg.Add(1)
-		go func(curr, next model.Component) {
-			defer s.wg.Done()
-
-			// Wait for current processor stream to be available
-			var currentStream flowctlv1.ProcessorService_ProcessClient
-			for {
-				s.mu.Lock()
-				ps, ok := s.processorStreams[curr.ID]
-				s.mu.Unlock()
-
-				if ok {
-					currentStream = ps
-					break
-				}
-
-				// Wait for upstream wiring to complete
-				select {
-				case <-s.ctx.Done():
-					return
-				case <-time.After(50 * time.Millisecond):
-					// Continue loop
-				}
-			}
-
-			// Wire current processor to next processor
-			nextStream, err := s.wireProcessorToProcessor(curr, next, currentStream)
-			if err != nil {
-				logger.Error("Failed to wire processor chain",
-					zap.Error(err),
-					zap.String("from", curr.ID),
-					zap.String("to", next.ID))
-				return
-			}
-
-			// Store next processor stream for downstream
-			s.mu.Lock()
-			s.processorStreams[next.ID] = nextStream
-			s.mu.Unlock()
-		}(currentProc, nextProc)
-	}
-
-	// Wire last processor to sinks (FAN-OUT)
-	if len(s.pipeline.Spec.Processors) > 0 && len(s.pipeline.Spec.Sinks) > 0 {
-		lastProcessor := s.pipeline.Spec.Processors[len(s.pipeline.Spec.Processors)-1]
-
-		logger.Info("Wiring last processor to sinks (fan-out)",
-			zap.String("processor", lastProcessor.ID),
-			zap.Int("num_sinks", len(s.pipeline.Spec.Sinks)))
-
-		s.wg.Add(1)
-		go func(proc model.Component, sinks []model.Component) {
-			defer s.wg.Done()
-
-			// Wait for last processor stream to be available
-			var processStream flowctlv1.ProcessorService_ProcessClient
-			for {
-				s.mu.Lock()
-				ps, ok := s.processorStreams[proc.ID]
-				s.mu.Unlock()
-
-				if ok {
-					processStream = ps
-					break
-				}
-
-				// Wait for processor chain to complete
-				select {
-				case <-s.ctx.Done():
-					return
-				case <-time.After(50 * time.Millisecond):
-					// Continue loop
-				}
-			}
-
-			// CYCLE 2: Fan out to ALL sinks in parallel (broadcast pattern)
-			if err := s.fanOutToSinks(proc, sinks, processStream); err != nil {
-				logger.Error("Failed to fan out to sinks",
-					zap.Error(err),
-					zap.String("processor", proc.ID))
-			}
-		}(lastProcessor, s.pipeline.Spec.Sinks)
-	}
-
-	logger.Info("Stream orchestrator wired all components")
-	return nil
+	return e
 }
 
-// wireSourceToProcessor connects a source to a processor
-// Returns the processor stream so it can be shared with downstream components
-func (s *StreamOrchestrator) wireSourceToProcessor(source, processor model.Component) (flowctlv1.ProcessorService_ProcessClient, error) {
-	// Get source endpoint from control plane
-	sourceInfo, err := s.getComponentEndpoint(source.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get source endpoint: %w", err)
-	}
-
-	// Get processor endpoint from control plane
-	processorInfo, err := s.getComponentEndpoint(processor.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get processor endpoint: %w", err)
-	}
-
-	// Connect to source
-	sourceConn, err := s.getConnection(sourceInfo.Endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to source: %w", err)
-	}
-
-	// Connect to processor
-	processorConn, err := s.getConnection(processorInfo.Endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to processor: %w", err)
-	}
-
-	// Create clients
-	sourceClient := flowctlv1.NewSourceServiceClient(sourceConn)
-	processorClient := flowctlv1.NewProcessorServiceClient(processorConn)
-
-	// Set large message limits for all streams (50MB)
-	maxMsgSize := 50 * 1024 * 1024 // 50MB
-
-	logger.Info("Creating source stream with large message limits",
-		zap.Int("maxMsgSize", maxMsgSize),
-		zap.String("source", source.ID))
-
-	// Build params from source component's environment variables
-	params := make(map[string]string)
-
-	// Pass START_LEDGER and END_LEDGER as stream parameters
-	if startLedger, ok := source.Env["START_LEDGER"]; ok {
-		params["start_ledger"] = startLedger
-		logger.Info("Passing start_ledger to source stream", zap.String("start_ledger", startLedger))
-	}
-	if endLedger, ok := source.Env["END_LEDGER"]; ok {
-		params["end_ledger"] = endLedger
-		logger.Info("Passing end_ledger to source stream", zap.String("end_ledger", endLedger))
-	}
-
-	// Start streaming from source (limits set on connection)
-	stream, err := sourceClient.StreamEvents(s.ctx, &flowctlv1.StreamRequest{
-		Params: params,
-		Resume: false,
+func (s *StreamOrchestrator) launch(fn func() error) {
+	s.group.Go(func() error {
+		err := fn()
+		if err != nil && s.ctx.Err() != nil && (errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled || status.Code(err) == codes.DeadlineExceeded) {
+			return nil
+		}
+		return err
 	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to start source stream: %w", err)
-	}
-
-	logger.Info("Creating processor stream with large message limits",
-		zap.Int("maxMsgSize", maxMsgSize),
-		zap.String("processor", processor.ID))
-
-	// Create bidirectional processor stream (limits set on connection)
-	processStream, err := processorClient.Process(s.ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to start processor stream: %w", err)
-	}
-
-	logger.Info("Started streaming from source to processor",
-		zap.String("source", source.ID),
-		zap.String("processor", processor.ID))
-
-	// Read from source and write to processor in one goroutine
-	go func() {
-		for {
-			envelope, err := stream.Recv()
-			if err == io.EOF {
-				logger.Info("Source stream ended", zap.String("source", source.ID))
-				processStream.CloseSend()
-				return
-			}
-			if err != nil {
-				logger.Error("Error receiving from source", zap.Error(err), zap.String("source", source.ID))
-				processStream.CloseSend()
-				return
-			}
-
-			// Send event to processor
-			if err := processStream.Send(envelope); err != nil {
-				logger.Error("Error sending to processor", zap.Error(err), zap.String("processor", processor.ID))
-				processStream.CloseSend()
-				return
-			}
-		}
-	}()
-
-	// Return the processor stream so it can be read by downstream components
-	return processStream, nil
 }
 
-// wireProcessorToProcessor connects one processor to another processor (for chaining)
-// Returns the next processor's stream for further chaining
-func (s *StreamOrchestrator) wireProcessorToProcessor(currentProc, nextProc model.Component, currentStream flowctlv1.ProcessorService_ProcessClient) (flowctlv1.ProcessorService_ProcessClient, error) {
-	// Get next processor endpoint from control plane
-	nextProcInfo, err := s.getComponentEndpoint(nextProc.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get next processor endpoint: %w", err)
+// WireAll opens the streams and starts supervised forwarding. Wait must be called
+// after WireAll, including when wiring fails, to reap already-started edges.
+func (s *StreamOrchestrator) WireAll() error {
+	if s.started {
+		return fmt.Errorf("orchestrator already wired")
 	}
-
-	// Connect to next processor
-	nextProcConn, err := s.getConnection(nextProcInfo.Endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to next processor: %w", err)
+	s.started = true
+	if len(s.pipeline.Spec.Sources) == 0 || len(s.pipeline.Spec.Sinks) == 0 {
+		return fmt.Errorf("pipeline %s requires sources and sinks for stream wiring (or explicit registrationOnly mode)", s.pipeline.Metadata.Name)
 	}
+	for _, source := range s.pipeline.Spec.Sources {
+		target := "sinks"
+		if len(s.pipeline.Spec.Processors) > 0 {
+			target = s.pipeline.Spec.Processors[0].ID
+		}
+		srcInfo, err := s.getComponentEndpoint(source.ID)
+		if err != nil {
+			s.cancel()
+			return s.edge(source.ID, target, "source-processor", "registration", nil, err)
+		}
+		srcConn, err := s.getConnection(srcInfo.Endpoint)
+		if err != nil {
+			s.cancel()
+			return s.edge(source.ID, target, "source-processor", "connect", nil, err)
+		}
+		params := map[string]string{}
+		if v := source.Env["START_LEDGER"]; v != "" {
+			params["start_ledger"] = v
+		}
+		if v := source.Env["END_LEDGER"]; v != "" {
+			params["end_ledger"] = v
+		}
+		sourceStream, err := flowctlv1.NewSourceServiceClient(srcConn).StreamEvents(s.ctx, &flowctlv1.StreamRequest{Params: params})
+		if err != nil {
+			s.cancel()
+			return s.edge(source.ID, target, "source-processor", "open", nil, err)
+		}
 
-	// Create next processor client
-	nextProcClient := flowctlv1.NewProcessorServiceClient(nextProcConn)
-
-	// Create bidirectional stream for next processor
-	nextProcessStream, err := nextProcClient.Process(s.ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to start next processor stream: %w", err)
-	}
-
-	logger.Info("Started processor chain link",
-		zap.String("from", currentProc.ID),
-		zap.String("to", nextProc.ID))
-
-	// Forward events from current processor to next processor
-	go func() {
-		for {
-			envelope, err := currentStream.Recv()
-			if err == io.EOF {
-				logger.Info("Processor stream ended in chain", zap.String("processor", currentProc.ID))
-				nextProcessStream.CloseSend()
-				return
-			}
+		// Each source owns its own processor streams. Sharing a bidi stream between
+		// sources would allow concurrent Send/Recv and obscure which edge failed.
+		streams := make([]flowctlv1.ProcessorService_ProcessClient, len(s.pipeline.Spec.Processors))
+		for i, proc := range s.pipeline.Spec.Processors {
+			info, err := s.getComponentEndpoint(proc.ID)
 			if err != nil {
-				logger.Error("Error receiving from processor in chain", zap.Error(err), zap.String("processor", currentProc.ID))
-				nextProcessStream.CloseSend()
-				return
+				s.cancel()
+				return s.edge(source.ID, proc.ID, "processor", "registration", nil, err)
 			}
-
-			// Send event to next processor
-			if err := nextProcessStream.Send(envelope); err != nil {
-				logger.Error("Error sending to next processor in chain", zap.Error(err), zap.String("next_processor", nextProc.ID))
-				nextProcessStream.CloseSend()
-				return
-			}
-		}
-	}()
-
-	// Return the next processor stream for further chaining or sink wiring
-	return nextProcessStream, nil
-}
-
-// fanOutToSinks broadcasts events from a processor to multiple sinks in parallel
-// CYCLE 2: Supports event type-based routing
-// Uses dedicated writer goroutines per sink to ensure thread-safe gRPC stream access
-func (s *StreamOrchestrator) fanOutToSinks(processor model.Component, sinks []model.Component, processStream flowctlv1.ProcessorService_ProcessClient) error {
-	// Create sink connections and streams
-	type sinkConnection struct {
-		sink               model.Component
-		stream             flowctlv1.ConsumerService_ConsumeClient
-		acceptedEventTypes []string                 // CYCLE 2: Event type filtering
-		eventChan          chan *flowctlv1.Event    // Channel for serializing sends
-	}
-
-	var sinkConns []sinkConnection
-
-	// Connect to all sinks first
-	for _, sink := range sinks {
-		sinkInfo, err := s.getComponentEndpoint(sink.ID)
-		if err != nil {
-			logger.Error("Failed to get sink endpoint for fan-out", zap.Error(err), zap.String("sink", sink.ID))
-			continue
-		}
-
-		sinkConn, err := s.getConnection(sinkInfo.Endpoint)
-		if err != nil {
-			logger.Error("Failed to connect to sink for fan-out", zap.Error(err), zap.String("sink", sink.ID))
-			continue
-		}
-
-		sinkClient := flowctlv1.NewConsumerServiceClient(sinkConn)
-		consumeStream, err := sinkClient.Consume(s.ctx)
-		if err != nil {
-			logger.Error("Failed to start consumer stream for fan-out", zap.Error(err), zap.String("sink", sink.ID))
-			continue
-		}
-
-		// CYCLE 2: Get accepted event types from sink registration
-		acceptedTypes := sinkInfo.InputEventTypes
-		if len(acceptedTypes) > 0 {
-			logger.Info("Sink accepts specific event types",
-				zap.String("sink", sink.ID),
-				zap.Strings("event_types", acceptedTypes))
-		} else {
-			logger.Info("Sink accepts all event types",
-				zap.String("sink", sink.ID))
-		}
-
-		bufferSize := getSinkBufferSize()
-		sinkConns = append(sinkConns, sinkConnection{
-			sink:               sink,
-			stream:             consumeStream,
-			acceptedEventTypes: acceptedTypes,
-			eventChan:          make(chan *flowctlv1.Event, bufferSize),
-		})
-		logger.Info("Connected sink for fan-out",
-			zap.String("sink", sink.ID),
-			zap.Int("buffer_size", bufferSize))
-	}
-
-	if len(sinkConns) == 0 {
-		return fmt.Errorf("no sinks successfully connected for fan-out")
-	}
-
-	logger.Info("Fan-out ready",
-		zap.String("processor", processor.ID),
-		zap.Int("num_sinks", len(sinkConns)))
-
-	// WaitGroup to track writer goroutines
-	var writerWg sync.WaitGroup
-
-	// Start a dedicated writer goroutine for each sink
-	// This ensures thread-safe access to each gRPC stream (one goroutine per stream)
-	for i := range sinkConns {
-		sc := &sinkConns[i]
-		writerWg.Add(1)
-		go func(sinkConn *sinkConnection) {
-			defer writerWg.Done()
-			var eventsSent int64
-			var sendErrors int64
-
-			for event := range sinkConn.eventChan {
-				if err := sinkConn.stream.Send(event); err != nil {
-					sendErrors++
-					logger.Error("Error sending to sink in fan-out",
-						zap.Error(err),
-						zap.String("sink", sinkConn.sink.ID),
-						zap.String("event_id", event.Id),
-						zap.String("event_type", event.Type))
-					// Continue processing remaining events
-				} else {
-					eventsSent++
-				}
-			}
-
-			// Channel closed, close the stream
-			logger.Info("Sink writer finished, closing stream",
-				zap.String("sink", sinkConn.sink.ID),
-				zap.Int64("events_sent", eventsSent),
-				zap.Int64("send_errors", sendErrors))
-			sinkConn.stream.CloseAndRecv()
-		}(sc)
-	}
-
-	// Read from processor and broadcast to sink channels
-	go func() {
-		eventsFiltered := make(map[string]int64) // Track events filtered per sink
-		droppedEvents := make(map[string]int64)  // Track events dropped per sink due to buffer full
-
-		for {
-			envelope, err := processStream.Recv()
-			if err == io.EOF {
-				logger.Info("Processor stream ended, closing sink channels", zap.String("processor", processor.ID))
-				// Log filtering and drop statistics
-				for _, sc := range sinkConns {
-					if filtered := eventsFiltered[sc.sink.ID]; filtered > 0 {
-						logger.Info("Sink filtering statistics",
-							zap.String("sink", sc.sink.ID),
-							zap.Int64("events_filtered", filtered))
-					}
-					if dropped := droppedEvents[sc.sink.ID]; dropped > 0 {
-						logger.Error("Sink dropped events due to buffer pressure",
-							zap.String("sink", sc.sink.ID),
-							zap.Int64("events_dropped", dropped))
-					}
-				}
-				// Close all sink channels to signal writers to finish
-				for i := range sinkConns {
-					close(sinkConns[i].eventChan)
-				}
-				// Wait for all writers to finish before returning
-				writerWg.Wait()
-				return
-			}
+			conn, err := s.getConnection(info.Endpoint)
 			if err != nil {
-				logger.Error("Error receiving from processor for fan-out", zap.Error(err), zap.String("processor", processor.ID))
-				// Close all sink channels to signal writers to finish
-				for i := range sinkConns {
-					close(sinkConns[i].eventChan)
-				}
-				// Wait for all writers to finish before returning
-				writerWg.Wait()
-				return
+				s.cancel()
+				return s.edge(source.ID, proc.ID, "processor", "connect", nil, err)
 			}
-
-			// CYCLE 2: Broadcast to matching sinks based on event type
-			for i := range sinkConns {
-				sc := &sinkConns[i]
-				// Check if sink accepts this event type
-				if !s.sinkAcceptsEventType(sc.acceptedEventTypes, envelope.Type) {
-					eventsFiltered[sc.sink.ID]++
-					continue
-				}
-
-				// Send to sink's channel with timeout for backpressure
-				// This allows the reader to slow down when sinks can't keep up,
-				// while preventing indefinite blocking
-				select {
-				case sc.eventChan <- envelope:
-					// Event queued successfully
-				case <-time.After(5 * time.Second):
-					// Buffer full for extended period - log error and continue
-					// This preserves backpressure while preventing indefinite blocking
-					logger.Error("Sink channel full after timeout, event dropped",
-						zap.String("sink", sc.sink.ID),
-						zap.String("event_id", envelope.Id),
-						zap.String("event_type", envelope.Type))
-					droppedEvents[sc.sink.ID]++
-				}
+			streams[i], err = flowctlv1.NewProcessorServiceClient(conn).Process(s.ctx)
+			if err != nil {
+				s.cancel()
+				return s.edge(source.ID, proc.ID, "processor", "open", nil, err)
 			}
 		}
-	}()
-
+		last := source.ID
+		kind := "source-sink"
+		if len(streams) > 0 {
+			last = s.pipeline.Spec.Processors[len(streams)-1].ID
+			kind = "processor-sink"
+		}
+		sinks := make([]sinkStream, 0, len(s.pipeline.Spec.Sinks))
+		for _, sink := range s.pipeline.Spec.Sinks {
+			info, err := s.getComponentEndpoint(sink.ID)
+			if err != nil {
+				s.cancel()
+				return s.edge(last, sink.ID, kind, "registration", nil, err)
+			}
+			conn, err := s.getConnection(info.Endpoint)
+			if err != nil {
+				s.cancel()
+				return s.edge(last, sink.ID, kind, "connect", nil, err)
+			}
+			stream, err := flowctlv1.NewConsumerServiceClient(conn).Consume(s.ctx)
+			if err != nil {
+				s.cancel()
+				return s.edge(last, sink.ID, kind, "open", nil, err)
+			}
+			sinks = append(sinks, sinkStream{id: sink.ID, accepted: info.InputEventTypes, stream: stream})
+		}
+		if len(streams) == 0 {
+			bounded := params["end_ledger"] != ""
+			s.launch(func() error {
+				return s.fanOut(sourceReceiver{sourceStream, s.ctx, bounded}, source.ID, sinks, "source-sink")
+			})
+			continue
+		}
+		first := s.pipeline.Spec.Processors[0].ID
+		bounded := params["end_ledger"] != ""
+		s.launch(func() error { return s.forwardSource(sourceStream, streams[0], source.ID, first, bounded) })
+		for i := 0; i < len(streams)-1; i++ {
+			from, to := s.pipeline.Spec.Processors[i].ID, s.pipeline.Spec.Processors[i+1].ID
+			current, next := streams[i], streams[i+1]
+			s.launch(func() error { return s.forward(current, next, from, to) })
+		}
+		s.launch(func() error { return s.fanOut(streams[len(streams)-1], last, sinks) })
+	}
 	return nil
 }
 
-// sinkAcceptsEventType checks if a sink accepts a given event type
-// If acceptedTypes is empty, sink accepts all event types
-func (s *StreamOrchestrator) sinkAcceptsEventType(acceptedTypes []string, eventType string) bool {
-	// Empty list means accept all types
-	if len(acceptedTypes) == 0 {
+func (s *StreamOrchestrator) forwardSource(from interface {
+	Recv() (*flowctlv1.Event, error)
+}, to flowctlv1.ProcessorService_ProcessClient, fromID, toID string, bounded bool) error {
+	for {
+		event, err := from.Recv()
+		if err == io.EOF {
+			if !bounded && s.ctx.Err() == nil {
+				return s.edge(fromID, toID, "source-processor", "recv (unexpected EOF)", nil, io.ErrUnexpectedEOF)
+			}
+			if err := to.CloseSend(); err != nil {
+				return s.edge(fromID, toID, "source-processor", "close", nil, err)
+			}
+			return nil
+		}
+		if err != nil {
+			return s.edge(fromID, toID, "source-processor", "recv", nil, err)
+		}
+		if err := to.Send(event); err != nil {
+			return s.edge(fromID, toID, "source-processor", "send", event, err)
+		}
+	}
+}
+
+func (s *StreamOrchestrator) forward(from, to flowctlv1.ProcessorService_ProcessClient, fromID, toID string) error {
+	for {
+		event, err := from.Recv()
+		if err == io.EOF {
+			if err := to.CloseSend(); err != nil {
+				return s.edge(fromID, toID, "processor-processor", "close", nil, err)
+			}
+			return nil
+		}
+		if err != nil {
+			return s.edge(fromID, toID, "processor-processor", "recv", nil, err)
+		}
+		if err := to.Send(event); err != nil {
+			return s.edge(fromID, toID, "processor-processor", "send", event, err)
+		}
+	}
+}
+
+type sourceReceiver struct {
+	stream interface {
+		Recv() (*flowctlv1.Event, error)
+	}
+	ctx     context.Context
+	bounded bool
+}
+
+func (r sourceReceiver) Recv() (*flowctlv1.Event, error) {
+	event, err := r.stream.Recv()
+	if err == io.EOF && r.ctx.Err() != nil {
+		return nil, r.ctx.Err()
+	}
+	if err == io.EOF && !r.bounded {
+		return nil, io.ErrUnexpectedEOF
+	}
+	return event, err
+}
+
+type sinkStream struct {
+	id       string
+	accepted []string
+	stream   flowctlv1.ConsumerService_ConsumeClient
+}
+
+func accepts(types []string, eventType string) bool {
+	if len(types) == 0 {
 		return true
 	}
-
-	// Check if event type is in accepted list
-	for _, acceptedType := range acceptedTypes {
-		if acceptedType == eventType {
+	for _, t := range types {
+		if t == eventType {
 			return true
 		}
 	}
-
 	return false
 }
 
-// wireProcessorToSink connects a processor to a sink using an existing processor stream
-func (s *StreamOrchestrator) wireProcessorToSink(processor, sink model.Component, processStream flowctlv1.ProcessorService_ProcessClient) error {
-	// Get sink endpoint from control plane
-	sinkInfo, err := s.getComponentEndpoint(sink.ID)
-	if err != nil {
-		return fmt.Errorf("failed to get sink endpoint: %w", err)
+// Sending synchronously provides backpressure without dropping events. A blocked
+// send is interrupted by the pipeline context when another edge fails.
+func (s *StreamOrchestrator) fanOut(from interface {
+	Recv() (*flowctlv1.Event, error)
+}, fromID string, sinks []sinkStream, edgeKind ...string) error {
+	kind := "processor-sink"
+	if len(edgeKind) > 0 {
+		kind = edgeKind[0]
 	}
-
-	// Connect to sink
-	sinkConn, err := s.getConnection(sinkInfo.Endpoint)
-	if err != nil {
-		return fmt.Errorf("failed to connect to sink: %w", err)
-	}
-
-	// Create sink client
-	sinkClient := flowctlv1.NewConsumerServiceClient(sinkConn)
-
-	// Start consumer stream (limits set on connection)
-	consumeStream, err := sinkClient.Consume(s.ctx)
-	if err != nil {
-		return fmt.Errorf("failed to start consumer stream: %w", err)
-	}
-
-	logger.Info("Started streaming from processor to sink",
-		zap.String("processor", processor.ID),
-		zap.String("sink", sink.ID))
-
-	// Forward events from processor to sink
-	go func() {
-		for {
-			envelope, err := processStream.Recv()
-			if err == io.EOF {
-				logger.Info("Processor stream ended", zap.String("processor", processor.ID))
-				consumeStream.CloseAndRecv()
-				return
+	for {
+		event, err := from.Recv()
+		if err == io.EOF {
+			for _, sink := range sinks {
+				response, err := sink.stream.CloseAndRecv()
+				if err != nil {
+					return s.edge(fromID, sink.id, kind, "close", nil, err)
+				}
+				if response.GetEventsFailed() > 0 || len(response.GetErrors()) > 0 {
+					return s.edge(fromID, sink.id, kind, "close", nil, fmt.Errorf("sink reported %d failed events (%d errors)", response.GetEventsFailed(), len(response.GetErrors())))
+				}
 			}
-			if err != nil {
-				logger.Error("Error receiving from processor", zap.Error(err), zap.String("processor", processor.ID))
-				consumeStream.CloseAndRecv()
-				return
-			}
-
-			// Send event to sink
-			if err := consumeStream.Send(envelope); err != nil {
-				logger.Error("Error sending to sink", zap.Error(err), zap.String("sink", sink.ID))
-				continue
+			return nil
+		}
+		if err != nil {
+			return s.edge(fromID, "sinks", kind, "recv", nil, err)
+		}
+		for _, sink := range sinks {
+			if accepts(sink.accepted, event.Type) {
+				if err := sink.stream.Send(event); err != nil {
+					// gRPC may report EOF on Send while the actual server error is
+					// available only from CloseAndRecv.
+					if errors.Is(err, io.EOF) {
+						if _, closeErr := sink.stream.CloseAndRecv(); closeErr != nil {
+							err = closeErr
+						}
+					}
+					return s.edge(fromID, sink.id, kind, "send", event, err)
+				}
 			}
 		}
-	}()
-
-	return nil
+	}
 }
 
-// getComponentEndpoint gets the endpoint of a component from the control plane
-func (s *StreamOrchestrator) getComponentEndpoint(componentID string) (*flowctlv1.ComponentInfo, error) {
-	// Query control plane for component list
-	services, err := s.controlPlane.GetServiceList()
-	if err != nil {
-		return nil, err
-	}
-
-	// Find the component by ID
-	for _, service := range services {
-		if service.Component != nil && service.Component.Id == componentID {
-			return service.Component, nil
+func (s *StreamOrchestrator) getComponentEndpoint(id string) (*flowctlv1.ComponentInfo, error) {
+	if s.controlPlane != nil {
+		services, err := s.controlPlane.GetServiceList()
+		if err != nil {
+			return nil, err
+		}
+		for _, service := range services {
+			if service.Component != nil && service.Component.Id == id {
+				return service.Component, nil
+			}
+		}
+	} else {
+		conn, err := s.getConnection(s.controlPlaneEndpoint)
+		if err != nil {
+			return nil, err
+		}
+		ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+		defer cancel()
+		resp, err := flowctlv1.NewControlPlaneServiceClient(conn).ListComponents(ctx, &flowctlv1.ListComponentsRequest{IncludeUnhealthy: true})
+		if err != nil {
+			return nil, err
+		}
+		for _, service := range resp.Components {
+			if service.Component != nil && service.Component.Id == id {
+				return service.Component, nil
+			}
 		}
 	}
-
-	return nil, fmt.Errorf("component %s not found", componentID)
+	return nil, fmt.Errorf("component %s not registered", id)
 }
 
-// getConnection gets or creates a gRPC connection to an endpoint
 func (s *StreamOrchestrator) getConnection(endpoint string) (*grpc.ClientConn, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	// Check if we already have a connection
-	if conn, ok := s.connections[endpoint]; ok {
-		logger.Info("Reusing existing connection",
-			zap.String("endpoint", endpoint))
+	if conn := s.connections[endpoint]; conn != nil {
 		return conn, nil
 	}
-
-	// Create new connection with larger message limits (50MB)
-	maxMsgSize := 50 * 1024 * 1024 // 50MB
-
-	logger.Info("Creating NEW connection with message limits",
-		zap.String("endpoint", endpoint),
-		zap.Int("maxMsgSize", maxMsgSize))
-
-	conn, err := grpc.NewClient(endpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(maxMsgSize),
-			grpc.MaxCallSendMsgSize(maxMsgSize),
-		),
-	)
-	if err != nil {
-		return nil, err
+	const maxMessage = 50 * 1024 * 1024
+	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMessage), grpc.MaxCallSendMsgSize(maxMessage)))
+	if err == nil {
+		s.connections[endpoint] = conn
 	}
-
-	s.connections[endpoint] = conn
-	logger.Info("Connection created and cached",
-		zap.String("endpoint", endpoint))
-	return conn, nil
+	return conn, err
 }
 
-// findDownstreamProcessorsFromRegistry finds processors that accept the given event types from control plane registry
-func (s *StreamOrchestrator) findDownstreamProcessorsFromRegistry(outputTypes []string, componentMap map[string]*flowctlv1.ComponentInfo) []model.Component {
-	var processors []model.Component
-
-	for _, processor := range s.pipeline.Spec.Processors {
-		processorInfo, ok := componentMap[processor.ID]
-		if !ok {
-			continue
-		}
-
-		// Check if processor accepts any of the output types
-		for _, outputType := range outputTypes {
-			for _, inputType := range processorInfo.InputEventTypes {
-				if outputType == inputType {
-					processors = append(processors, processor)
-					break
-				}
-			}
-		}
+// Wait reaps all forwarding loops; cancellation is not a delivery failure.
+func (s *StreamOrchestrator) Wait() error {
+	err := s.group.Wait()
+	if s.ctx.Err() != nil && (errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled || err == nil) {
+		return nil
 	}
-
-	return processors
+	return err
 }
 
-// findDownstreamSinksFromRegistry finds sinks that accept the given event types from control plane registry
-func (s *StreamOrchestrator) findDownstreamSinksFromRegistry(outputTypes []string, componentMap map[string]*flowctlv1.ComponentInfo) []model.Component {
-	var sinks []model.Component
-
-	for _, sink := range s.pipeline.Spec.Sinks {
-		sinkInfo, ok := componentMap[sink.ID]
-		if !ok {
-			continue
-		}
-
-		// Check if sink accepts any of the output types
-		for _, outputType := range outputTypes {
-			for _, inputType := range sinkInfo.InputEventTypes {
-				if outputType == inputType {
-					sinks = append(sinks, sink)
-					break
-				}
-			}
-		}
-	}
-
-	return sinks
-}
-
-// Stop stops the stream orchestrator and closes all connections
 func (s *StreamOrchestrator) Stop() error {
-	logger.Info("Stopping stream orchestrator")
-
 	s.cancel()
-	s.wg.Wait()
-
-	// Close all connections
+	err := s.Wait()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	for endpoint, conn := range s.connections {
-		logger.Info("Closing connection", zap.String("endpoint", endpoint))
-		conn.Close()
+	for _, conn := range s.connections {
+		_ = conn.Close()
 	}
-
-	return nil
+	return err
 }
