@@ -293,7 +293,7 @@ spec:
 - Component `inputs` - Upstream component IDs; processors are wired in list order in process mode
 
 Processors are optional: when none are defined, flowctl wires each source
-directly to the sinks. Multiple sinks receive matching event types; a slow
+directly to sinks that list its ID in `inputs`. Multiple sinks receive matching event types; a slow
 sink applies backpressure rather than causing dropped events. Use
 `spec.registrationOnly: true` **only** for intentional monitor-only pipelines:
 it disables stream wiring and delivery supervision, so `RUNNING` then means

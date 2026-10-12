@@ -22,9 +22,10 @@ prebuilt flowctl and SDK processor binaries and network access.
 
 ## Direct wiring and durable failure records
 
-Pipelines without processors now wire `source → sink` and supervise delivery
-with the same cancellation and completion semantics. Components that only
-register with the control plane must opt out explicitly using
+Pipelines without processors now wire `source → sink` only for sinks that
+list the source ID in `inputs`, and supervise delivery with the same
+cancellation and completion semantics. Components that only register with
+the control plane must opt out explicitly using
 `spec.registrationOnly: true`. In this mode, `RUNNING` means registered, **not**
 that events are being delivered; use it only for intentional monitor-only
 pipelines. The operator smoke test uses this explicit mode.

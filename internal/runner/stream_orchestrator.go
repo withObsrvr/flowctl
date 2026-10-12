@@ -139,6 +139,11 @@ func (s *StreamOrchestrator) WireAll() error {
 		}
 		sinks := make([]sinkStream, 0, len(s.pipeline.Spec.Sinks))
 		for _, sink := range s.pipeline.Spec.Sinks {
+			// Without processors, inputs describe the only valid source-to-sink
+			// edges. Event-type filtering is applied separately after routing.
+			if len(streams) == 0 && !hasInput(sink.Inputs, source.ID) {
+				continue
+			}
 			info, err := s.getComponentEndpoint(sink.ID)
 			if err != nil {
 				s.cancel()
@@ -157,6 +162,10 @@ func (s *StreamOrchestrator) WireAll() error {
 			sinks = append(sinks, sinkStream{id: sink.ID, accepted: info.InputEventTypes, stream: stream})
 		}
 		if len(streams) == 0 {
+			if len(sinks) == 0 {
+				s.cancel()
+				return fmt.Errorf("pipeline %s source %s has no sink declaring it in inputs", s.pipeline.Metadata.Name, source.ID)
+			}
 			bounded := params["end_ledger"] != ""
 			s.launch(func() error {
 				return s.fanOut(sourceReceiver{sourceStream, s.ctx, bounded}, source.ID, sinks, "source-sink")
@@ -174,6 +183,15 @@ func (s *StreamOrchestrator) WireAll() error {
 		s.launch(func() error { return s.fanOut(streams[len(streams)-1], last, sinks) })
 	}
 	return nil
+}
+
+func hasInput(inputs []string, id string) bool {
+	for _, input := range inputs {
+		if input == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *StreamOrchestrator) forwardSource(from interface {

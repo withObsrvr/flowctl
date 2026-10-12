@@ -30,7 +30,7 @@ type sinkService struct {
 
 func (sourceService) StreamEvents(_ *flowctlv1.StreamRequest, stream grpc.ServerStreamingServer[flowctlv1.Event]) error {
 	if os.Getenv("DELIVERY_MODE") != "fail-before" {
-		if err := stream.Send(&flowctlv1.Event{Id: "test-event-1", Type: "test.event"}); err != nil {
+		if err := stream.Send(&flowctlv1.Event{Id: os.Getenv("FLOWCTL_COMPONENT_ID"), Type: "test.event"}); err != nil {
 			return err
 		}
 	}
@@ -66,7 +66,10 @@ func (sinkService) Consume(stream grpc.ClientStreamingServer[flowctlv1.Event, fl
 		return status.Error(codes.Internal, "synthetic sink failure")
 	}
 	for {
-		_, err := stream.Recv()
+		event, err := stream.Recv()
+		if err == nil {
+			log.Printf("DELIVERY_RECEIVED id=%s", event.Id)
+		}
 		if err == io.EOF {
 			return stream.SendAndClose(&flowctlv1.ConsumeResponse{})
 		}

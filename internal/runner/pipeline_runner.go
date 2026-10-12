@@ -300,8 +300,6 @@ func (r *PipelineRunner) Run() error {
 	select {
 	case deliveryErr = <-terminal:
 		if deliveryErr != nil {
-			logger.Error("Pipeline delivery failed", zap.Error(deliveryErr), zap.String("run_id", r.runID))
-			r.markDeliveryFailure(deliveryErr)
 			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_FAILED
 		} else if r.ctx.Err() != nil {
 			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_STOPPED
@@ -323,20 +321,18 @@ func (r *PipelineRunner) Run() error {
 	// Reap delivery before stopping components. Prefer an already-reported
 	// failure over a simultaneous interrupt, but don't fail on cancellation.
 	if shutdownStatus == flowctlpb.RunStatus_RUN_STATUS_STOPPED && !registrationOnly {
-		select {
-		case deliveryErr = <-terminal:
-			if deliveryErr != nil {
-				shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_FAILED
-				r.markDeliveryFailure(deliveryErr)
-			}
-		default:
-			streamOrch.cancel()
-			select {
-			case <-terminal:
-			case <-time.After(10 * time.Second):
-				logger.Warn("Timed out waiting for forwarding loops to exit")
-			}
+		var reaped bool
+		deliveryErr, reaped = waitForTerminalOnStop(terminal, streamOrch.cancel)
+		if !reaped {
+			logger.Warn("Timed out waiting for forwarding loops to exit")
 		}
+		if deliveryErr != nil {
+			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_FAILED
+		}
+	}
+	if deliveryErr != nil {
+		logger.Error("Pipeline delivery failed", zap.Error(deliveryErr), zap.String("run_id", r.runID))
+		r.markDeliveryFailure(deliveryErr)
 	}
 	// Update run status before shutdown
 	r.updateRunStatusWithError(shutdownStatus, deliveryErr)
@@ -346,6 +342,23 @@ func (r *PipelineRunner) Run() error {
 		return deliveryErr
 	}
 	return shutdownErr
+}
+
+// waitForTerminalOnStop preserves a failure already reported or captured by
+// the errgroup while cancellation is in progress. A cancelled edge returns nil.
+func waitForTerminalOnStop(terminal <-chan error, cancel func()) (error, bool) {
+	select {
+	case err := <-terminal:
+		return err, true
+	default:
+	}
+	cancel()
+	select {
+	case err := <-terminal:
+		return err, true
+	case <-time.After(10 * time.Second):
+		return nil, false
+	}
 }
 
 // markDeliveryFailure records which registered component failed. Store only
