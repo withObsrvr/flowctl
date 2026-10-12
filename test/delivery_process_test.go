@@ -34,6 +34,9 @@ func TestProcessDeliveryTerminalResult(t *testing.T) {
 		{"fail-before", "", "", false, true, false, "synthetic source failure", "source -> processor"},
 		{"fail-after", "", "", false, true, false, "synthetic source failure", "source -> processor"},
 		{"bounded", "", "", true, false, false, "RUN_STATUS_COMPLETED", ""},
+		{"drain", "", "drain", true, false, true, "RUN_STATUS_COMPLETED", ""},
+		{"drain", "", "drain-fail", true, true, true, "failed 1", "source -> sink"},
+		{"drain-stop", "", "drain", true, false, true, "RUN_STATUS_STOPPED", ""},
 		{"unbounded-eof", "", "", false, true, false, "unexpected EOF", "source -> processor"},
 		{"bounded", "processor-fail", "", true, true, false, "synthetic processor failure", "processor -> sinks"},
 		{"bounded", "", "sink-fail", true, true, false, "synthetic sink failure", "processor -> sink"},
@@ -47,7 +50,7 @@ func TestProcessDeliveryTerminalResult(t *testing.T) {
 		t.Run(fmt.Sprintf("%s-%s-%s-direct=%t", tc.mode, tc.processorMode, tc.sinkMode, tc.direct), func(t *testing.T) {
 			sourceEnv := fmt.Sprintf("        DELIVERY_MODE: %s\n", tc.mode)
 			if tc.bounded {
-				sourceEnv += "        END_LEDGER: \"2\"\n"
+				sourceEnv += "        END_LEDGER: \"2\"\n        FLOWCTL_SOURCE_BOUNDED: \"true\"\n"
 			}
 			processorSection := fmt.Sprintf(`  processors:
     - id: processor
@@ -89,16 +92,31 @@ spec:
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, flowctl, "run", "--show-status=false", "--db-path", db, "--control-plane-port=0", "--log-dir", filepath.Join(dir, tc.mode+"-logs"), file)
-			cmd.Dir = root
+			cmd.Dir = filepath.Join(dir, strings.ReplaceAll(t.Name(), "/", "-"))
+			if err := os.MkdirAll(cmd.Dir, 0700); err != nil {
+				t.Fatal(err)
+			}
 			var out []byte
 			var err error
-			if tc.mode == "wait" {
+			if tc.mode == "wait" || tc.mode == "drain-stop" {
 				var buf bytes.Buffer
 				cmd.Stdout, cmd.Stderr = &buf, &buf
 				if err = cmd.Start(); err != nil {
 					t.Fatal(err)
 				}
-				time.Sleep(2 * time.Second)
+				if tc.mode == "drain-stop" {
+					logPath := filepath.Join(cmd.Dir, "logs", "sink.log")
+					deadline := time.Now().Add(10 * time.Second)
+					for time.Now().Before(deadline) {
+						contents, _ := os.ReadFile(logPath)
+						if strings.Contains(string(contents), "DELIVERY_RECEIVED id=") {
+							break
+						}
+						time.Sleep(10 * time.Millisecond)
+					}
+				} else {
+					time.Sleep(2 * time.Second)
+				}
 				if err = cmd.Process.Signal(os.Interrupt); err != nil {
 					t.Fatal(err)
 				}
@@ -122,6 +140,32 @@ spec:
 			if tc.failed && !strings.Contains(string(out), tc.edge) {
 				t.Fatalf("missing failing edge:\n%s", out)
 			}
+			if tc.mode == "drain-stop" {
+				contents, readErr := os.ReadFile(filepath.Join(cmd.Dir, "logs", "sink.log"))
+				if readErr != nil || strings.Contains(string(contents), "DELIVERY_RECEIVED id=119") {
+					t.Fatalf("drain did not stop in flight: %v %s", readErr, contents)
+				}
+			}
+			if tc.mode == "drain" && !tc.failed {
+				contents, readErr := os.ReadFile(filepath.Join(cmd.Dir, "logs", "sink.log"))
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				seen := make(map[string]bool)
+				for _, line := range strings.Split(string(contents), "\n") {
+					if i := strings.Index(line, "DELIVERY_RECEIVED id="); i >= 0 {
+						seen[strings.TrimSpace(line[i+len("DELIVERY_RECEIVED id="):])] = true
+					}
+				}
+				if len(seen) != 120 {
+					t.Fatalf("sink did not finish all 120: %d unique\n%s", len(seen), contents)
+				}
+				for i := 0; i < 120; i++ {
+					if !seen[fmt.Sprint(i)] {
+						t.Fatalf("missing %d", i)
+					}
+				}
+			}
 			if tc.failed && !strings.Contains(string(out), "RUN_STATUS_FAILED") {
 				t.Fatalf("run was not marked failed:\n%s", out)
 			}
@@ -133,6 +177,9 @@ spec:
 			_ = store.Close()
 			if err != nil || len(runs) != 1 {
 				t.Fatalf("stored runs=%d err=%v", len(runs), err)
+			}
+			if (tc.failed && runs[0].Run.Status != flowctlpb.RunStatus_RUN_STATUS_FAILED) || (tc.mode == "drain-stop" && runs[0].Run.Status != flowctlpb.RunStatus_RUN_STATUS_STOPPED) || (!tc.failed && tc.mode != "wait" && tc.mode != "drain-stop" && runs[0].Run.Status != flowctlpb.RunStatus_RUN_STATUS_COMPLETED) {
+				t.Fatalf("wrong stored status: %s", runs[0].Run.Status)
 			}
 			if tc.failed {
 				if (!strings.Contains(runs[0].Run.Error, `"from":"source"`) && !strings.Contains(runs[0].Run.Error, `"from":"processor"`)) || !strings.Contains(runs[0].Run.Error, `"cause":`) || strings.Contains(runs[0].Run.Error, "synthetic source failure") {

@@ -321,11 +321,7 @@ func (r *PipelineRunner) Run() error {
 	// Reap delivery before stopping components. Prefer an already-reported
 	// failure over a simultaneous interrupt, but don't fail on cancellation.
 	if shutdownStatus == flowctlpb.RunStatus_RUN_STATUS_STOPPED && !registrationOnly {
-		var reaped bool
-		deliveryErr, reaped = waitForTerminalOnStop(terminal, streamOrch.cancel)
-		if !reaped {
-			logger.Warn("Timed out waiting for forwarding loops to exit")
-		}
+		deliveryErr = waitForTerminalOnStop(terminal, streamOrch.cancel)
 		if deliveryErr != nil {
 			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_FAILED
 		}
@@ -346,19 +342,14 @@ func (r *PipelineRunner) Run() error {
 
 // waitForTerminalOnStop preserves a failure already reported or captured by
 // the errgroup while cancellation is in progress. A cancelled edge returns nil.
-func waitForTerminalOnStop(terminal <-chan error, cancel func()) (error, bool) {
+func waitForTerminalOnStop(terminal <-chan error, cancel func()) error {
 	select {
 	case err := <-terminal:
-		return err, true
+		return err
 	default:
 	}
 	cancel()
-	select {
-	case err := <-terminal:
-		return err, true
-	case <-time.After(10 * time.Second):
-		return nil, false
-	}
+	return <-terminal // never stop components with delivery workers still running
 }
 
 // markDeliveryFailure records which registered component failed. Store only
@@ -369,7 +360,7 @@ func (r *PipelineRunner) markDeliveryFailure(err error) {
 		return
 	}
 	id := edge.From
-	if edge.Operation == "send" || edge.Operation == "close" || edge.Operation == "connect" || edge.Operation == "registration" || edge.Operation == "open" {
+	if edge.Operation == "send" || (edge.Operation == "close" || edge.Operation == "close acknowledgement") || edge.Operation == "connect" || edge.Operation == "registration" || edge.Operation == "open" {
 		id = edge.To
 	}
 	if id == "sinks" {
@@ -1071,7 +1062,7 @@ func deliveryFailureRecord(err error) string {
 		cause = "EOF"
 	}
 	fields := map[string]string{"component": edge.From, "from": edge.From, "to": edge.To, "edge": edge.Kind, "operation": edge.Operation, "cause": cause}
-	if edge.Operation == "send" || edge.Operation == "close" || edge.Operation == "open" || edge.Operation == "connect" || edge.Operation == "registration" {
+	if edge.Operation == "send" || (edge.Operation == "close" || edge.Operation == "close acknowledgement") || edge.Operation == "open" || edge.Operation == "connect" || edge.Operation == "registration" {
 		fields["component"] = edge.To
 	}
 	encoded, _ := json.Marshal(fields)
