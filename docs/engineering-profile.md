@@ -7,8 +7,9 @@ Profile for [OBSRVR Engineering Standard](https://github.com/withObsrvr/ways-of-
 | Repo | `github.com/withobsrvr/flowctl` |
 | Owner | Tillman Mosley III (sole maintainer) |
 | Current release | `v0.0.12` (pre-1.0) |
-| Licence | MPL-2.0 *(claimed in README; `LICENSE` file missing — see GAP-1)* |
+| Licence | MPL-2.0 (`LICENSE`) |
 | Profile last reviewed | 2026-10-20 |
+| Conformance assessed at | branch `chore/engineering-standard-conformance` |
 | Next review | 2027-01-20 (quarterly, CONF-2) |
 
 ---
@@ -42,9 +43,9 @@ a recorded supported-consumer range or deprecation policy yet — closing that i
 | Contract | Source of truth | Version | Consumers | Status |
 |---|---|---|---|---|
 | CLI grammar, flags and arguments | `cmd/**`, cobra definitions | v0.0.12 | Operators, CI jobs, `obsrvr` umbrella CLI | Unstable; pre-1.0 |
-| CLI exit codes | *none — not implemented* | — | Any script branching on failure | **Absent** (GAP-3) |
-| CLI `--output json` / NDJSON shapes | *none — flag declared, never read* | — | Scripts, agents | **Absent** (GAP-2) |
-| Pipeline config format (`apiVersion: flowctl/v1`) | `schemas/cue/schema.cue` | `flowctl/v1` | Pipeline authors, `translate`, `run`, `validate` | Live; enforcement inconsistent (GAP-6) |
+| CLI exit codes | `internal/exitcode` | v1 ([ADR 0001](adr/0001-cli-output-and-exit-code-contract.md)) | Any script branching on failure | Live |
+| CLI `--output json` / NDJSON shapes | `internal/cliout` schema ids | `flowctl.<noun>.v1` | Scripts, agents | Partial — 3 of 14 commands converted (GAP-2) |
+| Pipeline config format (`apiVersion: flowctl/v1`) | `schemas/cue/schema.cue` | `flowctl/v1` | Pipeline authors, `translate`, `run`, `validate` | Live; enforced by `internal/apiversion` on every path |
 | Control plane gRPC API | `proto/control_plane.proto` (package `flowctl`) | unversioned | Components, SDK, `flowctl` subcommands | Live; package not version-qualified (GAP-7) |
 | Event envelope | `proto/common.proto` → `Event` | `schema_version` field, per-event | Sources, processors, sinks | Live; missing required fields (GAP-4) |
 | Component service contracts | `proto/source.proto`, `processor.proto`, `sink.proto` | unversioned | flowctl-sdk, all components | Live |
@@ -89,21 +90,24 @@ breaks one needs an ADR.
 
 ## 4. Exceptions (§14)
 
-**None recorded. The repo has no `docs/adr/` directory and no ADRs.**
+### Recorded
 
-Under CONF-1 this matters: an unmet MUST without a live exception is non-conformance, not
-a deferral. Every ✗ in §5 below is currently counted as non-conformance.
+| Rule | ADR | Reason | Owner | Expiry |
+|---|---|---|---|---|
+| DATA-5 (versioned schema name) | [0002](adr/0002-defer-protobuf-package-versioning.md) | Renaming the protobuf package `flowctl` → `flowctl.v1` breaks the wire for every deployed component at once; it needs a coordinated release with flowctl-sdk and the version-matrix tests of VER-9. `buf lint`/`buf breaking` are in CI meanwhile. | Tillman Mosley III | 2027-04-20 |
 
-Three candidate exceptions are worth recording rather than rushing to fix. Each still
-needs an ADR written and accepted before it is a real exception:
+### Candidates, not yet recorded
+
+Each needs an accepted ADR before it counts as an exception under CONF-1. Until then
+the underlying rule is simply unmet.
 
 | Candidate | Rule | Argument | Proposed expiry |
 |---|---|---|---|
 | No OSC terminal signalling | CLI-17–19 | SHOULDs, not MUSTs; the protocol is a draft at rev 0.4 and the shared package CLI-17 requires does not exist yet in any OBSRVR repo. Build it once, adopt everywhere. | 2027-04-20 |
 | Makefile instead of justfile | BUILD-1 | The standard grandfathers existing Makefiles until the repo is next reworked. `nix develop` + `make test` already gets clone-to-tests in two commands. | 2027-04-20 |
-| No reproducible-build verification | BUILD-3 | Depends on the release pipeline rework in GAP-11; fixing it piecemeal before signing lands produces a false sense of assurance. | 2027-01-20 |
 
-CLI-22 (escape injection) is explicitly **not** a candidate for exception — see GAP-9.
+CLI-22 (escape injection) was a candidate in the first draft of this profile and is
+not one any more: it is closed.
 
 ---
 
@@ -114,71 +118,76 @@ Assessed 2026-10-20 against standard v2.0. ✓ met · ◐ partial · ✗ unmet.
 | § | Area | Status | Summary |
 |---|---|---|---|
 | 2 | Principles | ✓ | Architecture follows P-2, P-3, P-5, P-8 well. Headless core in `internal/`, adapters in `cmd/`, components as separate processes over documented gRPC. |
-| 3 | CLI | ✗ | Weakest area. CLI-3, 5, 6, 7, 9, 14, 15, 22 unmet; CLI-1, 8, 11, 12, 13 partial. |
+| 3 | CLI | ◐ | CLI-3, 7, 9, 11, 15, 22 now met; CLI-5 and CLI-6 met by `internal/cliout` but only 3 of 14 commands are converted. CLI-1, 12, 13 partial; CLI-14, 17–21 unmet. |
 | 4 | Data contracts | ◐ | Proto and CUE are authoritative (DATA-5 ✓). Event envelope lacks network, ledger, correlation ID and cursor (DATA-6, DATA-7 ✗). |
 | 5 | Network APIs | ✗ | No health service, readiness or metrics (API-13). Errors carry no stable code or request ID (API-3). mTLS available but off by default (API-11 ◐). |
-| 6 | Versioning | ✗ | No buf, no `reserved`, no breaking check (VER-5). Changelog has no released versions despite 12 tags (VER-11). Tags unsigned (VER-12). No ADRs (VER-8). |
-| 7 | Security | ✗ | Control plane has no authn/authz (SEC-1–4). No `govulncheck` or secret scanning in CI (SEC-6, SEC-9). No signing, SBOM-on-release or provenance (SEC-10). No `LICENSE` or `SECURITY.md` (SEC-11, SEC-12). |
-| 8 | Observability | ✗ | Logs are console-encoded, not JSON, and carry no service/version/trace/network/ledger fields (OBS-1 ◐). No OpenTelemetry (OBS-2). flowctl exports no metrics at all (OBS-3). |
-| 9 | Testing | ◐ | 24 test files with reasonable unit coverage of DAG, storage, runner and config. No real-chain fixtures (TEST-1), no fuzzing (TEST-3), no `-race` (TEST-4). TEST-2 levels 3–8 absent. Merge gate missing lint, gofmt, govulncheck, secret scanning, buf breaking. |
-| 10 | Builds | ◐ | `flake.nix` and `flake.lock` present and current ✓. No `toolchain` line in `go.mod`; CI uses `setup-go`, not the flake (BUILD-2). No `-trimpath`, and `BUILD_DATE` embeds wall-clock time (BUILD-3). No `USER` directive in any Dockerfile (BUILD-4). |
+| 6 | Versioning | ◐ | `buf lint`/`buf breaking` in CI, ADRs in place, changelog rewritten, VER-7 enforced. Tags still unsigned until the next release runs the new workflow (VER-12). Version matrix still missing (VER-9). |
+| 7 | Security | ◐ | `govulncheck` and `gitleaks` now gate the merge (SEC-6, SEC-9); signing and SBOM are wired into the release workflow and take effect on the next tag (SEC-10); `LICENSE` and `SECURITY.md` published (SEC-11, SEC-12). The control plane still has no authn/authz — the largest remaining gap (SEC-1–4, GAP-12). |
+| 8 | Observability | ✗ | Logs are now JSON off-terminal with `service`, `version` and RFC 3339 UTC timestamps (OBS-1 ◐; still no `trace_id`/`network`/`ledger`). No OpenTelemetry (OBS-2). flowctl still exports no metrics (OBS-3) — the second-largest gap. |
+| 9 | Testing | ◐ | Merge gate now complete except change classification, which a PR template prompts for. `-race` runs in CI (TEST-4) and found a real race on first run. Fuzz tests cover the sanitiser and `apiVersion` (TEST-3, partial). Still no real-chain fixtures (TEST-1) and no parity, replay or benchmark tests (TEST-2 levels 5–8). |
+| 10 | Builds | ◐ | `toolchain` pinned in `go.mod`; builds use `-trimpath` and embed only the commit date, verified by `make verify-repro` in the release gate (BUILD-3). Containers run non-root with OCI annotations (BUILD-4). CI still uses `setup-go` rather than the flake (BUILD-2, GAP-21). |
 | 11 | Stellar | ◐ | Correctly delegated to components. No pubnet default anywhere ✓ (BUILD-7). FC-3 relay path not yet machine-readable, pending GAP-2. |
-| 12 | Documentation | ✗ | Missing `LICENSE`, `SECURITY.md`, `AGENTS.md`, `CONTRIBUTING.md` (DOC-1). CLI reference hand-maintained in a 24KB README (DOC-2). `docs/` mixes tutorials, reference and internal planning (DOC-3). No ADRs (DOC-4). |
+| 12 | Documentation | ◐ | DOC-1 met. ADRs in place (DOC-4). CLI reference still hand-maintained in the README (DOC-2) and `docs/` still mixes tutorials, reference and internal planning (DOC-3). |
 
 ### Gap register
 
-Ordered by the standard's own adoption sequence (§14), not by severity alone.
+Ordered by the standard's own adoption sequence (§14). **Closed** entries are kept so
+the register reads as a history rather than only a backlog.
 
-| ID | Gap | Rule | Phase |
-|---|---|---|---|
-| GAP-1 | No `LICENSE` file; README claims MPL-2.0. Also missing `SECURITY.md`, `AGENTS.md`, `CONTRIBUTING.md` | DOC-1, SEC-11, SEC-12 | 1 |
-| GAP-2 | `--output` declared at `cmd/root.go:56` and read nowhere. No JSON, no NDJSON, no schema identifier on any output | CLI-6 | 2 |
-| GAP-3 | Only exit codes 0 and 1. Clean SIGINT/SIGTERM shutdown still exits 0, not 130/143 | CLI-15, CLI-11 | 2 |
-| GAP-4 | `Event` envelope has no network, ledger, correlation ID or cursor, and no stated delivery semantics | DATA-6, DATA-7, FC-2 | 3 |
-| GAP-5 | No contract owners, supported ranges or change classification recorded; no ADR directory | VER-1, VER-3, VER-8, DOC-4 | 1 |
-| GAP-6 | Three `apiVersion` validation paths disagree: CUE enforces `^flowctl/v[0-9]+$`, but `internal/runner/loader.go:141` and `internal/translator/parsers/yaml_parser.go:48` only check non-empty, so `flowctl run` silently accepts `apiVersion: v99` | VER-7 | 2 |
-| GAP-7 | Proto package is `flowctl`, not `flowctl.v1`. No buf, no lint, no `buf breaking`, no `reserved` statements | DATA-5, VER-5, API-1 | 2 |
-| GAP-8 | BoltDB store records no format version, so an upgrade cannot detect or migrate an old store | VER-7 | 3 |
-| GAP-9 | No control-character sanitisation of component-supplied strings before they reach the terminal. A registered component can inject OSC sequences via its service name or relayed errors | CLI-22, FC-5 | 2 |
-| GAP-10 | Merge gate missing `gofmt`, `golangci-lint`/`staticcheck`, `govulncheck`, secret scanning, `-race`, `buf breaking`. The Makefile has a `lint` target CI never calls | TEST-4, SEC-6, SEC-9, §9 merge gate | 2 |
-| GAP-11 | Tags unsigned and lightweight; no Sigstore signing, no SBOM attached to releases, no SLSA provenance; builds non-reproducible (`BUILD_DATE` is wall-clock, no `-trimpath`) | VER-12, SEC-10, BUILD-3 | 5 |
-| GAP-12 | Control plane has no authentication, authorization, actor identity or audit log of state-changing calls. Anything that can reach the port can register, read and stop runs | SEC-1, SEC-2, SEC-3, SEC-4 | 4 |
-| GAP-13 | No gRPC health service, readiness endpoint or metrics listener; no problem-details-equivalent error codes or request IDs | API-13, API-3 | 3 |
-| GAP-14 | No metrics at all: no last-processed-ledger, lag-behind-tip, backlog, checkpoint or gap-count signals. Blocks Lake's freshness and completeness SLOs downstream | OBS-3, OBS-4 | 3 |
-| GAP-15 | `viper.AutomaticEnv()` at `cmd/root.go:98` has no `SetEnvPrefix`, so it binds bare `OUTPUT`, `CONTEXT`, `NAMESPACE`, `LOG_LEVEL` instead of `FLOWCTL_*`. Config path hardcodes `$HOME/.config/flowctl`, ignoring `$XDG_CONFIG_HOME`. No `config show` | CLI-9 | 2 |
-| GAP-16 | `--output` reused for two unrelated meanings: `init --output <file>` and `processors find --output <event-type>` | CLI-3 | 2 |
-| GAP-17 | No colour suppression: no `NO_COLOR`, no `TERM=dumb`, no TTY detection. `logger.go:42` hardcodes a colour encoder | CLI-7 | 2 |
-| GAP-18 | Progress and banners written to stdout alongside results | CLI-5 | 2 |
-| GAP-19 | No real-chain fixtures; no fuzz tests over YAML/CUE config parsing; no golden, subprocess, parity, interruption-replay or benchmark tests | TEST-1, TEST-2, TEST-3 | 3 |
-| GAP-20 | No version-matrix tests for rolling producer/consumer deploys *(the gap named in §13 of the standard)* | VER-9 | 3 |
-| GAP-21 | No `toolchain` line in `go.mod`; CI uses `actions/setup-go` rather than the repo flake | BUILD-2 | 5 |
-| GAP-22 | No `USER` directive in any Dockerfile — `docker/duckdb-consumer` runs as root on `debian:bookworm-slim`. No OCI annotations | BUILD-4 | 5 |
-| GAP-23 | No MCP server or JSON help for agent operation | CLI-14 | 6 |
+| ID | Gap | Rule | Phase | Status |
+|---|---|---|---|---|
+| GAP-1 | No `LICENSE`, `SECURITY.md`, `AGENTS.md`, `CONTRIBUTING.md` | DOC-1, SEC-11, SEC-12 | 1 | **Closed** |
+| GAP-2 | `--output` declared and read nowhere; no JSON, NDJSON or schema identifiers | CLI-6 | 2 | **Partial** — `internal/cliout` exists and `version`, `list`, `config show` are converted; 11 commands remain |
+| GAP-3 | Only exit codes 0 and 1; clean signal shutdown exited 0 | CLI-15, CLI-11 | 2 | **Closed** |
+| GAP-4 | `Event` envelope has no network, ledger, correlation ID or cursor | DATA-6, DATA-7, FC-2 | 3 | Open — wire-breaking; pair with GAP-7 |
+| GAP-5 | No contract owners or change classification; no ADR directory | VER-1, VER-3, VER-8, DOC-4 | 1 | **Closed** — owners in §2, ADRs in `docs/adr/`, classification in the PR template |
+| GAP-6 | Three disagreeing `apiVersion` validators; `flowctl run` accepted `v99` | VER-7 | 2 | **Closed** — `internal/apiversion`, with a test asserting the Go pattern matches the CUE schema |
+| GAP-7 | Proto package is `flowctl`, not `flowctl.v1`; no buf | DATA-5, VER-5, API-1 | 2 | **Partial** — `buf lint`/`buf breaking`/generated-code check in CI; rename deferred under [ADR 0002](adr/0002-defer-protobuf-package-versioning.md) |
+| GAP-8 | BoltDB store records no format version, so an upgrade cannot migrate | VER-7 | 3 | Open |
+| GAP-9 | No control-character sanitisation of component-supplied strings | CLI-22, FC-5 | 2 | **Closed** — `internal/sanitize`, fuzzed |
+| GAP-10 | Merge gate missing gofmt, staticcheck, govulncheck, secret scanning, `-race`, buf | §9 merge gate | 2 | **Closed** — found a real data race on its first run |
+| GAP-11 | Unsigned tags, no SBOM or provenance, non-reproducible builds | VER-12, SEC-10, BUILD-3 | 5 | **Partial** — `-trimpath`, commit-date stamping and `make verify-repro` done; signing and SBOM wired into the release workflow but unproven until the next tag |
+| GAP-12 | Control plane has no authentication, authorization, actor identity or audit log | SEC-1–4 | 4 | Open — **largest remaining gap** |
+| GAP-13 | No gRPC health service, readiness endpoint, or stable error codes/request IDs | API-13, API-3 | 3 | Open |
+| GAP-14 | No metrics: no last-ledger, lag, backlog, checkpoint or gap-count signals | OBS-3, OBS-4 | 3 | Open — blocks Lake's freshness/completeness SLOs |
+| GAP-15 | `viper.AutomaticEnv` with no prefix; no XDG support; no `config show` | CLI-9 | 2 | **Closed** |
+| GAP-16 | `--output` reused for two unrelated meanings | CLI-3 | 2 | **Closed** — renamed to `--file` and `--output-type` |
+| GAP-17 | No colour suppression: no `NO_COLOR`, `TERM=dumb` or TTY detection | CLI-7 | 2 | **Closed** |
+| GAP-18 | Progress and banners written to stdout alongside results | CLI-5 | 2 | **Partial** — `cliout` separates the streams; unconverted commands still print to stdout |
+| GAP-19 | No real-chain fixtures, fuzzing, golden, subprocess, parity or replay tests | TEST-1, TEST-2, TEST-3 | 3 | **Partial** — fuzz tests for the sanitiser and `apiVersion`; golden tests for the output envelopes; TEST-1 and TEST-2 levels 5–8 still open |
+| GAP-20 | No version-matrix tests for rolling deploys *(the gap §13 of the standard names)* | VER-9 | 3 | Open |
+| GAP-21 | No `toolchain` line; CI uses `setup-go` rather than the repo flake | BUILD-2 | 5 | **Partial** — `toolchain` pinned; CI still does not use the flake |
+| GAP-22 | Containers run as root; no OCI annotations | BUILD-4 | 5 | **Closed** |
+| GAP-23 | No MCP server or JSON help for agent operation | CLI-14 | 6 | Open |
+| GAP-24 | Packages lack package comments (`ST1000` excluded in `staticcheck.conf`) | §9 linters | 2 | Open — mechanical, ~20 packages |
+| GAP-25 | `grpc.DialContext`/`WithBlock` deprecated (`SA1019` excluded) | §9 linters | 2 | Open — `NewClient` never blocks, so call sites relying on `WithBlock` change behaviour |
 
 ### Next gap to close
 
-**GAP-1**, then **GAP-10**.
+**GAP-2**, finishing the output conversion.
 
-GAP-1 is an afternoon: a `LICENSE` file matching the README's MPL-2.0 claim, plus
-`SECURITY.md`, `AGENTS.md` and `CONTRIBUTING.md`. It is the only gap that is currently a
-licensing defect rather than an engineering one, and it unblocks the OSPS Baseline L1 work
-in phase 5.
+`internal/cliout` exists and three commands use it, but eleven still print their own
+tables with `fmt.Printf` — including `status`, `pipelines` and `chunks`, which are the
+ones an operator or an agent most wants to parse. Until they are converted, GAP-2 and
+GAP-18 both stay open and the `--output json` contract is true only in patches, which is
+arguably worse than it being uniformly absent: a caller cannot tell from the outside
+which commands honour it. Each conversion is mechanical now that the printer exists, and
+each should land with a golden test for its schema.
 
-GAP-10 is the highest value-per-hour change in the register: adding `gofmt`,
-`golangci-lint`, `govulncheck`, secret scanning and `-race` to `.github/workflows/pr-tests.yml`
-closes four MUSTs in one PR and stops the rest of the register from growing.
+After that, in order:
 
-After those, phase 2 is best done as one piece of work rather than gap by gap. An
-`internal/cliout` package that owns exit codes (GAP-3), JSON/NDJSON emission with schema
-identifiers (GAP-2), stream separation (GAP-18), colour suppression (GAP-17) and
-control-character stripping (GAP-9) resolves five gaps behind a single interface, and
-every command then converts onto it incrementally. GAP-15 and GAP-16 are small enough to
-ride along in the same PR.
-
----
+1. **GAP-13 and GAP-14** together — the gRPC health service and the first metrics. These
+   are what make flowctl operable rather than merely runnable, and GAP-14 blocks the
+   freshness and completeness SLOs that Obsrvr Lake needs downstream (OBS-4).
+2. **GAP-12** — control plane authn/authz. The biggest single gap, and the one needing a
+   design decision first: workload identity versus per-caller keys, and where the
+   read/operate split falls. That decision is an ADR, not a patch.
+3. **GAP-4 with GAP-7** — the event envelope fields and the `flowctl.v1` rename. Both are
+   wire-breaking, so they should cost one coordinated migration rather than two.
 
 ## 6. Revision history
 
 | Date | Change |
 |---|---|
 | 2026-10-20 | Initial profile against standard v2.0. Conformance assessed from a repo audit at `3c954ab`. |
+| 2026-10-20 | Updated after the conformance branch: GAP-1, 3, 5, 6, 9, 10, 15, 16, 17, 22 closed; GAP-2, 7, 11, 18, 19, 21 partial; GAP-24 and GAP-25 added for the two linter exclusions. |

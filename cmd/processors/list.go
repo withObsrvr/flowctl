@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -143,10 +142,4 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
-}
-
-// joinWithLimit joins strings with separator, truncating if needed
-func joinWithLimit(items []string, sep string, maxLen int) string {
-	result := strings.Join(items, sep)
-	return truncateString(result, maxLen)
 }

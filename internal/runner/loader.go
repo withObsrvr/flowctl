@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/withobsrvr/flowctl/internal/apiversion"
+
 	"github.com/withobsrvr/flowctl/internal/components"
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
@@ -139,12 +141,12 @@ func contains(s, substr string) bool {
 // validatePipeline validates the pipeline structure
 func validatePipeline(pipeline *model.Pipeline) error {
 	// Check required fields
-	if pipeline.APIVersion == "" {
-		return fmt.Errorf("apiVersion is required")
+	if err := apiversion.Validate(pipeline.APIVersion); err != nil {
+		return err
 	}
 
-	if pipeline.Kind != "Pipeline" {
-		return fmt.Errorf("kind must be 'Pipeline', got: %s", pipeline.Kind)
+	if err := apiversion.ValidateKind(pipeline.Kind); err != nil {
+		return err
 	}
 
 	if pipeline.Metadata.Name == "" {

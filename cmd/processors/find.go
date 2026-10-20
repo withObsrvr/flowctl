@@ -36,7 +36,7 @@ This is the foundation for automatic topology discovery.`,
   flowctl processors find --input stellar.ledger.v1
 
   # Find processors that produce token.transfer events
-  flowctl processors find --output stellar.token.transfer.v1
+  flowctl processors find --output-type stellar.token.transfer.v1
 
   # Find processors for a specific network
   flowctl processors find --metadata network=testnet
@@ -47,7 +47,10 @@ This is the foundation for automatic topology discovery.`,
 	}
 
 	cmd.Flags().StringVar(&inputType, "input", "", "Filter by input event type")
-	cmd.Flags().StringVar(&outputType, "output", "", "Filter by output event type")
+	// Renamed from --output, which CLI-3 reserves for selecting an output format.
+	// No deprecated alias: a local --output would shadow the global one, making
+	// `--output json` filter by the event type "json" instead of emitting JSON.
+	cmd.Flags().StringVar(&outputType, "output-type", "", "Filter by output event type")
 	cmd.Flags().StringToStringVar(&metadata, "metadata", nil, "Filter by metadata (key=value)")
 
 	return cmd
@@ -56,7 +59,7 @@ This is the foundation for automatic topology discovery.`,
 func runFind(cmd *cobra.Command, args []string) error {
 	// Validate that at least one filter is provided
 	if inputType == "" && outputType == "" && len(metadata) == 0 {
-		return fmt.Errorf("at least one filter must be specified (--input, --output, or --metadata)")
+		return fmt.Errorf("at least one filter must be specified (--input, --output-type, or --metadata)")
 	}
 
 	// Connect to control plane

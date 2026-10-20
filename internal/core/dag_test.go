@@ -268,52 +268,9 @@ func TestDAGComplexFlow(t *testing.T) {
 	t.Logf("Sink2 received %d messages", len(sink2Messages))
 }
 
-// mockTestProcessor is a simpler mock processor for testing
-type mockTestProcessor struct {
-	id       string
-	inputCh  chan *source.EventEnvelope
-	outputCh chan *processor.Message
-}
-
-func newMockTestProcessor(id string) *mockTestProcessor {
-	return &mockTestProcessor{
-		id:       id,
-		inputCh:  make(chan *source.EventEnvelope, 10),
-		outputCh: make(chan *processor.Message, 10),
-	}
-}
-
-func (p *mockTestProcessor) Init(cfg map[string]any) error {
-	return nil
-}
-
-func (p *mockTestProcessor) Process(ctx context.Context, e *source.EventEnvelope) ([]*processor.Message, error) {
-	msg := &processor.Message{
-		Type:    "processed-event",
-		Payload: []byte(`{"processor":"` + p.id + `","data":"processed"}`),
-	}
-	return []*processor.Message{msg}, nil
-}
-
-func (p *mockTestProcessor) Flush(ctx context.Context) error {
-	return nil
-}
-
-func (p *mockTestProcessor) Name() string {
-	return p.id
-}
-
 // mockTestSource is a simpler mock source for testing
 type mockTestSource struct {
-	id       string
-	outputCh chan source.EventEnvelope
-}
-
-func newMockTestSource(id string) *mockTestSource {
-	return &mockTestSource{
-		id:       id,
-		outputCh: make(chan source.EventEnvelope, 10),
-	}
+	id string
 }
 
 func (s *mockTestSource) Open(ctx context.Context) error {

@@ -22,7 +22,6 @@ type DAGPipeline struct {
 	sources    map[string]source.Source
 	processors map[string]processor.Processor
 	sinks      map[string]sink.Sink
-	sinkChan   chan *processor.Message
 }
 
 // NewDAGPipeline creates a new pipeline from configuration
@@ -266,9 +265,7 @@ func determineInputEventTypes(processor model.Component, pipeline *model.Pipelin
 		for _, src := range pipeline.Spec.Sources {
 			if src.ID == inputID {
 				// Add output event types from this source
-				for _, eventType := range src.OutputEventTypes {
-					inputTypes = append(inputTypes, eventType)
-				}
+				inputTypes = append(inputTypes, src.OutputEventTypes...)
 			}
 		}
 
@@ -276,9 +273,7 @@ func determineInputEventTypes(processor model.Component, pipeline *model.Pipelin
 		for _, proc := range pipeline.Spec.Processors {
 			if proc.ID == inputID {
 				// Add output event types from this processor
-				for _, eventType := range proc.OutputEventTypes {
-					inputTypes = append(inputTypes, eventType)
-				}
+				inputTypes = append(inputTypes, proc.OutputEventTypes...)
 			}
 		}
 	}

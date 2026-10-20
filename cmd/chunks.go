@@ -193,13 +193,6 @@ func formatFailureClass(failure flowctlpb.FailureClass) string {
 	return strings.ToLower(strings.TrimPrefix(failure.String(), "FAILURE_CLASS_"))
 }
 
-func shortChunkID(chunkID string) string {
-	if len(chunkID) <= 18 {
-		return chunkID
-	}
-	return chunkID[:18]
-}
-
 func totalRows(rows map[string]int64) int64 {
 	var total int64
 	for _, count := range rows {

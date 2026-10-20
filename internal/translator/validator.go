@@ -3,6 +3,8 @@ package translator
 import (
 	"fmt"
 
+	"github.com/withobsrvr/flowctl/internal/apiversion"
+
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 )
@@ -20,12 +22,12 @@ func (v *BasicValidator) Validate(pipeline *model.Pipeline) error {
 	logger.Debug("Validating pipeline configuration")
 
 	// Check required fields
-	if pipeline.APIVersion == "" {
-		return fmt.Errorf("apiVersion is required")
+	if err := apiversion.Validate(pipeline.APIVersion); err != nil {
+		return err
 	}
 
-	if pipeline.Kind != "Pipeline" {
-		return fmt.Errorf("kind must be 'Pipeline'")
+	if err := apiversion.ValidateKind(pipeline.Kind); err != nil {
+		return err
 	}
 
 	if pipeline.Metadata.Name == "" {

@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/withobsrvr/flowctl/internal/utils/logger"
+	"go.uber.org/zap"
 	"sync"
 
 	"github.com/withobsrvr/flowctl/internal/config"
@@ -95,7 +97,7 @@ func (p *Pipeline) Stop() error {
 func (p *Pipeline) runSource(ctx context.Context) {
 	defer p.wg.Done()
 	if err := p.src.Events(ctx, p.eventChan); err != nil {
-		// TODO: Handle error
+		logger.Error("Source stopped producing events", zap.Error(err))
 	}
 }
 
@@ -136,7 +138,8 @@ func (p *Pipeline) runSink(ctx context.Context) {
 				return
 			}
 			if err := p.snk.Write(ctx, msgs); err != nil {
-				// TODO: Handle error
+				logger.Error("Sink write failed; messages were dropped",
+					zap.Int("messages", len(msgs)), zap.Error(err))
 			}
 		}
 	}

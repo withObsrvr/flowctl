@@ -184,7 +184,7 @@ Common examples:
 ```bash
 flowctl init
 flowctl init --preset testnet-duckdb
-flowctl init --non-interactive --network mainnet --destination postgres -o prod-pipeline.yaml
+flowctl init --non-interactive --network mainnet --destination postgres -f prod-pipeline.yaml
 ```
 
 Destination prerequisites:
@@ -419,7 +419,7 @@ Discover and inspect processors registered with the control plane at runtime.
 ./bin/flowctl processors find --input stellar.ledger.v1
 
 # Find processors that produce token.transfer events
-./bin/flowctl processors find --output stellar.token.transfer.v1
+./bin/flowctl processors find --output-type stellar.token.transfer.v1
 
 # Find processors for a specific network
 ./bin/flowctl processors find --metadata network=testnet

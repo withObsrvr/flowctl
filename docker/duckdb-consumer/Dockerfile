@@ -1,50 +1,43 @@
 # Dockerfile for duckdb-consumer component
-# Multi-stage build: builds the Go binary with CGO and packages it
+# Packages a pre-built CGO binary. Debian slim rather than scratch, because
+# DuckDB needs glibc.
 #
-# Build context should be the flowctl directory:
-#   docker build -t docker.io/withobsrvr/duckdb-consumer:v1.0.0 \
-#     -f docker/duckdb-consumer/Dockerfile \
-#     --build-arg COMPONENTS_BASE=/path/to/components .
-#
-# Or with pre-built binary:
-#   docker build -t docker.io/withobsrvr/duckdb-consumer:v1.0.0 \
-#     -f docker/duckdb-consumer/Dockerfile /path/to/duckdb-consumer
-
-# Build stage
-FROM golang:1.24-bookworm AS builder
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set up workspace
-WORKDIR /build
-
-# Copy all required source directories
-# Note: Adjust paths based on your setup
-COPY . /build/
-
-# Note: This Dockerfile expects the binary to be pre-built using build-in-docker.sh
-# The build context should be the duckdb-consumer directory with:
+# Build context should be the duckdb-consumer directory, containing:
 #   - bin/duckdb-consumer (the compiled binary)
 #   - metadata.json (component metadata)
+#
+# Build the binary first, on a glibc-based system (not NixOS):
+#   CGO_ENABLED=1 go build -o bin/duckdb-consumer .
+#
+# Then:
+#   docker build -t docker.io/withobsrvr/duckdb-consumer:v1.0.0 \
+#     --build-arg VERSION=v1.0.0 --build-arg REVISION=$(git rev-parse HEAD) \
+#     -f docker/duckdb-consumer/Dockerfile /path/to/duckdb-consumer
 
-# Runtime stage - use debian slim for glibc compatibility
 FROM debian:bookworm-slim
+
+# BUILD-4: OCI annotations so an image can be traced back to its source.
+ARG VERSION=dev
+ARG REVISION=unknown
+LABEL org.opencontainers.image.source="https://github.com/withObsrvr/flowctl" \
+      org.opencontainers.image.licenses="MPL-2.0" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.version="${VERSION}"
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app directory
+# BUILD-4: never run as root. The data directory is owned by this user, since
+# the component writes its DuckDB file there.
+RUN useradd --system --uid 65532 --user-group --no-create-home --shell /usr/sbin/nologin flowctl \
+    && mkdir -p /data \
+    && chown flowctl:flowctl /data
+
 WORKDIR /app
 
 # Copy the pre-built binary
-# Note: Build the binary with: CGO_ENABLED=1 go build -o bin/duckdb-consumer .
-# on a glibc-based system (not NixOS) to ensure compatibility
 COPY bin/duckdb-consumer /component
 
 # Copy metadata
@@ -55,8 +48,7 @@ ENV DUCKDB_PATH=/data/stellar.duckdb
 ENV PORT=:50053
 ENV HEALTH_PORT=8090
 
-# Create data directory
-RUN mkdir -p /data
+USER flowctl:flowctl
 
 # The binary is the entrypoint
 ENTRYPOINT ["/component"]

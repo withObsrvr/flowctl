@@ -114,10 +114,13 @@ Specific breaks, all recorded in `CHANGELOG.md`:
 - Commands that previously exited 1 for every failure now exit 2–8 where the cause is
   known. A script testing `$? -eq 1` must be updated to test `$? -ne 0`.
 - `flowctl init --output <file>` is renamed to `--file`/`-f`, because CLI-3 forbids
-  reusing a shared option name for a different meaning. `--output` is retained as a
-  deprecated alias until v0.1.0.
+  reusing a shared option name for a different meaning.
 - `flowctl processors find --output <type>` is renamed to `--output-type` for the same
-  reason, with the same deprecated alias.
+  reason.
+- Neither rename keeps a deprecated alias. A local `--output` shadows the global one,
+  so an alias would make `--output json` silently mean "write to a file named json" or
+  "filter for the event type json" — the precise confusion CLI-3 exists to prevent, and
+  worse than a clean break. VER-2 permits breaking on a minor bump before 1.0.
 - `--output yaml` and `--output wide` now error instead of being ignored.
 
 ## More information

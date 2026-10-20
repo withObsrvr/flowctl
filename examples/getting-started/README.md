@@ -166,7 +166,7 @@ Let's walk through understanding a simple pipeline. We'll use the generated star
 ### Step 1: Examine the Configuration
 
 ```bash
-flowctl init --preset testnet-duckdb -o /tmp/stellar-pipeline.yaml
+flowctl init --preset testnet-duckdb -f /tmp/stellar-pipeline.yaml
 cat /tmp/stellar-pipeline.yaml
 ```
 

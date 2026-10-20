@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/withobsrvr/flowctl/internal/interfaces"
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/translator"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
@@ -71,7 +70,7 @@ func runTranslate(cmd *cobra.Command, args []string) error {
 		RegistryPrefix: opts.RegistryPrefix,
 		OutputPath:     opts.OutputFile,
 	}
-	var t interfaces.Translator = translator.NewTranslator(options)
+	t := translator.NewTranslator(options)
 
 	// Validate output format
 	format := model.Format(opts.OutputFormat)

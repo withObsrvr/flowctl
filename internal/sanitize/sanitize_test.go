@@ -46,7 +46,7 @@ func TestStringStripsInjectionAttempts(t *testing.T) {
 		},
 		{
 			name:  "DEL and C1 CSI",
-			input: "a\x7fbc",
+			input: "a\x7fb\u009bc",
 			want:  "abc",
 		},
 		{

@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/controlplane"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/orchestrator"
 	"github.com/withobsrvr/flowctl/internal/storage"
@@ -168,6 +169,16 @@ func resolveEmbeddedDBPath(dbPath string) (string, error) {
 
 // Run starts the pipeline with embedded or external control plane
 func (r *PipelineRunner) Run() error {
+	// Register for signals before starting anything. CLI-11 requires a tool to
+	// stop starting new work and shut down cleanly on SIGINT or SIGTERM; if the
+	// handler is only installed once startup finishes, a signal arriving during
+	// startup kills the process outright, leaving child components orphaned and
+	// the run row marked running. The channel is buffered so a signal that
+	// arrives before the wait below is still delivered.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+
 	if r.config.UseExternalCP {
 		logger.Info("Starting pipeline with external control plane",
 			zap.String("pipeline", r.pipeline.Metadata.Name),
@@ -289,14 +300,12 @@ func (r *PipelineRunner) Run() error {
 	fmt.Printf("Component logs are being written under %s/\n", r.config.LogDir)
 	fmt.Println("Press Ctrl+C to stop the pipeline.")
 
-	// Set up signal handling
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	defer signal.Stop(sigChan)
-	// Wait for shutdown or for all delivery edges to terminate.
+	// Wait for shutdown or for all delivery edges to terminate. sigChan was
+	// registered at the top of Run, so a signal sent during startup is already
+	// buffered and taken here rather than killing the process.
 	var shutdownStatus flowctlpb.RunStatus
 	var deliveryErr error
+	var receivedSignal os.Signal
 	select {
 	case deliveryErr = <-terminal:
 		if deliveryErr != nil {
@@ -306,8 +315,11 @@ func (r *PipelineRunner) Run() error {
 		} else {
 			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_COMPLETED
 		}
-	case <-sigChan:
-		logger.Info("Received shutdown signal")
+	case sig := <-sigChan:
+		logger.Info("Received shutdown signal", zap.String("signal", sig.String()))
+		// Remembered so the process can exit 130/143 after a clean shutdown,
+		// telling a supervisor it was interrupted and can resume (CLI-11).
+		receivedSignal = sig
 		shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_STOPPED
 	case <-r.ctx.Done():
 		logger.Info("Context cancelled")
@@ -337,7 +349,16 @@ func (r *PipelineRunner) Run() error {
 	if deliveryErr != nil {
 		return deliveryErr
 	}
-	return shutdownErr
+	if shutdownErr != nil {
+		return shutdownErr
+	}
+	// A clean shutdown that was asked for by a signal still exits non-zero, so a
+	// supervisor can tell "interrupted, resume from checkpoint" apart from
+	// "finished" (CLI-11, CLI-15).
+	if receivedSignal != nil {
+		return exitcode.Signal(receivedSignal)
+	}
+	return nil
 }
 
 // waitForTerminalOnStop preserves a failure already reported or captured by

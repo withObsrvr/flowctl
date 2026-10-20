@@ -3,6 +3,8 @@ package parsers
 import (
 	"fmt"
 
+	"github.com/withobsrvr/flowctl/internal/apiversion"
+
 	"github.com/withobsrvr/flowctl/internal/translator/models"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
@@ -45,12 +47,12 @@ func (p *YAMLParser) Parse(data []byte) (*models.Pipeline, error) {
 // validate checks if the parsed pipeline is valid
 func (p *YAMLParser) validate(pipeline *models.Pipeline) error {
 	// Check required fields
-	if pipeline.APIVersion == "" {
-		return fmt.Errorf("apiVersion is required")
+	if err := apiversion.Validate(pipeline.APIVersion); err != nil {
+		return err
 	}
 
-	if pipeline.Kind != "Pipeline" {
-		return fmt.Errorf("kind must be 'Pipeline'")
+	if err := apiversion.ValidateKind(pipeline.Kind); err != nil {
+		return err
 	}
 
 	if pipeline.Metadata.Name == "" {

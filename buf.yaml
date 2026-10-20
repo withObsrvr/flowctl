@@ -1,0 +1,23 @@
+version: v2
+
+modules:
+  - path: .
+
+lint:
+  use:
+    - STANDARD
+  except:
+    # flowctl's protobuf package is `flowctl`, not `flowctl.v1`. Renaming it
+    # changes the fully-qualified name of every message and the gRPC path of
+    # every method, breaking every deployed component and every build of
+    # flowctl-sdk at once. The rename is correct and is a release blocker for
+    # 1.0; it is deferred deliberately, with the exception recorded under
+    # CONF-1 in docs/adr/0002-defer-protobuf-package-versioning.md.
+    - PACKAGE_VERSION_SUFFIX
+    # Directory structure is expected to match the package name, which the
+    # same rename would fix. Same ADR, same expiry.
+    - PACKAGE_DIRECTORY_MATCH
+
+breaking:
+  use:
+    - FILE

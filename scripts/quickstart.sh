@@ -91,7 +91,7 @@ echo "==> Generating starter pipeline: ${OUTPUT}"
 ./bin/flowctl init --non-interactive \
   --network "${NETWORK}" \
   --destination "${DESTINATION}" \
-  --output "${OUTPUT}"
+  --file "${OUTPUT}"
 
 echo "==> Validating ${OUTPUT}"
 ./bin/flowctl validate "${OUTPUT}"

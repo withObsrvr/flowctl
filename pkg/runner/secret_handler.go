@@ -245,8 +245,10 @@ func parseFileMode(mode string) (os.FileMode, error) {
 
 	var perm os.FileMode
 	for i := 1; i < 4; i++ {
+		// mode[i] is a byte: a char below '0' underflows to >= 248, which the
+		// upper bound catches. digit <= 7 therefore means exactly '0'-'7'.
 		digit := mode[i] - '0'
-		if digit < 0 || digit > 7 {
+		if digit > 7 {
 			return 0, fmt.Errorf("invalid digit in mode: %c", mode[i])
 		}
 		perm = perm*8 + os.FileMode(digit)

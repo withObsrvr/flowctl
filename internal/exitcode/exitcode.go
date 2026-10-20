@@ -93,6 +93,9 @@ func Of(err error) int {
 	if coded, ok := errors.AsType[*Error](err); ok {
 		return coded.Code
 	}
+	if sig, ok := errors.AsType[*SignalError](err); ok {
+		return sig.Code()
+	}
 
 	// gRPC is how every remote call in flowctl fails, so classify it precisely.
 	// status.FromError only reports ok for real status errors, which is what we

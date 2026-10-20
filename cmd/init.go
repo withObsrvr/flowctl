@@ -38,7 +38,7 @@ Examples:
   flowctl init
 
   # Specify output file
-  flowctl init --output my-pipeline.yaml
+  flowctl init --file my-pipeline.yaml
 
   # Non-interactive mode (use flags)
   flowctl init --non-interactive --network testnet --destination duckdb
@@ -52,7 +52,11 @@ Examples:
 func init() {
 	rootCmd.AddCommand(initCmd)
 
-	initCmd.Flags().StringVarP(&outputFile, "output", "o", "", "output file (default: <pipeline-name>.yaml)")
+	// Renamed from --output, which CLI-3 reserves for selecting an output format.
+	// No deprecated alias: a local --output would shadow the global one, so
+	// `--output json` would silently be read as a filename — the exact confusion
+	// the rule exists to prevent. Pre-1.0, VER-2 permits the clean break.
+	initCmd.Flags().StringVarP(&outputFile, "file", "f", "", "file to write (default: <pipeline-name>.yaml)")
 	initCmd.Flags().BoolVar(&initNonInteractive, "non-interactive", false, "non-interactive mode (requires --network/--destination unless --preset is used)")
 	initCmd.Flags().StringVar(&networkFlag, "network", "", "network (testnet, mainnet)")
 	initCmd.Flags().StringVar(&destinationFlag, "destination", "", "destination (postgres, duckdb)")

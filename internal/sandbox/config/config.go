@@ -98,7 +98,7 @@ func getDefaultConfig() *SandboxConfig {
 
 // validateConfig validates the sandbox configuration
 func validateConfig(config *SandboxConfig) error {
-	if config.Services == nil || len(config.Services) == 0 {
+	if len(config.Services) == 0 {
 		return fmt.Errorf("no services defined")
 	}
 

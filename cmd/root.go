@@ -56,7 +56,12 @@ func Execute() {
 	defer logger.Sync()
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		// A clean shutdown on SIGINT or SIGTERM exits non-zero so a supervisor
+		// can tell it apart from completion, but it is not a failure and gets
+		// no error message (CLI-11).
+		if !exitcode.IsSignal(err) {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+		}
 		os.Exit(exitcode.Of(err))
 	}
 }

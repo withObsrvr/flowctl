@@ -9,49 +9,69 @@ on:
 permissions:
   contents: read
 
+# The merge gate from §9 of the OBSRVR Engineering Standard. Every job here
+# blocks the merge:
+#
+#   lint        gofmt, go vet, staticcheck
+#   test        build and the full suite
+#   race        go test -race                        (TEST-4)
+#   vulncheck   govulncheck                          (SEC-9)
+#   secrets     gitleaks                             (SEC-6)
+#   proto       buf lint and buf breaking            (VER-5)
+#   smoke       onboarding smoke tests
 jobs:
-  vet:
-    name: Vet
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+    timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run go vet
+      - name: Check formatting
         run: |
-          PKGS=$(find . \
-            \( -path './.git' -o -path './data' -o -path './bin' -o -path './internal/testfixtures/source' -o -path './internal/testfixtures/processor' -o -path './internal/testfixtures/sink' \) -prune \
-            -o -name '*.go' -print | xargs -r -n1 dirname | sort -u | sed 's#^#./#' | sed 's#\.//#./#')
-          go vet $PKGS
+          unformatted=$(gofmt -l . | grep -v '^data/' || true)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: latest
+          install-go: false
 
   test:
     name: Build and test
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Download dependencies
         run: go mod download
+
+      - name: Verify go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum || {
+            echo "go.mod/go.sum are not tidy; run 'go mod tidy' and commit the result"
+            exit 1
+          }
 
       - name: Verify build
         run: make build
@@ -59,23 +79,110 @@ jobs:
       - name: Run test suite
         run: make test
 
-  smoke:
-    name: Onboarding smoke tests
+  race:
+    name: Race detector
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      # TEST-4. The pipeline runner and control plane are heavily concurrent;
+      # this job found a real escaped-pointer race in GetComponentStatus the
+      # first time it was switched on.
+      - name: Run tests with the race detector
+        run: make test-race
+
+  vulncheck:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # SEC-9: fail on reachable known vulnerabilities. govulncheck reports
+      # only vulnerabilities actually reachable from this code, so a finding
+      # here is real rather than a transitive-dependency rumour.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks needs history to scan the commits a PR adds.
+          fetch-depth: 0
+
+      # SEC-6: secrets must never reach git.
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  proto:
+    name: Protobuf contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: buf lint
+        run: buf lint
+
+      # VER-5: field numbers and wire types must not change, and removed
+      # numbers must stay reserved. Compared against the last release rather
+      # than against main, because the released tag is what deployed
+      # components are actually speaking.
+      - name: buf breaking
+        run: |
+          latest=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          if [ -z "$latest" ]; then
+            echo "No release tag found; skipping the breaking-change check."
+            exit 0
+          fi
+          echo "Comparing protobuf against $latest"
+          buf breaking --against ".git#tag=$latest"
+
+      # DATA-5: generated code is regenerated and checked, never hand-edited.
+      - name: Verify generated code is current
+        run: |
+          buf generate
+          git diff --exit-code -- proto/ || {
+            echo "Generated protobuf code is stale; run 'buf generate' (or 'make generate') and commit the result"
+            exit 1
+          }
+
+  smoke:
+    name: Onboarding smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 

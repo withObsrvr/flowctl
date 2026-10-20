@@ -3,15 +3,18 @@ package test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"github.com/withobsrvr/flowctl/internal/storage"
-	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/withobsrvr/flowctl/internal/exitcode"
+	"github.com/withobsrvr/flowctl/internal/storage"
+	flowctlpb "github.com/withobsrvr/flowctl/proto"
 )
 
 // Exercises the CLI, process driver, control-plane registration, and gRPC
@@ -128,10 +131,21 @@ spec:
 			if ctx.Err() != nil {
 				t.Fatalf("run timed out: %s", out)
 			}
-			if tc.failed && err == nil {
-				t.Fatalf("expected nonzero CLI exit: %s", out)
-			}
-			if !tc.failed && err != nil {
+			signalled := tc.mode == "wait" || tc.mode == "drain-stop"
+			switch {
+			case tc.failed:
+				if err == nil {
+					t.Fatalf("expected nonzero CLI exit: %s", out)
+				}
+			case signalled:
+				// CLI-11/CLI-15: a clean shutdown on SIGINT exits 130, so a
+				// supervisor can tell "interrupted, resume from checkpoint"
+				// apart from "finished".
+				if got := exitCodeOf(err); got != exitcode.Interrupted {
+					t.Fatalf("expected exit %d after SIGINT, got %d (%v)\n%s",
+						exitcode.Interrupted, got, err, out)
+				}
+			case err != nil:
 				t.Fatalf("expected successful completion: %v\n%s", err, out)
 			}
 			if !strings.Contains(string(out), tc.want) {
@@ -190,4 +204,16 @@ spec:
 			}
 		})
 	}
+}
+
+// exitCodeOf reports the process exit code behind an *exec.ExitError, or -1 if
+// err is not one. A nil error means the process exited 0.
+func exitCodeOf(err error) int {
+	if err == nil {
+		return 0
+	}
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+		return ee.ExitCode()
+	}
+	return -1
 }
