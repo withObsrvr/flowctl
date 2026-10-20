@@ -44,7 +44,7 @@ jobs:
         run: make test-race
 
       - name: Vulnerability scan
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: ./scripts/govulncheck.sh
 
       # BUILD-3: a release that cannot be rebuilt byte-for-byte from its tag
       # is not a release.

@@ -1,10 +1,15 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# Regenerate Go code from the protobuf definitions.
+#
+# buf is the single generator for this repo, with plugin versions pinned in
+# buf.gen.yaml so that regenerating produces identical bytes everywhere. This
+# used to call a locally installed protoc, which made the output depend on
+# whichever plugin versions a developer happened to have.
+#
+# Equivalent to `make generate`.
 
-# Install protoc-gen-go and protoc-gen-go-grpc if not already installed
-go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+set -euo pipefail
 
-# Generate Go code from proto files
-protoc --go_out=. --go_opt=paths=source_relative \
-    --go-grpc_out=. --go-grpc_opt=paths=source_relative \
-    proto/*.proto 
+cd "$(dirname "$0")/.."
+exec go run github.com/bufbuild/buf/cmd/buf@v1.47.2 generate

@@ -1,4 +1,4 @@
-.PHONY: all generate proto build build-all install test test-race clean run server deps fmt lint vulncheck verify-repro help
+.PHONY: all generate proto proto-lint proto-breaking build build-all install test test-race clean run server deps fmt lint vulncheck verify-repro help
 
 SHELL := /usr/bin/env bash
 
@@ -30,12 +30,25 @@ all: generate build
 # Generate protobuf files
 generate: proto
 
+# buf is the single generator (see buf.gen.yaml). Plugin versions are pinned
+# there, so this produces the same bytes on every machine and in CI — which is
+# what lets CI check that the committed output is current (DATA-5).
+BUF ?= go run github.com/bufbuild/buf/cmd/buf@v1.47.2
+
 proto:
 	@echo "Generating protobuf files..."
-	@protoc --go_out=. --go_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		proto/*.proto
+	@$(BUF) generate
 	@echo "Protobuf generation complete!"
+
+# Lint and breaking-change checks for the protobuf contracts (VER-5).
+proto-lint:
+	@$(BUF) lint
+
+proto-breaking:
+	@latest=$$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null); \
+	if [ -z "$$latest" ]; then echo "No release tag; skipping."; exit 0; fi; \
+	echo "Comparing protobuf against $$latest"; \
+	$(BUF) breaking --against ".git#tag=$$latest"
 
 # Build the binary
 build:
@@ -106,13 +119,6 @@ deps:
 	@go mod download
 	@go mod tidy
 
-# Install protoc plugins
-install-proto-tools:
-	@echo "Installing protobuf Go plugins..."
-	@go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	@go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-	@echo "Protobuf tools installed!"
-
 # Format code
 fmt:
 	@echo "Formatting code..."
@@ -129,10 +135,11 @@ lint:
 	@staticcheck ./...
 	@echo "Linting complete!"
 
-# Scan dependencies for known vulnerabilities (SEC-9).
+# Scan dependencies for known vulnerabilities (SEC-9). Findings that genuinely
+# do not affect flowctl are exempted one at a time, with a justification, in
+# .vex/flowctl.openvex.json (SEC-12) — never by ignoring the exit code.
 vulncheck:
-	@echo "Running govulncheck..."
-	@go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	@./scripts/govulncheck.sh
 
 # Verify a release build is reproducible: build twice, compare hashes (BUILD-3).
 verify-repro:
@@ -147,7 +154,8 @@ verify-repro:
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  make generate    - Generate protobuf files"
+	@echo "  make generate    - Generate protobuf files (via buf)"
+	@echo "  make proto-lint  - Lint the protobuf contracts"
 	@echo "  make build       - Build the flowctl binary"
 	@echo "  make build-all   - Build release binaries for common platforms"
 	@echo "  make install     - Install flowctl to GOPATH/bin"
