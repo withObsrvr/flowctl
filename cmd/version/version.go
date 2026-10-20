@@ -1,10 +1,10 @@
 package version
 
 import (
-	"fmt"
 	"runtime"
 
 	"github.com/spf13/cobra"
+	"github.com/withobsrvr/flowctl/internal/cliout"
 )
 
 var (
@@ -21,13 +21,36 @@ func NewCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",
-		Long:  `Print the version, git commit, and build date of the flowctl CLI.`,
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("flowctl version %s\n", Version)
-			fmt.Printf("  commit: %s\n", Commit)
-			fmt.Printf("  built: %s\n", BuildDate)
-			fmt.Printf("  go: %s\n", runtime.Version())
-			fmt.Printf("  os/arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+		Long: `Print the version, git commit, and build date of the flowctl CLI.
+
+Examples:
+  # Human-readable
+  flowctl version
+
+  # Machine-readable, for a release check in CI (CLI-13)
+  flowctl version --output json | jq -r '.data.version'`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			p := cliout.FromContext(cmd.Context())
+			return p.Object(cliout.Object{
+				Schema: "flowctl.version.v1",
+				Fields: []cliout.Field{
+					{Label: "flowctl", Key: "version"},
+					{Label: "commit", Key: "commit"},
+					{Label: "built", Key: "build_date"},
+					{Label: "go", Key: "go_version"},
+					{Label: "os/arch", Key: "platform"},
+				},
+				Data: cliout.Row{
+					"version":    Version,
+					"commit":     Commit,
+					"build_date": BuildDate,
+					"go_version": runtime.Version(),
+					"platform":   runtime.GOOS + "/" + runtime.GOARCH,
+					"os":         runtime.GOOS,
+					"arch":       runtime.GOARCH,
+				},
+			})
 		},
 	}
 
