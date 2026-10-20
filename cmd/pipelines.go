@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/withobsrvr/flowctl/internal/sanitize"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -62,6 +63,12 @@ var pipelinesListCmd = &cobra.Command{
 			return fmt.Errorf("failed to list pipeline runs: %w", err)
 		}
 
+		// Everything below is written by components flowctl did not start and is
+		// printed to a terminal, so strip control characters first (CLI-22).
+		// Remove this when the command is converted to internal/cliout, which
+		// sanitises at the point it formats a cell.
+		resp = sanitize.Message(resp)
+
 		// Group by pipeline name
 		pipelineMap := make(map[string][]*flowctlpb.PipelineRun)
 		for _, run := range resp.Runs {
@@ -120,6 +127,12 @@ var pipelinesRunsCmd = &cobra.Command{
 			return fmt.Errorf("failed to list pipeline runs: %w", err)
 		}
 
+		// Everything below is written by components flowctl did not start and is
+		// printed to a terminal, so strip control characters first (CLI-22).
+		// Remove this when the command is converted to internal/cliout, which
+		// sanitises at the point it formats a cell.
+		resp = sanitize.Message(resp)
+
 		if len(resp.Runs) == 0 {
 			fmt.Printf("No runs found for pipeline: %s\n", pipelineName)
 			return nil
@@ -169,6 +182,12 @@ var pipelinesRunInfoCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to get pipeline run: %w", err)
 		}
+
+		// Everything below is written by components flowctl did not start and is
+		// printed to a terminal, so strip control characters first (CLI-22).
+		// Remove this when the command is converted to internal/cliout, which
+		// sanitises at the point it formats a cell.
+		run = sanitize.Message(run)
 
 		// Print run details
 		fmt.Printf("Run ID:        %s\n", run.RunId)
@@ -226,6 +245,12 @@ var pipelinesStopCmd = &cobra.Command{
 			return fmt.Errorf("failed to stop pipeline run: %w", err)
 		}
 
+		// Everything below is written by components flowctl did not start and is
+		// printed to a terminal, so strip control characters first (CLI-22).
+		// Remove this when the command is converted to internal/cliout, which
+		// sanitises at the point it formats a cell.
+		run = sanitize.Message(run)
+
 		fmt.Printf("✓ Pipeline stopped (status: %s)\n", formatRunStatus(run.Status))
 		return nil
 	},
@@ -249,6 +274,12 @@ var pipelinesActiveCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to list active pipeline runs: %w", err)
 		}
+
+		// Everything below is written by components flowctl did not start and is
+		// printed to a terminal, so strip control characters first (CLI-22).
+		// Remove this when the command is converted to internal/cliout, which
+		// sanitises at the point it formats a cell.
+		resp = sanitize.Message(resp)
 
 		if len(resp.Runs) == 0 {
 			fmt.Println("No active pipeline runs")
@@ -367,7 +398,9 @@ func resolveRunID(ctx context.Context, client flowctlpb.ControlPlaneClient, runI
 	// Fast path: exact lookup succeeds.
 	run, err := client.GetPipelineRun(ctx, &flowctlpb.GetPipelineRunRequest{RunId: runID})
 	if err == nil {
-		return run.RunId, nil
+		// The id comes back over the wire and is echoed into later output, so
+		// it is sanitised like any other control-plane string (CLI-22).
+		return sanitize.Line(run.RunId), nil
 	}
 
 	// Fallback: allow a unique prefix so operators can use the short IDs shown in tables.
@@ -375,6 +408,12 @@ func resolveRunID(ctx context.Context, client flowctlpb.ControlPlaneClient, runI
 	if listErr != nil {
 		return "", fmt.Errorf("failed to resolve run id %q: %w", runID, listErr)
 	}
+
+	// Everything below is written by components flowctl did not start and is
+	// printed to a terminal, so strip control characters first (CLI-22).
+	// Remove this when the command is converted to internal/cliout, which
+	// sanitises at the point it formats a cell.
+	resp = sanitize.Message(resp)
 
 	matches := make([]string, 0)
 	for _, candidate := range resp.Runs {

@@ -3,6 +3,7 @@ package processors
 import (
 	"context"
 	"fmt"
+	"github.com/withobsrvr/flowctl/internal/sanitize"
 	"os"
 	"text/tabwriter"
 	"time"
@@ -56,6 +57,12 @@ func runList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to list processors: %w", err)
 	}
+
+	// Everything below is written by components flowctl did not start and is
+	// printed to a terminal, so strip control characters first (CLI-22).
+	// Remove this when the command is converted to internal/cliout, which
+	// sanitises at the point it formats a cell.
+	resp = sanitize.Message(resp)
 
 	// Check if any processors found
 	if len(resp.Components) == 0 {

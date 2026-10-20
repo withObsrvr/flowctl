@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/withobsrvr/flowctl/internal/sanitize"
 	"os"
 	"sort"
 	"strings"
@@ -66,6 +67,12 @@ var chunksListCmd = &cobra.Command{
 			return fmt.Errorf("failed to list chunk runs: %w", err)
 		}
 
+		// Everything below is written by components flowctl did not start and is
+		// printed to a terminal, so strip control characters first (CLI-22).
+		// Remove this when the command is converted to internal/cliout, which
+		// sanitises at the point it formats a cell.
+		resp = sanitize.Message(resp)
+
 		if len(resp.Chunks) == 0 {
 			fmt.Println("No chunk runs found")
 			return nil
@@ -118,6 +125,12 @@ var chunksShowCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to get chunk run: %w", err)
 		}
+
+		// Everything below is written by components flowctl did not start and is
+		// printed to a terminal, so strip control characters first (CLI-22).
+		// Remove this when the command is converted to internal/cliout, which
+		// sanitises at the point it formats a cell.
+		chunk = sanitize.Message(chunk)
 
 		fmt.Printf("Chunk ID:      %s\n", chunk.ChunkId)
 		fmt.Printf("Run ID:        %s\n", chunk.PipelineRunId)

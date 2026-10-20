@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/withobsrvr/flowctl/internal/sanitize"
 	"strings"
 	"time"
 
@@ -194,9 +195,13 @@ func fetchDataCmd(addr string, port int) tea.Cmd {
 			return dataMsg{err: fmt.Errorf("failed to list components: %w", err)}
 		}
 
+		// Both lists are written by components flowctl did not start and are
+		// rendered into the operator's terminal, so strip control characters
+		// first (CLI-22). A refreshing TUI is a particularly attractive
+		// injection target, since the payload is redrawn continuously.
 		return dataMsg{
-			pipelines:  runsResp.Runs,
-			components: compsResp.Components,
+			pipelines:  sanitize.Message(runsResp).Runs,
+			components: sanitize.Message(compsResp).Components,
 		}
 	}
 }

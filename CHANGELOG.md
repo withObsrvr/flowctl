@@ -73,12 +73,21 @@ called out below and, where they change a contract, carry an ADR in `docs/adr/`.
   returned pointers into the service map that the health janitor mutates, so
   gRPC serialised a struct while the janitor was writing to it. Both now return
   a clone. Found by switching on `go test -race`.
-- **Terminal escape injection.** Service names, metadata and relayed errors come
-  from processes flowctl did not start and were printed to the terminal
-  unescaped, letting a crafted name emit its own OSC sequences — set the window
-  title, plant a misleading hyperlink, or write to the clipboard. Untrusted
-  strings are now stripped of control characters before display (CLI-22). JSON
-  output is unaffected and still round-trips the original bytes.
+- **Terminal escape injection.** Service names, metadata, event-type strings and
+  relayed error messages come from processes flowctl did not start and were
+  printed to the terminal unescaped, letting a crafted name emit its own OSC
+  sequences — set the window title, plant a misleading hyperlink, or write to
+  the clipboard. Every display path is now covered: commands rendering through
+  the new output layer sanitise each formatted cell, and the commands not yet
+  converted — `status`, `pipelines`, `chunks`, `processors` and `dashboard` —
+  sanitise each control-plane response on arrival. JSON output is deliberately
+  unaffected and still round-trips the original bytes, since `encoding/json`
+  escapes control characters anyway.
+- `flowctl status` wrote raw ANSI colour and a screen-clear escape
+  unconditionally, so `flowctl status > file` embedded escape codes and
+  `flowctl status | grep RUNNING` could fail to match. Colour now follows the
+  same rule as everywhere else: off when stdout is not a terminal, when
+  `NO_COLOR` is set, or when `TERM=dumb`.
 - **SIGINT during startup killed the process.** The signal handler was installed
   only once the pipeline was running, so an interrupt during startup bypassed
   graceful shutdown and orphaned child components. It is now installed before

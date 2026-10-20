@@ -3,8 +3,12 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/withobsrvr/flowctl/internal/cliout"
+	"github.com/withobsrvr/flowctl/internal/sanitize"
+	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -89,7 +93,9 @@ Examples:
 					return formatControlPlaneError(err, endpoint)
 				}
 				time.Sleep(time.Duration(statusWatchInterval) * time.Second)
-				fmt.Print("\033[H\033[2J") // Clear screen
+				if colorEnabled() {
+					fmt.Print("\033[H\033[2J") // Clear screen
+				}
 			}
 		}
 
@@ -111,6 +117,12 @@ func displayStatus(ctx context.Context, client flowctlv1.ControlPlaneServiceClie
 	if err != nil {
 		return fmt.Errorf("failed to list components: %w", err)
 	}
+
+	// Everything below is written by components flowctl did not start and is
+	// printed to a terminal, so strip control characters first (CLI-22).
+	// Remove this when the command is converted to internal/cliout, which
+	// sanitises at the point it formats a cell.
+	resp = sanitize.Message(resp)
 
 	if len(resp.Components) == 0 {
 		fmt.Println("No components registered with control plane")
@@ -267,16 +279,34 @@ func printComponentStatus(comp *flowctlv1.ComponentStatusResponse) {
 	}
 }
 
+// colorEnabled reports whether ANSI may be written to stdout. CLI-7 requires
+// colour off when stdout is not a terminal, when NO_COLOR is set, or when
+// TERM=dumb — otherwise `flowctl status > file` embeds escape codes in the file
+// and `flowctl status | grep RUNNING` fails to match.
+//
+// Resolved once: stdout cannot change underneath a single invocation, and
+// re-checking per cell would cost a syscall per field in watch mode.
+var colorEnabled = sync.OnceValue(func() bool {
+	return cliout.ShouldColor(os.Stdout)
+})
+
+func colorize(code, text string) string {
+	if !colorEnabled() {
+		return text
+	}
+	return "\033[" + code + "m" + text + "\033[0m"
+}
+
 func colorizeStatus(status string) string {
 	switch status {
 	case "RUNNING":
-		return fmt.Sprintf("\033[32m%s\033[0m", status) // Green
+		return colorize("32", status) // Green
 	case "STARTING":
-		return fmt.Sprintf("\033[36m%s\033[0m", status) // Cyan
+		return colorize("36", status) // Cyan
 	case "DEGRADED":
-		return fmt.Sprintf("\033[33m%s\033[0m", status) // Yellow
+		return colorize("33", status) // Yellow
 	case "UNHEALTHY":
-		return fmt.Sprintf("\033[31m%s\033[0m", status) // Red
+		return colorize("31", status) // Red
 	default:
 		return status
 	}
@@ -284,13 +314,13 @@ func colorizeStatus(status string) string {
 
 func colorizeHealth(health string) string {
 	if strings.Contains(health, "HEALTHY") && !strings.Contains(health, "UNHEALTHY") {
-		return fmt.Sprintf("\033[32m%s\033[0m", health) // Green
+		return colorize("32", health) // Green
 	} else if strings.Contains(health, "DEGRADED") {
-		return fmt.Sprintf("\033[33m%s\033[0m", health) // Yellow
+		return colorize("33", health) // Yellow
 	} else if strings.Contains(health, "UNHEALTHY") {
-		return fmt.Sprintf("\033[31m%s\033[0m", health) // Red
+		return colorize("31", health) // Red
 	} else if strings.Contains(health, "STARTING") {
-		return fmt.Sprintf("\033[36m%s\033[0m", health) // Cyan
+		return colorize("36", health) // Cyan
 	}
 	return health
 }

@@ -82,7 +82,9 @@ breaks one needs an ADR.
 - **FC-5 The control plane is a trust boundary.** It accepts registrations from processes
   flowctl did not start. Everything it receives — service names, metadata, relayed errors
   — is untrusted input and MUST be sanitised before it reaches a terminal (CLI-22), a log
-  or persisted state.
+  or persisted state. Commands rendering through `internal/cliout` get this at the point a
+  cell is formatted; commands not yet converted call `sanitize.Message` on each
+  control-plane response, and MUST drop that call only when they move to `cliout`.
 - **FC-6 Run IDs are stable and public.** A run ID, once issued, identifies that run for
   the life of the store and appears in every surface that mentions the run (CLI-4).
 
@@ -118,7 +120,7 @@ Assessed 2026-10-20 against standard v2.0. ✓ met · ◐ partial · ✗ unmet.
 | § | Area | Status | Summary |
 |---|---|---|---|
 | 2 | Principles | ✓ | Architecture follows P-2, P-3, P-5, P-8 well. Headless core in `internal/`, adapters in `cmd/`, components as separate processes over documented gRPC. |
-| 3 | CLI | ◐ | CLI-3, 7, 9, 11, 15, 22 now met; CLI-5 and CLI-6 met by `internal/cliout` but only 3 of 14 commands are converted. CLI-1, 12, 13 partial; CLI-14, 17–21 unmet. |
+| 3 | CLI | ◐ | CLI-3, 7, 11, 15, 22 now met across every command; CLI-5 and CLI-6 met by `internal/cliout` but only 3 of 14 commands are converted, so machine-readable output is still partial. CLI-1, 12, 13 partial; CLI-14, 17–21 unmet. |
 | 4 | Data contracts | ◐ | Proto and CUE are authoritative (DATA-5 ✓). Event envelope lacks network, ledger, correlation ID and cursor (DATA-6, DATA-7 ✗). |
 | 5 | Network APIs | ✗ | No health service, readiness or metrics (API-13). Errors carry no stable code or request ID (API-3). mTLS available but off by default (API-11 ◐). |
 | 6 | Versioning | ◐ | `buf lint`/`buf breaking` in CI, ADRs in place, changelog rewritten, VER-7 enforced. Tags still unsigned until the next release runs the new workflow (VER-12). Version matrix still missing (VER-9). |
@@ -144,7 +146,7 @@ the register reads as a history rather than only a backlog.
 | GAP-6 | Three disagreeing `apiVersion` validators; `flowctl run` accepted `v99` | VER-7 | 2 | **Closed** — `internal/apiversion`, with a test asserting the Go pattern matches the CUE schema |
 | GAP-7 | Proto package is `flowctl`, not `flowctl.v1`; no buf | DATA-5, VER-5, API-1 | 2 | **Partial** — `buf lint`/`buf breaking`/generated-code check in CI; rename deferred under [ADR 0002](adr/0002-defer-protobuf-package-versioning.md) |
 | GAP-8 | BoltDB store records no format version, so an upgrade cannot migrate | VER-7 | 3 | Open |
-| GAP-9 | No control-character sanitisation of component-supplied strings | CLI-22, FC-5 | 2 | **Closed** — `internal/sanitize`, fuzzed |
+| GAP-9 | No control-character sanitisation of component-supplied strings | CLI-22, FC-5 | 2 | **Closed** — `internal/sanitize` for formatted values plus `sanitize.Message` at every command's control-plane ingress, fuzzed, and verified end-to-end against a service registered under a hostile name |
 | GAP-10 | Merge gate missing gofmt, staticcheck, govulncheck, secret scanning, `-race`, buf | §9 merge gate | 2 | **Closed** — found a real data race on its first run |
 | GAP-11 | Unsigned tags, no SBOM or provenance, non-reproducible builds | VER-12, SEC-10, BUILD-3 | 5 | **Partial** — `-trimpath`, commit-date stamping and `make verify-repro` done; signing and SBOM wired into the release workflow but unproven until the next tag |
 | GAP-12 | Control plane has no authentication, authorization, actor identity or audit log | SEC-1–4 | 4 | Open — **largest remaining gap** |
@@ -152,7 +154,7 @@ the register reads as a history rather than only a backlog.
 | GAP-14 | No metrics: no last-ledger, lag, backlog, checkpoint or gap-count signals | OBS-3, OBS-4 | 3 | Open — blocks Lake's freshness/completeness SLOs |
 | GAP-15 | `viper.AutomaticEnv` with no prefix; no XDG support; no `config show` | CLI-9 | 2 | **Closed** |
 | GAP-16 | `--output` reused for two unrelated meanings | CLI-3 | 2 | **Closed** — renamed to `--file` and `--output-type` |
-| GAP-17 | No colour suppression: no `NO_COLOR`, `TERM=dumb` or TTY detection | CLI-7 | 2 | **Closed** |
+| GAP-17 | No colour suppression: no `NO_COLOR`, `TERM=dumb` or TTY detection | CLI-7 | 2 | **Closed** — logger, `cliout`, and `status` (which emitted raw ANSI and a screen-clear unconditionally). `dashboard` relies on lipgloss's own detection. |
 | GAP-18 | Progress and banners written to stdout alongside results | CLI-5 | 2 | **Partial** — `cliout` separates the streams; unconverted commands still print to stdout |
 | GAP-19 | No real-chain fixtures, fuzzing, golden, subprocess, parity or replay tests | TEST-1, TEST-2, TEST-3 | 3 | **Partial** — fuzz tests for the sanitiser and `apiVersion`; golden tests for the output envelopes; TEST-1 and TEST-2 levels 5–8 still open |
 | GAP-20 | No version-matrix tests for rolling deploys *(the gap §13 of the standard names)* | VER-9 | 3 | Open |
