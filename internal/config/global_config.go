@@ -11,10 +11,10 @@ import (
 const (
 	// EnvLocalGeneratorType is the environment variable for the local generator type
 	EnvLocalGeneratorType = "FLOWCTL_LOCAL_GENERATOR_TYPE"
-	
+
 	// LocalGeneratorDocker is the Docker Compose generator type
 	LocalGeneratorDocker = "docker"
-	
+
 	// LocalGeneratorBash is the bash script generator type
 	LocalGeneratorBash = "bash"
 )
@@ -35,13 +35,13 @@ func DefaultGlobalConfig() GlobalConfig {
 // LoadGlobalConfig loads the global configuration from environment variables
 func LoadGlobalConfig() GlobalConfig {
 	cfg := DefaultGlobalConfig()
-	
+
 	// Load local generator type from environment
 	if genType := os.Getenv(EnvLocalGeneratorType); genType != "" {
 		genType = strings.ToLower(genType)
 		if genType == LocalGeneratorBash || genType == LocalGeneratorDocker {
 			cfg.LocalGeneratorType = genType
-			logger.Debug("Using local generator type from environment", 
+			logger.Debug("Using local generator type from environment",
 				zap.String("type", genType))
 		} else {
 			logger.Warn("Unknown local generator type in environment, using default",
@@ -49,7 +49,7 @@ func LoadGlobalConfig() GlobalConfig {
 				zap.String("default", cfg.LocalGeneratorType))
 		}
 	}
-	
+
 	return cfg
 }
 

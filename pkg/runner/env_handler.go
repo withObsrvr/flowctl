@@ -24,25 +24,25 @@ func NewEnvHandler(logger *zap.Logger) *EnvHandler {
 func (h *EnvHandler) ProcessEnvironment(env map[string]string) ([]string, error) {
 	// Start with system environment as base
 	envMap := h.getSystemEnv()
-	
+
 	// Override with pipeline-specific environment
 	for k, v := range env {
 		// Expand variables in the value
 		expanded := h.expandValue(v, envMap)
 		envMap[k] = expanded
-		
+
 		h.logger.Debug("Set environment variable",
 			zap.String("key", k),
 			zap.String("original", v),
 			zap.String("expanded", expanded))
 	}
-	
+
 	// Convert to slice format for Docker
 	result := make([]string, 0, len(envMap))
 	for k, v := range envMap {
 		result = append(result, fmt.Sprintf("%s=%s", k, v))
 	}
-	
+
 	return result, nil
 }
 
@@ -50,22 +50,22 @@ func (h *EnvHandler) ProcessEnvironment(env map[string]string) ([]string, error)
 func (h *EnvHandler) expandValue(value string, env map[string]string) string {
 	// Handle ${VAR} syntax
 	expanded := value
-	
+
 	// Find all ${VAR} patterns
 	for {
 		start := strings.Index(expanded, "${")
 		if start == -1 {
 			break
 		}
-		
+
 		end := strings.Index(expanded[start:], "}")
 		if end == -1 {
 			break
 		}
-		
+
 		// Extract variable name
 		varName := expanded[start+2 : start+end]
-		
+
 		// Look up value
 		replacement := ""
 		if val, ok := env[varName]; ok {
@@ -73,11 +73,11 @@ func (h *EnvHandler) expandValue(value string, env map[string]string) string {
 		} else if val, ok := os.LookupEnv(varName); ok {
 			replacement = val
 		}
-		
+
 		// Replace
 		expanded = expanded[:start] + replacement + expanded[start+end+1:]
 	}
-	
+
 	// Handle $VAR syntax
 	parts := strings.Fields(expanded)
 	for i, part := range parts {
@@ -90,19 +90,19 @@ func (h *EnvHandler) expandValue(value string, env map[string]string) string {
 			}
 		}
 	}
-	
+
 	// Rejoin if we split
 	if len(parts) > 0 && strings.Contains(value, " ") {
 		expanded = strings.Join(parts, " ")
 	}
-	
+
 	return expanded
 }
 
 // getSystemEnv returns system environment as a map
 func (h *EnvHandler) getSystemEnv() map[string]string {
 	env := make(map[string]string)
-	
+
 	// Include key system variables
 	essentialVars := []string{
 		"PATH",
@@ -113,13 +113,13 @@ func (h *EnvHandler) getSystemEnv() map[string]string {
 		"TZ",
 		"TMPDIR",
 	}
-	
+
 	for _, key := range essentialVars {
 		if val, ok := os.LookupEnv(key); ok {
 			env[key] = val
 		}
 	}
-	
+
 	return env
 }
 
@@ -137,13 +137,13 @@ func (h *EnvHandler) ValidateEnvironment(env map[string]string) error {
 					zap.String("expanded", expanded))
 			}
 		}
-		
+
 		// Validate key format
 		if !isValidEnvKey(k) {
 			return fmt.Errorf("invalid environment variable key: %s", k)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -152,19 +152,19 @@ func isValidEnvKey(key string) bool {
 	if len(key) == 0 {
 		return false
 	}
-	
+
 	// Must start with letter or underscore
 	if !isLetter(rune(key[0])) && key[0] != '_' {
 		return false
 	}
-	
+
 	// Rest must be alphanumeric or underscore
 	for _, ch := range key[1:] {
 		if !isAlphaNumeric(ch) && ch != '_' {
 			return false
 		}
 	}
-	
+
 	return true
 }
 

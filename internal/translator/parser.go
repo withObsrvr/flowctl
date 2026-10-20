@@ -66,7 +66,7 @@ func (p *YAMLParser) Parse(data []byte) (*model.Pipeline, error) {
 
 	// Convert legacy config to Pipeline
 	pipeline = convertConfigToPipeline(cfg)
-	
+
 	logger.Debug("Successfully converted legacy config to pipeline format",
 		zap.String("version", cfg.Version))
 
@@ -145,7 +145,7 @@ func (p *JSONParser) Parse(data []byte) (*model.Pipeline, error) {
 
 	// Convert legacy config to Pipeline
 	pipeline = convertConfigToPipeline(cfg)
-	
+
 	logger.Debug("Successfully converted legacy config to pipeline format",
 		zap.String("version", cfg.Version))
 
@@ -204,7 +204,7 @@ func convertConfigToPipeline(cfg *model.Config) model.Pipeline {
 			Type:   proc.Plugin,
 			Inputs: []string{cfg.Source.Type}, // Default to source as input
 		}
-		
+
 		// Extract common fields from params
 		extractComponentFieldsFromParams(&processor, proc.Params)
 		pipeline.Spec.Processors = append(pipeline.Spec.Processors, processor)
@@ -215,7 +215,7 @@ func convertConfigToPipeline(cfg *model.Config) model.Pipeline {
 		ID:   cfg.Sink.Type,
 		Type: cfg.Sink.Type,
 	}
-	
+
 	// Set default input to last processor if available
 	if len(cfg.Processors) > 0 {
 		sink.Inputs = []string{cfg.Processors[len(cfg.Processors)-1].Name}
@@ -223,7 +223,7 @@ func convertConfigToPipeline(cfg *model.Config) model.Pipeline {
 		// Otherwise use source as input
 		sink.Inputs = []string{cfg.Source.Type}
 	}
-	
+
 	// Extract common fields from params
 	extractComponentFieldsFromParams(&sink, cfg.Sink.Params)
 	pipeline.Spec.Sinks = append(pipeline.Spec.Sinks, sink)
@@ -237,7 +237,7 @@ func extractComponentFieldsFromParams(component *model.Component, params map[str
 	if img, ok := params["image"].(string); ok {
 		component.Image = img
 	}
-	
+
 	// Extract command
 	if cmd, ok := params["command"].([]string); ok {
 		component.Command = cmd
@@ -247,7 +247,7 @@ func extractComponentFieldsFromParams(component *model.Component, params map[str
 			component.Command[i] = fmt.Sprintf("%v", c)
 		}
 	}
-	
+
 	// Extract environment variables
 	if env, ok := params["env"].(map[string]string); ok {
 		component.Env = env
@@ -257,7 +257,7 @@ func extractComponentFieldsFromParams(component *model.Component, params map[str
 			component.Env[k] = fmt.Sprintf("%v", v)
 		}
 	}
-	
+
 	// Extract ports
 	if ports, ok := params["ports"].([]int); ok {
 		component.Ports = make([]model.Port, len(ports))
@@ -287,12 +287,12 @@ func extractComponentFieldsFromParams(component *model.Component, params map[str
 			}
 		}
 	}
-	
+
 	// Extract health check
 	if health, ok := params["health_check"].(string); ok {
 		component.HealthCheck = health
 	}
-	
+
 	// Extract health port
 	if port, ok := params["health_port"].(int); ok {
 		component.HealthPort = port

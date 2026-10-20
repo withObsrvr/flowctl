@@ -28,7 +28,7 @@ func NewControlPlaneClient(endpoint string, logger *zap.Logger) (*ControlPlaneCl
 	if endpoint == "" {
 		endpoint = "localhost:8080"
 	}
-	
+
 	// Connect to control plane
 	// Use WithBlock=false (default) to allow lazy connection, and enable waiting for ready
 	opts := []grpc.DialOption{
@@ -39,7 +39,7 @@ func NewControlPlaneClient(endpoint string, logger *zap.Logger) (*ControlPlaneCl
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to control plane: %w", err)
 	}
-	
+
 	return &ControlPlaneClientImpl{
 		conn:   conn,
 		client: pb.NewControlPlaneClient(conn),
@@ -64,7 +64,7 @@ func (c *ControlPlaneClientImpl) RegisterPipeline(ctx context.Context, pipelineI
 		MaxInflight:    100, // Default value
 		Metadata:       metadata,
 	}
-	
+
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -73,11 +73,11 @@ func (c *ControlPlaneClientImpl) RegisterPipeline(ctx context.Context, pipelineI
 	if err != nil {
 		return fmt.Errorf("failed to register pipeline: %w", err)
 	}
-	
+
 	c.logger.Info("Pipeline registered with control plane",
 		zap.String("service_id", ack.ServiceId),
 		zap.Strings("topics", ack.TopicNames))
-	
+
 	return nil
 }
 
@@ -91,7 +91,7 @@ func (c *ControlPlaneClientImpl) IsServiceRegistered(ctx context.Context, servic
 	if err != nil {
 		return false, fmt.Errorf("failed to list services: %w", err)
 	}
-	
+
 	// Check if our service is in the list
 	// Match by component_id (preferred) or service_id (legacy)
 	for _, svc := range serviceList.Services {
@@ -110,7 +110,7 @@ func (c *ControlPlaneClientImpl) SendHeartbeat(ctx context.Context, serviceID st
 		Metrics:   metrics,
 		// Timestamp is set by the server
 	}
-	
+
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
@@ -119,6 +119,6 @@ func (c *ControlPlaneClientImpl) SendHeartbeat(ctx context.Context, serviceID st
 	if err != nil {
 		return fmt.Errorf("failed to send heartbeat: %w", err)
 	}
-	
+
 	return nil
 }

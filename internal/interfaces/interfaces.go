@@ -13,7 +13,7 @@ type Parser interface {
 	Parse(data []byte) (*model.Pipeline, error)
 
 	// ParseReader parses from an io.Reader
-	ParseReader(r io.Reader) (*model.Pipeline, error) 
+	ParseReader(r io.Reader) (*model.Pipeline, error)
 }
 
 // Generator is the interface for generating target-specific output

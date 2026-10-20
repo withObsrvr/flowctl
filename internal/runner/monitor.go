@@ -15,10 +15,10 @@ import (
 
 // Monitor provides real-time monitoring and status display for the pipeline
 type Monitor struct {
-	runner     *PipelineRunner
-	displayCh  chan bool
-	logCh      chan LogEntry
-	quit       chan struct{}
+	runner      *PipelineRunner
+	displayCh   chan bool
+	logCh       chan LogEntry
+	quit        chan struct{}
 	clearScreen bool
 }
 
@@ -156,10 +156,10 @@ func (m *Monitor) displayStatus() {
 // displayLogEntry displays a log entry
 func (m *Monitor) displayLogEntry(entry LogEntry) {
 	timestamp := entry.Timestamp.Format("15:04:05")
-	
+
 	// Color code by component
 	componentColor := m.getComponentColor(entry.ComponentID)
-	
+
 	// Color code by log level
 	var levelColor *color.Color
 	switch entry.Level {

@@ -33,11 +33,11 @@ func NewContainerHealthMonitor(containerID string, dockerClient DockerClient, co
 func (m *ContainerHealthMonitor) Start(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-	
+
 	m.logger.Info("Starting health monitoring for pipeline",
 		zap.String("service_id", m.serviceID),
 		zap.String("container_id", m.containerID))
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -67,23 +67,23 @@ func (m *ContainerHealthMonitor) checkHealth(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// Build metrics
 	metrics := map[string]float64{
 		"container_running": boolToFloat64(info.State.Running),
-		"exit_code":        float64(info.State.ExitCode),
+		"exit_code":         float64(info.State.ExitCode),
 	}
-	
+
 	// Update health status
 	m.healthy = info.State.Running && info.State.ExitCode == 0
-	
+
 	// Send heartbeat to control plane
 	if err := m.controlPlane.SendHeartbeat(ctx, m.serviceID, metrics); err != nil {
 		m.logger.Warn("Failed to send heartbeat",
 			zap.String("service_id", m.serviceID),
 			zap.Error(err))
 	}
-	
+
 	return nil
 }
 

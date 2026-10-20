@@ -55,14 +55,14 @@ type HTTPCheck struct {
 
 // ComponentStatus represents the status of a component
 type ComponentStatus struct {
-	ID         string            `json:"id"`
-	Status     string            `json:"status"`
-	PID        int               `json:"pid,omitempty"`
+	ID          string            `json:"id"`
+	Status      string            `json:"status"`
+	PID         int               `json:"pid,omitempty"`
 	ContainerID string            `json:"container_id,omitempty"`
-	Endpoint   string            `json:"endpoint,omitempty"`
-	StartTime  time.Time         `json:"start_time,omitempty"`
-	Error      string            `json:"error,omitempty"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
+	Endpoint    string            `json:"endpoint,omitempty"`
+	StartTime   time.Time         `json:"start_time,omitempty"`
+	Error       string            `json:"error,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 // Orchestrator defines the interface for component orchestration
@@ -99,7 +99,7 @@ type Orchestrator interface {
 type LogStream interface {
 	// Read reads log data
 	Read(p []byte) (n int, err error)
-	
+
 	// Close closes the log stream
 	Close() error
 }
@@ -130,19 +130,19 @@ func (e *ComponentNotFoundError) Error() string {
 
 // ComponentStatus constants
 const (
-	StatusUnknown  = "unknown"
-	StatusStarting = "starting"
-	StatusRunning  = "running"
-	StatusStopping = "stopping"
-	StatusStopped  = "stopped"
-	StatusFailed   = "failed"
-	StatusHealthy  = "healthy"
+	StatusUnknown   = "unknown"
+	StatusStarting  = "starting"
+	StatusRunning   = "running"
+	StatusStopping  = "stopping"
+	StatusStopped   = "stopped"
+	StatusFailed    = "failed"
+	StatusHealthy   = "healthy"
 	StatusUnhealthy = "unhealthy"
 )
 
 // Orchestrator type constants
 const (
-	TypeProcess   = "process"
-	TypeDocker    = "docker"
+	TypeProcess    = "process"
+	TypeDocker     = "docker"
 	TypeKubernetes = "kubernetes"
 )

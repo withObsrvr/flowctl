@@ -15,14 +15,14 @@ import (
 
 // LogAggregator aggregates logs from multiple components
 type LogAggregator struct {
-	streams    map[string]io.ReadCloser
-	colors     map[string]*color.Color
-	mu         sync.RWMutex
-	quit       chan struct{}
-	logCh      chan LogEntry
-	writer     *bufio.Writer
-	lastFlush  time.Time
-	flushMu    sync.Mutex
+	streams     map[string]io.ReadCloser
+	colors      map[string]*color.Color
+	mu          sync.RWMutex
+	quit        chan struct{}
+	logCh       chan LogEntry
+	writer      *bufio.Writer
+	lastFlush   time.Time
+	flushMu     sync.Mutex
 	flushTicker *time.Ticker
 }
 
@@ -189,8 +189,8 @@ func (r *PipelineRunner) StartAggregatedLogging() *LogAggregator {
 		for _, componentID := range componentIDs {
 			stream, err := r.orchestrator.GetLogs(r.ctx, componentID, true)
 			if err != nil {
-				logger.Error("Failed to get logs for component", 
-					zap.String("component", componentID), 
+				logger.Error("Failed to get logs for component",
+					zap.String("component", componentID),
 					zap.Error(err))
 				continue
 			}

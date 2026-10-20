@@ -5,7 +5,7 @@ import (
 )
 
 var (
-	endpoint       string
+	endpoint         string
 	includeUnhealthy bool
 )
 

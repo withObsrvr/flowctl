@@ -87,8 +87,8 @@ func TestNewPipelineRunnerPreservesAutoPortSelection(t *testing.T) {
 	pipeline := &model.Pipeline{
 		APIVersion: "v1",
 		Kind:       "Pipeline",
-		Metadata: model.Metadata{Name: "test-pipeline"},
-		Spec: model.Spec{},
+		Metadata:   model.Metadata{Name: "test-pipeline"},
+		Spec:       model.Spec{},
 	}
 
 	runner, err := NewPipelineRunner(pipeline, Config{

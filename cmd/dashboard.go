@@ -9,8 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
-	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
+	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -284,52 +284,52 @@ func countRunning(pipelines []*flowctlpb.PipelineRun) int {
 
 var (
 	// Colors
-	primaryColor   = lipgloss.Color("#7D56F4")
-	successColor   = lipgloss.Color("#04B575")
-	errorColor     = lipgloss.Color("#FF0000")
-	dimColor       = lipgloss.Color("#666666")
+	primaryColor = lipgloss.Color("#7D56F4")
+	successColor = lipgloss.Color("#04B575")
+	errorColor   = lipgloss.Color("#FF0000")
+	dimColor     = lipgloss.Color("#666666")
 
 	// Text styles
 	headerStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(primaryColor).
-		PaddingLeft(2)
+			Bold(true).
+			Foreground(primaryColor).
+			PaddingLeft(2)
 
 	sectionTitleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(primaryColor)
+				Bold(true).
+				Foreground(primaryColor)
 
 	boxStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor).
-		Padding(1, 2).
-		Width(80)
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(primaryColor).
+			Padding(1, 2).
+			Width(80)
 
 	boldStyle = lipgloss.NewStyle().
-		Bold(true)
+			Bold(true)
 
 	dimStyle = lipgloss.NewStyle().
-		Foreground(dimColor)
+			Foreground(dimColor)
 
 	activeStyle = lipgloss.NewStyle().
-		Foreground(successColor).
-		Bold(true)
+			Foreground(successColor).
+			Bold(true)
 
 	healthyStyle = lipgloss.NewStyle().
-		Foreground(successColor).
-		Bold(true)
+			Foreground(successColor).
+			Bold(true)
 
 	unhealthyStyle = lipgloss.NewStyle().
-		Foreground(errorColor).
-		Bold(true)
+			Foreground(errorColor).
+			Bold(true)
 
 	errorStyle = lipgloss.NewStyle().
-		Foreground(errorColor).
-		Bold(true)
+			Foreground(errorColor).
+			Bold(true)
 
 	helpStyle = lipgloss.NewStyle().
-		Foreground(dimColor).
-		Italic(true)
+			Foreground(dimColor).
+			Italic(true)
 )
 
 func init() {

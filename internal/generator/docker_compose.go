@@ -22,17 +22,17 @@ type DockerComposeConfig struct {
 
 // DockerComposeService represents a service in Docker Compose
 type DockerComposeService struct {
-	Image         string            `yaml:"image"`
-	ContainerName string            `yaml:"container_name,omitempty"`
-	Command       []string          `yaml:"command,omitempty"`
-	Environment   map[string]string `yaml:"environment,omitempty"`
-	Ports         []string          `yaml:"ports,omitempty"`
-	Volumes       []string          `yaml:"volumes,omitempty"`
-	DependsOn     []string          `yaml:"depends_on,omitempty"`
-	Networks      []string          `yaml:"networks,omitempty"`
+	Image         string             `yaml:"image"`
+	ContainerName string             `yaml:"container_name,omitempty"`
+	Command       []string           `yaml:"command,omitempty"`
+	Environment   map[string]string  `yaml:"environment,omitempty"`
+	Ports         []string           `yaml:"ports,omitempty"`
+	Volumes       []string           `yaml:"volumes,omitempty"`
+	DependsOn     []string           `yaml:"depends_on,omitempty"`
+	Networks      []string           `yaml:"networks,omitempty"`
 	HealthCheck   *DockerHealthCheck `yaml:"healthcheck,omitempty"`
-	Restart       string            `yaml:"restart,omitempty"`
-	Labels        map[string]string `yaml:"labels,omitempty"`
+	Restart       string             `yaml:"restart,omitempty"`
+	Labels        map[string]string  `yaml:"labels,omitempty"`
 }
 
 // DockerHealthCheck represents a Docker health check configuration
@@ -84,7 +84,7 @@ func (g *DockerComposeGenerator) Generate(pipeline *model.Pipeline, opts model.T
 			Restart:       "unless-stopped",
 			Labels: map[string]string{
 				"com.obsrvr.component": "source",
-				"com.obsrvr.pipeline": pipeline.Metadata.Name,
+				"com.obsrvr.pipeline":  pipeline.Metadata.Name,
 			},
 		}
 
@@ -143,7 +143,7 @@ func (g *DockerComposeGenerator) Generate(pipeline *model.Pipeline, opts model.T
 			Restart:       "unless-stopped",
 			Labels: map[string]string{
 				"com.obsrvr.component": "processor",
-				"com.obsrvr.pipeline": pipeline.Metadata.Name,
+				"com.obsrvr.pipeline":  pipeline.Metadata.Name,
 				"com.obsrvr.order":     fmt.Sprintf("%d", i),
 			},
 		}
@@ -217,7 +217,7 @@ func (g *DockerComposeGenerator) Generate(pipeline *model.Pipeline, opts model.T
 			Restart:       "unless-stopped",
 			Labels: map[string]string{
 				"com.obsrvr.component": "sink",
-				"com.obsrvr.pipeline": pipeline.Metadata.Name,
+				"com.obsrvr.pipeline":  pipeline.Metadata.Name,
 			},
 		}
 
@@ -297,7 +297,7 @@ func (g *DockerComposeGenerator) Generate(pipeline *model.Pipeline, opts model.T
 			Restart:       getRestartPolicy(pipelineComp.RestartPolicy, "pipeline"),
 			Labels: map[string]string{
 				"com.obsrvr.component": "pipeline",
-				"com.obsrvr.pipeline": pipeline.Metadata.Name,
+				"com.obsrvr.pipeline":  pipeline.Metadata.Name,
 			},
 		}
 
@@ -512,7 +512,7 @@ func getRestartPolicy(policy string, componentType string) string {
 	}
 	// Default restart policies
 	if componentType == "pipeline" {
-		return "no"  // Pipelines typically run to completion: after the container finishes, it exits and remains stopped; no automatic cleanup or restart occurs
+		return "no" // Pipelines typically run to completion: after the container finishes, it exits and remains stopped; no automatic cleanup or restart occurs
 	}
-	return "unless-stopped"  // Other components should restart
+	return "unless-stopped" // Other components should restart
 }

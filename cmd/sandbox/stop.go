@@ -36,7 +36,7 @@ and clean up any temporary resources.`,
 }
 
 func runStop(opts *stopOptions) error {
-	logger.Info("Stopping sandbox environment", 
+	logger.Info("Stopping sandbox environment",
 		zap.Int("timeout", opts.timeout),
 		zap.Bool("force", opts.force))
 

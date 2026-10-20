@@ -91,8 +91,8 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 		// Debounce the reload to prevent rapid-fire triggers
 		w.debouncer.Debounce(func() {
 			if err := w.reloadFunc(event.Name); err != nil {
-				logger.Error("Failed to reload after file change", 
-					zap.String("file", event.Name), 
+				logger.Error("Failed to reload after file change",
+					zap.String("file", event.Name),
 					zap.Error(err))
 			} else {
 				logger.Info("Reloaded after file change", zap.String("file", event.Name))

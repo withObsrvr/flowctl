@@ -14,9 +14,9 @@ import (
 // - OCI image download and extraction
 // - Binary extraction and permission setting
 type ProcessorResolver struct {
-	client      *Client
-	cacheDir    string
-	defaultOrg  string // Default organization for short refs (e.g., "stellar")
+	client     *Client
+	cacheDir   string
+	defaultOrg string // Default organization for short refs (e.g., "stellar")
 }
 
 // NewProcessorResolver creates a new processor resolver.

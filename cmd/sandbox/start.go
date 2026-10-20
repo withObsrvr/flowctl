@@ -59,15 +59,15 @@ Use --services-only for a better development experience.`,
 
 func runStart(opts *startOptions) error {
 	if opts.servicesOnly {
-		logger.Info("Starting Flowctl sandbox (services-only mode)", 
+		logger.Info("Starting Flowctl sandbox (services-only mode)",
 			zap.String("services", opts.services),
 			zap.String("backend", opts.backend))
 	} else {
-		logger.Info("Starting Flowctl sandbox", 
+		logger.Info("Starting Flowctl sandbox",
 			zap.String("pipeline", opts.pipeline),
 			zap.String("services", opts.services),
 			zap.String("backend", opts.backend))
-		
+
 		// Validate pipeline file exists (only when not in services-only mode)
 		if _, err := os.Stat(opts.pipeline); os.IsNotExist(err) {
 			return fmt.Errorf("pipeline file not found: %s", opts.pipeline)

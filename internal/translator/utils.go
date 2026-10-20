@@ -43,7 +43,7 @@ func generatePortMappings(ports []int) []string {
 	if len(ports) == 0 {
 		return nil
 	}
-	
+
 	mappings := make([]string, len(ports))
 	for i, p := range ports {
 		mappings[i] = fmt.Sprintf("%d:%d", p, p)
@@ -54,17 +54,17 @@ func generatePortMappings(ports []int) []string {
 // mergeMaps merges two string maps with the second taking precedence
 func mergeMaps(m1, m2 map[string]string) map[string]string {
 	result := make(map[string]string)
-	
+
 	// Copy first map
 	for k, v := range m1 {
 		result[k] = v
 	}
-	
+
 	// Merge second map
 	for k, v := range m2 {
 		result[k] = v
 	}
-	
+
 	return result
 }
 
@@ -74,7 +74,7 @@ func getComponentName(componentType, name string, prefix string) string {
 	if baseName == "" {
 		baseName = componentType
 	}
-	
+
 	if prefix != "" {
 		return fmt.Sprintf("%s-%s", prefix, baseName)
 	}
@@ -132,12 +132,12 @@ func extractBoolParam(params map[string]interface{}, key string, defaultValue bo
 // extractStringMapParam extracts a string map parameter from a map
 func extractStringMapParam(params map[string]interface{}, key string) map[string]string {
 	result := make(map[string]string)
-	
+
 	val := extractParam(params, key, nil)
 	if val == nil {
 		return result
 	}
-	
+
 	if mapVal, ok := val.(map[string]interface{}); ok {
 		for k, v := range mapVal {
 			if strVal, ok := v.(string); ok {
@@ -151,7 +151,7 @@ func extractStringMapParam(params map[string]interface{}, key string) map[string
 			result[k] = v
 		}
 	}
-	
+
 	return result
 }
 
@@ -161,7 +161,7 @@ func extractStringSliceParam(params map[string]interface{}, key string) []string
 	if val == nil {
 		return nil
 	}
-	
+
 	if sliceVal, ok := val.([]interface{}); ok {
 		result := make([]string, len(sliceVal))
 		for i, v := range sliceVal {
@@ -175,7 +175,7 @@ func extractStringSliceParam(params map[string]interface{}, key string) []string
 	} else if sliceVal, ok := val.([]string); ok {
 		return sliceVal
 	}
-	
+
 	return []string{fmt.Sprintf("%v", val)}
 }
 
@@ -185,7 +185,7 @@ func extractIntSliceParam(params map[string]interface{}, key string) []int {
 	if val == nil {
 		return nil
 	}
-	
+
 	if sliceVal, ok := val.([]interface{}); ok {
 		result := make([]int, 0, len(sliceVal))
 		for _, v := range sliceVal {
@@ -208,7 +208,7 @@ func extractIntSliceParam(params map[string]interface{}, key string) []int {
 	} else if sliceVal, ok := val.([]int); ok {
 		return sliceVal
 	}
-	
+
 	// Try to convert a single value to int
 	if intVal, ok := val.(int); ok {
 		return []int{intVal}
@@ -218,6 +218,6 @@ func extractIntSliceParam(params map[string]interface{}, key string) []int {
 			return []int{intVal}
 		}
 	}
-	
+
 	return nil
 }

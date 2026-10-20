@@ -20,9 +20,9 @@ func TestDockerComposeLocalGenerator_Generate(t *testing.T) {
 		Spec: model.Spec{
 			Sources: []model.Component{
 				{
-					ID:    "test-source",
-					Image: "test-source:latest",
-					Command: []string{"test-source-cmd", "--option"},
+					ID:          "test-source",
+					Image:       "test-source:latest",
+					Command:     []string{"test-source-cmd", "--option"},
 					HealthCheck: "/health",
 					HealthPort:  8080,
 					Env: map[string]string{
@@ -39,9 +39,9 @@ func TestDockerComposeLocalGenerator_Generate(t *testing.T) {
 			},
 			Processors: []model.Component{
 				{
-					ID:     "test-processor",
-					Image:  "test-processor:latest",
-					Inputs: []string{"test-source"},
+					ID:      "test-processor",
+					Image:   "test-processor:latest",
+					Inputs:  []string{"test-source"},
 					Command: []string{"test-processor-cmd"},
 					Env: map[string]string{
 						"PROCESSOR_ENV": "value",
@@ -50,9 +50,9 @@ func TestDockerComposeLocalGenerator_Generate(t *testing.T) {
 			},
 			Sinks: []model.Component{
 				{
-					ID:     "test-sink",
-					Image:  "test-sink:latest",
-					Inputs: []string{"test-processor"},
+					ID:      "test-sink",
+					Image:   "test-sink:latest",
+					Inputs:  []string{"test-processor"},
 					Command: []string{"test-sink-cmd"},
 					Volumes: []model.Volume{
 						{
@@ -141,7 +141,7 @@ func TestDockerComposeLocalGenerator_Generate(t *testing.T) {
 			t.Errorf("Could not parse %s service from Docker Compose output", serviceName)
 			continue
 		}
-		
+
 		// Verify profile exists in the YAML output using string search
 		if !strings.Contains(output, "profiles:") || !strings.Contains(output, "- local") {
 			t.Errorf("Service %s doesn't have expected 'local' profile format", serviceName)

@@ -13,10 +13,10 @@ import (
 	"github.com/spf13/cobra"
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/api"
-	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"github.com/withobsrvr/flowctl/internal/config"
 	"github.com/withobsrvr/flowctl/internal/storage"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
+	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -59,7 +59,7 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 
 			// Create gRPC server options
 			var serverOptions []grpc.ServerOption
-			
+
 			// Configure TLS based on CLI flags
 			tlsConfig := &config.TLSConfig{
 				Mode:     config.TLSModeDisabled,
@@ -67,28 +67,28 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 				KeyFile:  opts.TLSKey,
 				CAFile:   opts.TLSCACert,
 			}
-			
+
 			// Enable TLS if cert and key are provided
 			if opts.TLSCert != "" && opts.TLSKey != "" {
 				tlsConfig.Mode = config.TLSModeEnabled
-				
+
 				// Enable mutual TLS if CA certificate is provided
 				if opts.TLSCACert != "" {
 					tlsConfig.Mode = config.TLSModeMutual
 				}
-				
+
 				logger.Info("TLS configuration",
 					zap.String("mode", string(tlsConfig.Mode)),
 					zap.String("cert", tlsConfig.CertFile),
 					zap.String("key", tlsConfig.KeyFile),
 					zap.String("ca_cert", tlsConfig.CAFile))
-				
+
 				// Load server credentials from TLS config
 				serverCreds, err := tlsConfig.LoadServerCredentials()
 				if err != nil {
 					return fmt.Errorf("failed to load TLS credentials: %w", err)
 				}
-				
+
 				// Add TLS credentials to server options if enabled
 				if serverCreds != nil {
 					serverOptions = append(serverOptions, serverCreds)
@@ -97,7 +97,7 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 
 			// Create gRPC server
 			grpcServer := grpc.NewServer(serverOptions...)
-			
+
 			// Create and configure storage if persistence is enabled
 			var serviceStorage storage.ServiceStorage
 			if !opts.NoPersistence {
@@ -110,13 +110,13 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 					}
 					dbPath = filepath.Join(homeDir, ".flowctl", storage.DefaultBoltFilePath)
 				}
-				
+
 				// Ensure directory exists
 				dbDir := filepath.Dir(dbPath)
 				if err := os.MkdirAll(dbDir, 0755); err != nil {
 					return fmt.Errorf("failed to create directory for database: %w", err)
 				}
-				
+
 				logger.Info("Using persistent storage for service registry", zap.String("path", dbPath))
 				serviceStorage = storage.NewBoltDBStorage(&storage.BoltOptions{
 					Path: dbPath,
@@ -124,10 +124,10 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 			} else {
 				logger.Info("Persistence disabled, using in-memory service registry")
 			}
-			
+
 			// Create control plane server
 			controlPlane := api.NewControlPlaneServer(serviceStorage)
-			
+
 			// Configure heartbeat TTL and janitor interval
 			if opts.HeartbeatTTL > 0 {
 				controlPlane.SetHeartbeatTTL(opts.HeartbeatTTL)
@@ -135,12 +135,12 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 			if opts.JanitorInterval > 0 {
 				controlPlane.SetJanitorInterval(opts.JanitorInterval)
 			}
-			
+
 			// Start the health check janitor and initialize storage
 			if err := controlPlane.Start(); err != nil {
 				return fmt.Errorf("failed to start control plane server: %w", err)
 			}
-			
+
 			// Register both control plane services
 			flowctlv1.RegisterControlPlaneServiceServer(grpcServer, controlPlane)
 
@@ -151,7 +151,7 @@ monitoring, and scaling. This server exposes a gRPC API for pipeline components.
 			// Set up signal handling for graceful shutdown
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			
+
 			// Handle signals for graceful shutdown
 			shutdown := make(chan os.Signal, 1)
 			signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)

@@ -17,9 +17,9 @@ import (
 // - OCI image download and extraction
 // - Binary extraction and permission setting
 type Resolver struct {
-	client      *registry.Client
-	cacheDir    string
-	defaultOrg  string // Default organization for short refs (e.g., "withobsrvr")
+	client     *registry.Client
+	cacheDir   string
+	defaultOrg string // Default organization for short refs (e.g., "withobsrvr")
 }
 
 // NewResolver creates a new component resolver.

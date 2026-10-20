@@ -18,7 +18,7 @@ type Config struct {
 	Processors []ProcessorConfig `yaml:"processors"`
 	Sink       SinkConfig        `yaml:"sink"`
 	// TLS configuration for gRPC communication
-	TLS        *TLSConfig        `yaml:"tls,omitempty"`
+	TLS *TLSConfig `yaml:"tls,omitempty"`
 }
 
 // SourceConfig represents source configuration
@@ -43,10 +43,10 @@ type SinkConfig struct {
 // LoadFromFile loads configuration from a YAML file
 func LoadFromFile(path string) (*Config, error) {
 	logger.Debug("Loading config from file", zap.String("path", path))
-	
+
 	data, err := os.ReadFile(path)
 	if err != nil {
-		logger.Error("Failed to read config file", 
+		logger.Error("Failed to read config file",
 			zap.String("path", path),
 			zap.Error(err))
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -54,17 +54,17 @@ func LoadFromFile(path string) (*Config, error) {
 
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		logger.Error("Failed to parse config file", 
+		logger.Error("Failed to parse config file",
 			zap.String("path", path),
 			zap.Error(err))
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
-	
+
 	// Set default TLS config if not provided
 	if cfg.TLS == nil {
 		cfg.TLS = DefaultTLSConfig()
 	}
-	
+
 	// Resolve relative certificate paths based on config file location
 	if cfg.TLS.Mode != TLSModeDisabled {
 		baseDir := filepath.Dir(path)
@@ -75,8 +75,8 @@ func LoadFromFile(path string) (*Config, error) {
 		}
 	}
 
-	logger.Debug("Successfully loaded config file", 
-		zap.String("path", path), 
+	logger.Debug("Successfully loaded config file",
+		zap.String("path", path),
 		zap.String("version", cfg.Version),
 		zap.String("tls_mode", string(cfg.TLS.Mode)))
 	return &cfg, nil
@@ -85,7 +85,7 @@ func LoadFromFile(path string) (*Config, error) {
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
 	logger.Debug("Validating configuration")
-	
+
 	if c.Version == "" {
 		logger.Error("Invalid configuration", zap.String("reason", "missing version"))
 		return fmt.Errorf("version is required")
@@ -105,7 +105,7 @@ func (c *Config) Validate() error {
 		logger.Error("Invalid configuration", zap.String("reason", "missing sink type"))
 		return fmt.Errorf("sink type is required")
 	}
-	
+
 	// Validate TLS configuration if set
 	if c.TLS != nil {
 		if err := c.TLS.Validate(); err != nil {
@@ -114,7 +114,7 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	logger.Debug("Configuration validated successfully", 
+	logger.Debug("Configuration validated successfully",
 		zap.String("version", c.Version),
 		zap.String("source", c.Source.Type),
 		zap.Int("processors", len(c.Processors)),

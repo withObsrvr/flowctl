@@ -84,15 +84,15 @@ func runTranslate(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if !isValid {
-		logger.Error("Invalid output format", 
+		logger.Error("Invalid output format",
 			zap.String("format", string(format)),
 			zap.Any("valid_formats", validFormats))
 		return fmt.Errorf("invalid output format: %s. Valid formats: %v", format, validFormats)
 	}
 
 	// Translate file
-	logger.Info("Translating pipeline", 
-		zap.String("input", opts.InputFile), 
+	logger.Info("Translating pipeline",
+		zap.String("input", opts.InputFile),
 		zap.String("format", string(format)))
 
 	ctx := context.Background()

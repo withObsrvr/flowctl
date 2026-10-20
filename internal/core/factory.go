@@ -16,10 +16,10 @@ type PipelineType string
 const (
 	// PipelineTypeSimple uses the original simple pipeline implementation
 	PipelineTypeSimple PipelineType = "simple"
-	
+
 	// PipelineTypeDAG uses the new DAG-based pipeline implementation
 	PipelineTypeDAG PipelineType = "dag"
-	
+
 	// EnvPipelineType is the environment variable to control which pipeline type to use
 	EnvPipelineType = "FLOWCTL_PIPELINE_TYPE"
 )
@@ -46,7 +46,7 @@ func DeterminePipelineType() PipelineType {
 			return PipelineTypeSimple
 		}
 	}
-	
+
 	// Default to DAG-based implementation
 	return PipelineTypeDAG
 }
@@ -55,7 +55,7 @@ func DeterminePipelineType() PipelineType {
 type PipelineInterface interface {
 	// Start begins processing data through the pipeline
 	Start(ctx context.Context) error
-	
+
 	// Stop gracefully shuts down the pipeline
 	Stop() error
 }
@@ -63,7 +63,7 @@ type PipelineInterface interface {
 // CreatePipeline creates a pipeline using the appropriate implementation
 func CreatePipeline(cfg *config.Config, pipeline *model.Pipeline) (PipelineInterface, error) {
 	pipelineType := DeterminePipelineType()
-	
+
 	switch pipelineType {
 	case PipelineTypeSimple:
 		// For simple pipeline, we could enhance the legacy implementation to use the pipeline model
