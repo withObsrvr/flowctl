@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/withobsrvr/flowctl/internal/cliout"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
 	"github.com/withobsrvr/flowctl/internal/sanitize"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -83,11 +85,20 @@ Examples:
 
 		client := flowctlv1.NewControlPlaneServiceClient(conn)
 
+		p := cliout.FromContext(cmd.Context())
+
+		// Watch mode redraws a terminal; it has no meaning for a program
+		// consuming one JSON document (CLI-6).
+		if statusWatch && p.Machine() {
+			return exitcode.Errorf(exitcode.Usage,
+				"--watch cannot be combined with --output %s; poll the command instead", p.Format())
+		}
+
 		// If watch mode, loop
 		if statusWatch {
 			for {
 				rpcCtx, rpcCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				err := displayStatus(rpcCtx, client, pipelineName)
+				err := displayStatus(rpcCtx, p, client, pipelineName)
 				rpcCancel()
 				if err != nil {
 					return formatControlPlaneError(err, endpoint)
@@ -102,14 +113,14 @@ Examples:
 		// Single status display
 		rpcCtx, rpcCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer rpcCancel()
-		if err := displayStatus(rpcCtx, client, pipelineName); err != nil {
+		if err := displayStatus(rpcCtx, p, client, pipelineName); err != nil {
 			return formatControlPlaneError(err, endpoint)
 		}
 		return nil
 	},
 }
 
-func displayStatus(ctx context.Context, client flowctlv1.ControlPlaneServiceClient, pipelineName string) error {
+func displayStatus(ctx context.Context, p *cliout.Printer, client flowctlv1.ControlPlaneServiceClient, pipelineName string) error {
 	// Query all components
 	resp, err := client.ListComponents(ctx, &flowctlv1.ListComponentsRequest{
 		IncludeUnhealthy: statusIncludeUnhealthy,
@@ -118,25 +129,59 @@ func displayStatus(ctx context.Context, client flowctlv1.ControlPlaneServiceClie
 		return fmt.Errorf("failed to list components: %w", err)
 	}
 
-	// Everything below is written by components flowctl did not start and is
-	// printed to a terminal, so strip control characters first (CLI-22).
-	// Remove this when the command is converted to internal/cliout, which
-	// sanitises at the point it formats a cell.
-	resp = sanitize.Message(resp)
+	// Both renderings need the health counts; only the human one groups by type.
+	counts := map[string]int{}
+	for _, comp := range resp.Components {
+		counts[statusHealthName(comp.GetStatus())]++
+	}
+
+	// The worst component health decides the pipeline's overall status.
+	overall := "running"
+	switch {
+	case counts["unhealthy"] > 0:
+		overall = "unhealthy"
+	case counts["degraded"] > 0:
+		overall = "degraded"
+	case counts["starting"] > 0:
+		overall = "starting"
+	}
+
+	if p.Machine() {
+		// One document carrying the summary and every component, so a caller
+		// does not have to make a second call to get the detail.
+		components := make([]map[string]any, 0, len(resp.Components))
+		for _, comp := range resp.Components {
+			components = append(components, statusComponentRecord(comp))
+		}
+		data := cliout.Row{
+			"status":          overall,
+			"component_count": len(resp.Components),
+			"healthy":         counts["healthy"],
+			"degraded":        counts["degraded"],
+			"unhealthy":       counts["unhealthy"],
+			"starting":        counts["starting"],
+			"components":      components,
+		}
+		if pipelineName != "" {
+			data["pipeline"] = pipelineName
+		}
+		return p.Object(cliout.Object{Schema: "flowctl.pipeline_status.v1", Data: data})
+	}
 
 	if len(resp.Components) == 0 {
-		fmt.Println("No components registered with control plane")
-		fmt.Println("Start a pipeline with: flowctl run pipeline.yaml")
+		p.Info("No components registered with control plane")
+		p.Info("Start a pipeline with: flowctl run pipeline.yaml")
 		return nil
 	}
 
-	// Group components by type
-	sources := []*flowctlv1.ComponentStatusResponse{}
-	processors := []*flowctlv1.ComponentStatusResponse{}
-	sinks := []*flowctlv1.ComponentStatusResponse{}
+	// Human rendering below. This grouped layout is not a contract and may
+	// change freely; the record above is the contract. Untrusted strings are
+	// stripped here because they do not pass through a cliout cell formatter.
+	resp = sanitize.Message(resp)
 
+	var sources, processors, sinks []*flowctlv1.ComponentStatusResponse
 	for _, comp := range resp.Components {
-		switch comp.Component.Type {
+		switch comp.GetComponent().GetType() {
 		case flowctlv1.ComponentType_COMPONENT_TYPE_SOURCE:
 			sources = append(sources, comp)
 		case flowctlv1.ComponentType_COMPONENT_TYPE_PROCESSOR:
@@ -146,84 +191,84 @@ func displayStatus(ctx context.Context, client flowctlv1.ControlPlaneServiceClie
 		}
 	}
 
-	// Count health statuses
-	healthy := 0
-	degraded := 0
-	unhealthy := 0
-	starting := 0
-	for _, comp := range resp.Components {
-		switch comp.Status {
-		case flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY:
-			healthy++
-		case flowctlv1.HealthStatus_HEALTH_STATUS_DEGRADED:
-			degraded++
-		case flowctlv1.HealthStatus_HEALTH_STATUS_UNHEALTHY:
-			unhealthy++
-		case flowctlv1.HealthStatus_HEALTH_STATUS_STARTING:
-			starting++
-		}
-	}
-
-	// Print header
+	out := p.Out()
 	if pipelineName != "" {
-		fmt.Printf("Pipeline: %s\n", pipelineName)
+		fmt.Fprintf(out, "Pipeline: %s\n", sanitize.Line(pipelineName))
 	} else {
-		fmt.Println("Pipeline Status")
+		fmt.Fprintln(out, "Pipeline Status")
 	}
 
-	status := "RUNNING"
-	if unhealthy > 0 {
-		status = "UNHEALTHY"
-	} else if degraded > 0 {
-		status = "DEGRADED"
-	} else if starting > 0 {
-		status = "STARTING"
-	}
-
-	fmt.Printf("Status: %s\n", colorizeStatus(status))
-	fmt.Printf("Components: %d total (%d healthy", len(resp.Components), healthy)
-	if starting > 0 {
-		fmt.Printf(", %d starting", starting)
-	}
-	if degraded > 0 {
-		fmt.Printf(", %d degraded", degraded)
-	}
-	if unhealthy > 0 {
-		fmt.Printf(", %d unhealthy", unhealthy)
-	}
-	fmt.Println(")")
-	fmt.Println()
-
-	// Print sources
-	if len(sources) > 0 {
-		fmt.Printf("SOURCES (%d)\n", len(sources))
-		for _, comp := range sources {
-			printComponentStatus(comp)
+	fmt.Fprintf(out, "Status: %s\n", colorizeStatus(strings.ToUpper(overall)))
+	fmt.Fprintf(out, "Components: %d total (%d healthy", len(resp.Components), counts["healthy"])
+	for _, kind := range []string{"starting", "degraded", "unhealthy"} {
+		if counts[kind] > 0 {
+			fmt.Fprintf(out, ", %d %s", counts[kind], kind)
 		}
-		fmt.Println()
 	}
+	fmt.Fprintln(out, ")")
+	fmt.Fprintln(out)
 
-	// Print processors
-	if len(processors) > 0 {
-		fmt.Printf("PROCESSORS (%d)\n", len(processors))
-		for _, comp := range processors {
-			printComponentStatus(comp)
+	for _, group := range []struct {
+		title string
+		comps []*flowctlv1.ComponentStatusResponse
+	}{
+		{"SOURCES", sources},
+		{"PROCESSORS", processors},
+		{"CONSUMERS", sinks},
+	} {
+		if len(group.comps) == 0 {
+			continue
 		}
-		fmt.Println()
-	}
-
-	// Print sinks
-	if len(sinks) > 0 {
-		fmt.Printf("CONSUMERS (%d)\n", len(sinks))
-		for _, comp := range sinks {
-			printComponentStatus(comp)
+		fmt.Fprintf(out, "%s (%d)\n", group.title, len(group.comps))
+		for _, comp := range group.comps {
+			printComponentStatus(out, comp)
 		}
+		fmt.Fprintln(out)
 	}
 
 	return nil
 }
 
-func printComponentStatus(comp *flowctlv1.ComponentStatusResponse) {
+// statusHealthName renders a health status as a stable lowercase string. These
+// values appear in --output json and are part of the schema.
+func statusHealthName(status flowctlv1.HealthStatus) string {
+	name := strings.TrimPrefix(status.String(), "HEALTH_STATUS_")
+	if name == "" || name == "UNSPECIFIED" {
+		return "unknown"
+	}
+	return strings.ToLower(name)
+}
+
+// statusComponentRecord is one component inside the status document.
+func statusComponentRecord(comp *flowctlv1.ComponentStatusResponse) map[string]any {
+	info := comp.GetComponent()
+	rec := map[string]any{
+		"id":     info.GetId(),
+		"type":   strings.ToLower(strings.TrimPrefix(info.GetType().String(), "COMPONENT_TYPE_")),
+		"status": statusHealthName(comp.GetStatus()),
+	}
+	if v := info.GetEndpoint(); v != "" {
+		rec["endpoint"] = v
+	}
+	if len(info.GetInputEventTypes()) > 0 {
+		rec["input_event_types"] = info.GetInputEventTypes()
+	}
+	if len(info.GetOutputEventTypes()) > 0 {
+		rec["output_event_types"] = info.GetOutputEventTypes()
+	}
+	if ts := comp.GetRegisteredAt(); ts != nil {
+		rec["registered_at"] = ts.AsTime()
+	}
+	if ts := comp.GetLastHeartbeat(); ts != nil {
+		rec["last_heartbeat"] = ts.AsTime()
+	}
+	if len(comp.GetMetrics()) > 0 {
+		rec["metrics"] = comp.GetMetrics()
+	}
+	return rec
+}
+
+func printComponentStatus(out io.Writer, comp *flowctlv1.ComponentStatusResponse) {
 	statusStr := colorizeHealth(comp.Status.String())
 
 	// Calculate uptime
@@ -246,24 +291,24 @@ func printComponentStatus(comp *flowctlv1.ComponentStatusResponse) {
 		lastHeartbeat = "never"
 	}
 
-	fmt.Printf("  %s (%s)\n", comp.Component.Id, statusStr)
-	fmt.Printf("    Endpoint: %s\n", comp.Component.Endpoint)
+	fmt.Fprintf(out, "  %s (%s)\n", comp.Component.Id, statusStr)
+	fmt.Fprintf(out, "    Endpoint: %s\n", comp.Component.Endpoint)
 	if uptime != "" {
-		fmt.Printf("    Uptime: %s\n", uptime)
+		fmt.Fprintf(out, "    Uptime: %s\n", uptime)
 	}
-	fmt.Printf("    Last heartbeat: %s\n", lastHeartbeat)
+	fmt.Fprintf(out, "    Last heartbeat: %s\n", lastHeartbeat)
 
 	// Print event types
 	if len(comp.Component.InputEventTypes) > 0 {
-		fmt.Printf("    Input types: %s\n", strings.Join(comp.Component.InputEventTypes, ", "))
+		fmt.Fprintf(out, "    Input types: %s\n", strings.Join(comp.Component.InputEventTypes, ", "))
 	}
 	if len(comp.Component.OutputEventTypes) > 0 {
-		fmt.Printf("    Output types: %s\n", strings.Join(comp.Component.OutputEventTypes, ", "))
+		fmt.Fprintf(out, "    Output types: %s\n", strings.Join(comp.Component.OutputEventTypes, ", "))
 	}
 
 	// Print metrics if available
 	if len(comp.Metrics) > 0 {
-		fmt.Println("    Metrics:")
+		fmt.Fprintln(out, "    Metrics:")
 
 		// Sort metric keys for consistent output
 		keys := make([]string, 0, len(comp.Metrics))
@@ -274,7 +319,7 @@ func printComponentStatus(comp *flowctlv1.ComponentStatusResponse) {
 
 		for _, key := range keys {
 			value := comp.Metrics[key]
-			fmt.Printf("      %s: %s\n", key, value)
+			fmt.Fprintf(out, "      %s: %s\n", key, value)
 		}
 	}
 }

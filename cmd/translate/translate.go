@@ -1,10 +1,11 @@
 package translate
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/withobsrvr/flowctl/internal/cliout"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/translator"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
@@ -14,7 +15,7 @@ import (
 // Options contains the translate command options
 type Options struct {
 	InputFile      string
-	OutputFormat   string
+	Target         string
 	OutputFile     string
 	ResourcePrefix string
 	RegistryPrefix string
@@ -25,27 +26,34 @@ var opts Options
 // NewCommand creates the translate command
 func NewCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "translate -f <file> -o <format>",
+		Use:   "translate -f <file> -t <target>",
 		Short: "Translate pipeline to different deployment formats",
 		Long: `Translate a pipeline specification into different deployment formats
 such as Docker Compose or for local execution.
 
 Examples:
   # Translate to Docker Compose and print to stdout
-  flowctl translate -f pipeline.yaml -o docker-compose
+  flowctl translate -f pipeline.yaml -t docker-compose
 
   # Save to a file
-  flowctl translate -f pipeline.yaml -o docker-compose --to-file docker-compose.yml
+  flowctl translate -f pipeline.yaml -t docker-compose --to-file docker-compose.yml
 
   # Translate with resource prefix for naming consistency
-  flowctl translate -f pipeline.yaml -o docker-compose --prefix myapp`,
+  flowctl translate -f pipeline.yaml -t docker-compose --prefix myapp
+
+  # Wrap the result in a JSON envelope, for a script or an agent
+  flowctl translate -f pipeline.yaml -t docker-compose --output json | jq -r '.data.content'`,
+		Args: cobra.NoArgs,
 		RunE: runTranslate,
 	}
 
-	// Add flags
+	// Add flags.
+	//
+	// The deployment target used to be --output/-o, which collided with the
+	// global --output selecting an encoding (CLI-3). It is --target/-t now.
 	cmd.Flags().StringVarP(&opts.InputFile, "file", "f", "", "input pipeline specification file")
-	cmd.Flags().StringVarP(&opts.OutputFormat, "output", "o", "", "output format (docker-compose, local)")
-	cmd.Flags().StringVar(&opts.OutputFile, "to-file", "", "write output to file instead of stdout")
+	cmd.Flags().StringVarP(&opts.Target, "target", "t", "", "deployment target (docker-compose, local)")
+	cmd.Flags().StringVar(&opts.OutputFile, "to-file", "", "write the result to a file instead of stdout")
 	cmd.Flags().StringVar(&opts.ResourcePrefix, "prefix", "", "prefix for resource names")
 	cmd.Flags().StringVar(&opts.RegistryPrefix, "registry", "", "container registry prefix")
 
@@ -54,17 +62,15 @@ Examples:
 
 // runTranslate handles the execution of the translate command
 func runTranslate(cmd *cobra.Command, args []string) error {
+	p := cliout.FromContext(cmd.Context())
+
 	if opts.InputFile == "" {
-		logger.Error("Missing input file", zap.String("command", "translate"))
-		return fmt.Errorf("input file is required. Use -f to specify a file")
+		return exitcode.Errorf(exitcode.Usage, "input file is required; use -f to specify one")
+	}
+	if opts.Target == "" {
+		return exitcode.Errorf(exitcode.Usage, "deployment target is required; use -t to specify one")
 	}
 
-	if opts.OutputFormat == "" {
-		logger.Error("Missing output format", zap.String("command", "translate"))
-		return fmt.Errorf("output format is required. Use -o to specify a format")
-	}
-
-	// Create translator
 	options := model.TranslationOptions{
 		ResourcePrefix: opts.ResourcePrefix,
 		RegistryPrefix: opts.RegistryPrefix,
@@ -72,8 +78,7 @@ func runTranslate(cmd *cobra.Command, args []string) error {
 	}
 	t := translator.NewTranslator(options)
 
-	// Validate output format
-	format := model.Format(opts.OutputFormat)
+	format := model.Format(opts.Target)
 	validFormats := t.ValidFormats()
 	isValid := false
 	for _, f := range validFormats {
@@ -83,30 +88,52 @@ func runTranslate(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if !isValid {
-		logger.Error("Invalid output format",
-			zap.String("format", string(format)),
-			zap.Any("valid_formats", validFormats))
-		return fmt.Errorf("invalid output format: %s. Valid formats: %v", format, validFormats)
+		return exitcode.Errorf(exitcode.Usage,
+			"invalid target %q; valid targets: %v", format, validFormats)
 	}
 
-	// Translate file
 	logger.Info("Translating pipeline",
 		zap.String("input", opts.InputFile),
-		zap.String("format", string(format)))
+		zap.String("target", string(format)))
 
-	ctx := context.Background()
-	result, err := t.TranslateFromFile(ctx, opts.InputFile, format)
+	result, err := t.TranslateFromFile(cmd.Context(), opts.InputFile, format)
 	if err != nil {
-		logger.Error("Translation failed", zap.Error(err))
 		return fmt.Errorf("translation failed: %w", err)
 	}
 
-	// If no output file was specified, print to stdout
-	if opts.OutputFile == "" {
-		fmt.Println(string(result))
-	} else {
-		logger.Info("Output written to file", zap.String("path", opts.OutputFile))
+	if opts.OutputFile != "" {
+		// The translator already wrote the file; report what happened rather
+		// than echoing the content.
+		return p.Object(cliout.Object{
+			Schema: "flowctl.translation.v1",
+			Fields: []cliout.Field{
+				{Label: "Source", Key: "source"},
+				{Label: "Target", Key: "target"},
+				{Label: "Written to", Key: "path"},
+			},
+			Data: cliout.Row{
+				"source": opts.InputFile,
+				"target": string(format),
+				"path":   opts.OutputFile,
+			},
+		})
 	}
 
-	return nil
+	// In a machine format the generated artifact is a field of the envelope, so
+	// a caller gets the target alongside the content. In table mode stdout is
+	// the artifact itself, unadorned, so `flowctl translate … > compose.yml`
+	// keeps working.
+	if p.Machine() {
+		return p.Object(cliout.Object{
+			Schema: "flowctl.translation.v1",
+			Data: cliout.Row{
+				"source":  opts.InputFile,
+				"target":  string(format),
+				"content": string(result),
+			},
+		})
+	}
+
+	_, err = fmt.Fprintln(p.Out(), string(result))
+	return err
 }

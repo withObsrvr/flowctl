@@ -2,10 +2,7 @@ package processors
 
 import (
 	"context"
-	"fmt"
-	"github.com/withobsrvr/flowctl/internal/sanitize"
-	"os"
-	"text/tabwriter"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,6 +10,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
+	"github.com/withobsrvr/flowctl/internal/cliout"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
 )
 
 var (
@@ -58,18 +57,20 @@ This is the foundation for automatic topology discovery.`,
 }
 
 func runFind(cmd *cobra.Command, args []string) error {
-	// Validate that at least one filter is provided
+	p := cliout.FromContext(cmd.Context())
+
 	if inputType == "" && outputType == "" && len(metadata) == 0 {
-		return fmt.Errorf("at least one filter must be specified (--input, --output-type, or --metadata)")
+		return exitcode.Errorf(exitcode.Usage,
+			"at least one filter must be specified (--input, --output-type, or --metadata)")
 	}
 
-	// Connect to control plane
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 	defer cancel()
 
-	conn, err := grpc.DialContext(ctx, endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return fmt.Errorf("failed to connect to control plane at %s: %w", endpoint, err)
+		return exitcode.Errorf(exitcode.Unavailable,
+			"cannot reach the control plane at %s: %v", endpoint, err)
 	}
 	defer conn.Close()
 
@@ -92,73 +93,53 @@ func runFind(cmd *cobra.Command, args []string) error {
 	}
 	req.EventTypes = eventTypes
 
-	// Execute discovery
 	resp, err := client.DiscoverComponents(ctx, req)
 	if err != nil {
-		return fmt.Errorf("discovery failed: %w", err)
+		return err
 	}
 
-	// Everything below is written by components flowctl did not start and is
-	// printed to a terminal, so strip control characters first (CLI-22).
-	// Remove this when the command is converted to internal/cliout, which
-	// sanitises at the point it formats a cell.
-	resp = sanitize.Message(resp)
+	// No sanitize.Message here: cliout strips control characters as it formats
+	// each cell, and machine output must keep the original bytes (CLI-22).
 
-	// Filter results based on input/output specificity
-	// (DiscoverComponents does OR logic on event types, we need to be more specific)
-	var matches []*flowctlv1.ComponentInfo
+	// DiscoverComponents ORs the event-type filters, so narrow to components
+	// matching every filter the user gave.
+	rows := make([]cliout.Row, 0, len(resp.Components))
 	for _, comp := range resp.Components {
 		if matchesFilters(comp, inputType, outputType) {
-			matches = append(matches, comp)
+			rows = append(rows, componentInfoRow(comp))
 		}
 	}
 
-	// Print results
-	if len(matches) == 0 {
-		fmt.Println("No processors found matching the specified criteria.")
-		fmt.Println()
-		fmt.Println("Search criteria:")
-		if inputType != "" {
-			fmt.Printf("  Input type:  %s\n", inputType)
-		}
-		if outputType != "" {
-			fmt.Printf("  Output type: %s\n", outputType)
-		}
-		if len(metadata) > 0 {
-			fmt.Println("  Metadata:")
-			for k, v := range metadata {
-				fmt.Printf("    %s: %s\n", k, v)
-			}
-		}
-		return nil
+	if err := p.List(cliout.List{
+		Schema:     processorListSchema,
+		ItemSchema: processorSchema,
+		Columns:    discoveryColumns(),
+		Rows:       rows,
+		Empty:      "No processors found matching " + describeFilters() + ".",
+	}); err != nil {
+		return err
 	}
 
-	// Print table header
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "ID\tINPUT TYPES\tOUTPUT TYPES\tENDPOINT")
-	fmt.Fprintln(w, "──\t───────────\t────────────\t────────")
-
-	for _, comp := range matches {
-		inputTypes := formatEventTypes(comp.InputEventTypes)
-		outputTypes := formatEventTypes(comp.OutputEventTypes)
-
-		endpoint := comp.Endpoint
-		if endpoint == "" {
-			endpoint = "-"
-		}
-
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-			comp.Id,
-			inputTypes,
-			outputTypes,
-			endpoint,
-		)
+	if !p.Machine() && len(rows) > 0 {
+		p.Info("\nFound: %d processor(s)", len(rows))
 	}
-
-	w.Flush()
-	fmt.Printf("\nFound: %d processor(s)\n", len(matches))
-
 	return nil
+}
+
+// describeFilters renders the active search criteria for the empty-result
+// message, so a person can see what was actually asked for.
+func describeFilters() string {
+	var parts []string
+	if inputType != "" {
+		parts = append(parts, "input type "+inputType)
+	}
+	if outputType != "" {
+		parts = append(parts, "output type "+outputType)
+	}
+	for k, v := range metadata {
+		parts = append(parts, "metadata "+k+"="+v)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // matchesFilters checks if a component matches the input/output type filters

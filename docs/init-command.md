@@ -232,7 +232,7 @@ After creating your first pipeline:
 1. **Run it**: `./bin/flowctl run stellar-pipeline.yaml`
 2. **Monitor it**: `./bin/flowctl dashboard`
 3. **Add processors**: Edit the YAML to add transformation stages
-4. **Deploy to production**: `./bin/flowctl translate -f pipeline.yaml -o docker-compose`
+4. **Deploy to production**: `./bin/flowctl translate -f pipeline.yaml -t docker-compose`
 
 ## See Also
 

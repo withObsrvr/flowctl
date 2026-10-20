@@ -603,7 +603,7 @@ sinks:
 
 # Translate image-based pipelines to deployment format
 # (the default `flowctl init` starter pipelines are meant to run directly with `flowctl run`)
-./bin/flowctl translate -f image-based-pipeline.yaml -o docker-compose
+./bin/flowctl translate -f image-based-pipeline.yaml -t docker-compose
 
 # Check version
 ./bin/flowctl version

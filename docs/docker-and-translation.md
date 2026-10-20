@@ -21,19 +21,19 @@ flowctl can translate pipeline configurations to different deployment formats:
 
 ```bash
 # Translate a pipeline to Docker Compose
-./bin/flowctl translate -f examples/docker-pipeline.yaml -o docker-compose
+./bin/flowctl translate -f examples/docker-pipeline.yaml -t docker-compose
 
 # Save the output to a file
-./bin/flowctl translate -f examples/docker-pipeline.yaml -o docker-compose --to-file docker-compose.yml
+./bin/flowctl translate -f examples/docker-pipeline.yaml -t docker-compose --to-file docker-compose.yml
 
 # Add a resource prefix for naming consistency
-./bin/flowctl translate -f examples/docker-pipeline.yaml -o docker-compose --prefix myapp
+./bin/flowctl translate -f examples/docker-pipeline.yaml -t docker-compose --prefix myapp
 
 # Specify a container registry
-./bin/flowctl translate -f examples/docker-pipeline.yaml -o docker-compose --registry ghcr.io/myorg
+./bin/flowctl translate -f examples/docker-pipeline.yaml -t docker-compose --registry ghcr.io/myorg
 
 # Generate local execution script/config
-./bin/flowctl translate -f examples/local-pipeline.yaml -o local --to-file run_pipeline.sh
+./bin/flowctl translate -f examples/local-pipeline.yaml -t local --to-file run_pipeline.sh
 ```
 
 Supported output formats:
@@ -57,7 +57,7 @@ The Docker Compose-based local generator creates:
 
 ```bash
 # Generate Docker Compose configuration for local execution
-./bin/flowctl translate -f examples/local-pipeline.yaml -o local --to-file docker-compose.yaml
+./bin/flowctl translate -f examples/local-pipeline.yaml -t local --to-file docker-compose.yaml
 
 # Start the pipeline
 docker compose --profile local up -d
@@ -75,7 +75,7 @@ For compatibility with older workflows, you can still use the bash script genera
 
 ```bash
 export FLOWCTL_LOCAL_GENERATOR_TYPE=bash
-./bin/flowctl translate -f examples/local-pipeline.yaml -o local --to-file run_pipeline.sh
+./bin/flowctl translate -f examples/local-pipeline.yaml -t local --to-file run_pipeline.sh
 chmod +x run_pipeline.sh
 ./run_pipeline.sh
 ```

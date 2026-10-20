@@ -3,17 +3,85 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"github.com/withobsrvr/flowctl/internal/sanitize"
-	"os"
+	"sort"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/withobsrvr/flowctl/internal/cliout"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
+	"github.com/withobsrvr/flowctl/internal/sanitize"
 	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+// Schema identifiers for this command group's machine-readable output.
+const (
+	pipelineListSchema    = "flowctl.pipeline_list.v1"
+	pipelineSchema        = "flowctl.pipeline.v1"
+	pipelineRunListSchema = "flowctl.pipeline_run_list.v1"
+	pipelineRunSchema     = "flowctl.pipeline_run.v1"
+)
+
+// runRow converts a pipeline run into a record. Machine output carries full
+// ids, raw counts and real timestamps; the table shortens and humanises them.
+func runRow(run *flowctlpb.PipelineRun) cliout.Row {
+	row := cliout.Row{
+		"run_id":        run.GetRunId(),
+		"pipeline_name": run.GetPipelineName(),
+		"status":        formatRunStatus(run.GetStatus()),
+	}
+	if ts := run.GetStartTime(); ts != nil {
+		row["started_at"] = ts.AsTime()
+		row["_started"] = formatRunTime(ts.AsTime())
+	}
+	if ts := run.GetEndTime(); ts != nil {
+		row["ended_at"] = ts.AsTime()
+	}
+	row["_duration"] = formatRunDuration(run)
+	if m := run.GetMetrics(); m != nil {
+		row["events_processed"] = m.GetEventsProcessed()
+		row["_events"] = formatEventCount(m.GetEventsProcessed())
+		if m.GetEventsPerSecond() > 0 {
+			row["events_per_second"] = m.GetEventsPerSecond()
+		}
+	}
+	if ids := run.GetComponentIds(); len(ids) > 0 {
+		row["component_ids"] = ids
+	}
+	if v := run.GetError(); v != "" {
+		row["error"] = v
+	}
+	row["_short_id"] = shortID(run.GetRunId())
+	return row
+}
+
+// shortID is the abbreviated run id shown in tables. It slices by rune count
+// and tolerates a short id: the control plane is a trust boundary, and
+// run.RunId[:8] panics on anything shorter than eight bytes.
+func shortID(id string) string {
+	r := []rune(id)
+	if len(r) <= 8 {
+		return id
+	}
+	return string(r[:8])
+}
+
+// runListColumns is the table layout for a list of runs.
+func runListColumns(withPipeline bool) []cliout.Column {
+	cols := []cliout.Column{{Header: "Run ID", Key: "_short_id"}}
+	if withPipeline {
+		cols = append(cols, cliout.Column{Header: "Pipeline", Key: "pipeline_name"})
+	}
+	cols = append(cols,
+		cliout.Column{Header: "Status", Key: "status"},
+		cliout.Column{Header: "Started", Key: "_started"},
+		cliout.Column{Header: "Duration", Key: "_duration"},
+		cliout.Column{Header: "Events", Key: "_events"},
+	)
+	return cols
+}
 
 var (
 	pipelinesControlPlaneAddr string
@@ -55,52 +123,67 @@ var pipelinesListCmd = &cobra.Command{
 		}
 		defer conn.Close()
 
-		// Get all runs
-		resp, err := client.ListPipelineRuns(context.Background(), &flowctlpb.ListPipelineRunsRequest{
-			Limit: 1000, // Get all runs to group by pipeline
+		resp, err := client.ListPipelineRuns(cmd.Context(), &flowctlpb.ListPipelineRunsRequest{
+			Limit: 1000, // all runs, so they can be grouped by pipeline
 		})
 		if err != nil {
-			return fmt.Errorf("failed to list pipeline runs: %w", err)
+			return err
 		}
 
-		// Everything below is written by components flowctl did not start and is
-		// printed to a terminal, so strip control characters first (CLI-22).
-		// Remove this when the command is converted to internal/cliout, which
-		// sanitises at the point it formats a cell.
-		resp = sanitize.Message(resp)
-
-		// Group by pipeline name
-		pipelineMap := make(map[string][]*flowctlpb.PipelineRun)
+		// Group by pipeline name, keeping the most recent run of each.
+		latest := make(map[string]*flowctlpb.PipelineRun)
+		counts := make(map[string]int)
 		for _, run := range resp.Runs {
-			pipelineMap[run.PipelineName] = append(pipelineMap[run.PipelineName], run)
-		}
-
-		if len(pipelineMap) == 0 {
-			fmt.Println("No pipelines found")
-			return nil
-		}
-
-		// Print table
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tLAST RUN\tSTATUS\tRUNS")
-		for name, runs := range pipelineMap {
-			// Find most recent run
-			var lastRun *flowctlpb.PipelineRun
-			for _, run := range runs {
-				if lastRun == nil || run.StartTime.AsTime().After(lastRun.StartTime.AsTime()) {
-					lastRun = run
-				}
+			name := run.GetPipelineName()
+			counts[name]++
+			prev, ok := latest[name]
+			if !ok || run.GetStartTime().AsTime().After(prev.GetStartTime().AsTime()) {
+				latest[name] = run
 			}
-
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\n",
-				name,
-				formatRunTime(lastRun.StartTime.AsTime()),
-				formatRunStatus(lastRun.Status),
-				len(runs))
 		}
-		w.Flush()
 
-		fmt.Printf("\n%d pipeline(s) found\n", len(pipelineMap))
+		// Sorted so the output is stable between runs; map iteration is not.
+		names := make([]string, 0, len(latest))
+		for name := range latest {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		rows := make([]cliout.Row, 0, len(names))
+		for _, name := range names {
+			last := latest[name]
+			row := cliout.Row{
+				"pipeline_name": name,
+				"run_count":     counts[name],
+				"last_run_id":   last.GetRunId(),
+				"last_status":   formatRunStatus(last.GetStatus()),
+			}
+			if ts := last.GetStartTime(); ts != nil {
+				row["last_run_at"] = ts.AsTime()
+				row["_last_run"] = formatRunTime(ts.AsTime())
+			}
+			rows = append(rows, row)
+		}
+
+		p := cliout.FromContext(cmd.Context())
+		if err := p.List(cliout.List{
+			Schema:     pipelineListSchema,
+			ItemSchema: pipelineSchema,
+			Columns: []cliout.Column{
+				{Header: "Name", Key: "pipeline_name"},
+				{Header: "Last Run", Key: "_last_run"},
+				{Header: "Status", Key: "last_status"},
+				{Header: "Runs", Key: "run_count"},
+			},
+			Rows:  rows,
+			Empty: "No pipelines found.",
+		}); err != nil {
+			return err
+		}
+
+		if !p.Machine() && len(rows) > 0 {
+			p.Info("\n%d pipeline(s) found", len(rows))
+		}
 		return nil
 	},
 }
@@ -119,39 +202,33 @@ var pipelinesRunsCmd = &cobra.Command{
 		}
 		defer conn.Close()
 
-		resp, err := client.ListPipelineRuns(context.Background(), &flowctlpb.ListPipelineRunsRequest{
+		resp, err := client.ListPipelineRuns(cmd.Context(), &flowctlpb.ListPipelineRunsRequest{
 			PipelineName: pipelineName,
 			Limit:        pipelinesLimit,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to list pipeline runs: %w", err)
+			return err
 		}
 
-		// Everything below is written by components flowctl did not start and is
-		// printed to a terminal, so strip control characters first (CLI-22).
-		// Remove this when the command is converted to internal/cliout, which
-		// sanitises at the point it formats a cell.
-		resp = sanitize.Message(resp)
-
-		if len(resp.Runs) == 0 {
-			fmt.Printf("No runs found for pipeline: %s\n", pipelineName)
-			return nil
-		}
-
-		// Print table
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "RUN ID\tSTATUS\tSTARTED\tDURATION\tEVENTS")
+		rows := make([]cliout.Row, 0, len(resp.Runs))
 		for _, run := range resp.Runs {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-				run.RunId[:8],
-				formatRunStatus(run.Status),
-				formatRunTime(run.StartTime.AsTime()),
-				formatRunDuration(run),
-				formatEventCount(run.Metrics.EventsProcessed))
+			rows = append(rows, runRow(run))
 		}
-		w.Flush()
 
-		fmt.Printf("\nShowing last %d run(s). Use --limit to see more.\n", len(resp.Runs))
+		p := cliout.FromContext(cmd.Context())
+		if err := p.List(cliout.List{
+			Schema:     pipelineRunListSchema,
+			ItemSchema: pipelineRunSchema,
+			Columns:    runListColumns(false),
+			Rows:       rows,
+			Empty:      fmt.Sprintf("No runs found for pipeline %s.", sanitize.Line(pipelineName)),
+		}); err != nil {
+			return err
+		}
+
+		if !p.Machine() && len(rows) > 0 {
+			p.Info("\nShowing last %d run(s). Use --limit to see more.", len(rows))
+		}
 		return nil
 	},
 }
@@ -180,40 +257,43 @@ var pipelinesRunInfoCmd = &cobra.Command{
 			RunId: runID,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to get pipeline run: %w", err)
+			return exitcode.Errorf(exitcode.NotFound, "pipeline run %q not found: %v", runID, err)
 		}
 
-		// Everything below is written by components flowctl did not start and is
-		// printed to a terminal, so strip control characters first (CLI-22).
-		// Remove this when the command is converted to internal/cliout, which
-		// sanitises at the point it formats a cell.
-		run = sanitize.Message(run)
-
-		// Print run details
-		fmt.Printf("Run ID:        %s\n", run.RunId)
-		fmt.Printf("Pipeline:      %s\n", run.PipelineName)
-		fmt.Printf("Status:        %s\n", formatRunStatus(run.Status))
-		fmt.Printf("Started:       %s\n", run.StartTime.AsTime().Format("2006-01-02 15:04:05 MST"))
-		fmt.Printf("Duration:      %s\n", formatRunDuration(run))
-		fmt.Printf("Events:        %s\n", formatEventCount(run.Metrics.EventsProcessed))
-
-		if run.Metrics.EventsPerSecond > 0 {
-			fmt.Printf("Throughput:    %.1f events/sec\n", run.Metrics.EventsPerSecond)
+		row := runRow(run)
+		if m := run.GetMetrics(); m != nil && m.GetEventsPerSecond() > 0 {
+			row["_throughput"] = fmt.Sprintf("%.1f events/sec", m.GetEventsPerSecond())
 		}
 
-		if len(run.ComponentIds) > 0 {
-			fmt.Printf("\nComponents:\n")
-			for _, compID := range run.ComponentIds {
-				fmt.Printf("  - %s\n", compID)
-			}
-		}
-
-		if run.Error != "" {
-			fmt.Printf("\nError: %s\n", run.Error)
-		}
-
-		return nil
+		return cliout.FromContext(cmd.Context()).Object(cliout.Object{
+			Schema: pipelineRunSchema,
+			Fields: []cliout.Field{
+				{Label: "Run ID", Key: "run_id"},
+				{Label: "Pipeline", Key: "pipeline_name"},
+				{Label: "Status", Key: "status"},
+				{Label: "Started", Key: "started_at"},
+				{Label: "Duration", Key: "_duration"},
+				{Label: "Events", Key: "_events"},
+				{Label: "Throughput", Key: "_throughput"},
+				{Label: "Components", Key: "component_ids", Format: joinList},
+				{Label: "Error", Key: "error"},
+			},
+			Data: row,
+		})
 	},
+}
+
+// joinList renders a string slice for a detail view. The record keeps the slice.
+func joinList(v any) string {
+	items, ok := v.([]string)
+	if !ok || len(items) == 0 {
+		return "-"
+	}
+	out := make([]string, len(items))
+	for i, s := range items {
+		out[i] = cliout.Value(s)
+	}
+	return strings.Join(out, ", ")
 }
 
 // pipelinesStopCmd stops a running pipeline
@@ -236,23 +316,25 @@ var pipelinesStopCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("Stopping pipeline run %s...\n", runID)
+		p := cliout.FromContext(cmd.Context())
+		p.Info("Stopping pipeline run %s...", runID)
 
 		run, err := client.StopPipelineRun(ctx, &flowctlpb.StopPipelineRunRequest{
 			RunId: runID,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to stop pipeline run: %w", err)
+			return err
 		}
 
-		// Everything below is written by components flowctl did not start and is
-		// printed to a terminal, so strip control characters first (CLI-22).
-		// Remove this when the command is converted to internal/cliout, which
-		// sanitises at the point it formats a cell.
-		run = sanitize.Message(run)
-
-		fmt.Printf("✓ Pipeline stopped (status: %s)\n", formatRunStatus(run.Status))
-		return nil
+		return p.Object(cliout.Object{
+			Schema: pipelineRunSchema,
+			Fields: []cliout.Field{
+				{Label: "Run ID", Key: "run_id"},
+				{Label: "Pipeline", Key: "pipeline_name"},
+				{Label: "Status", Key: "status"},
+			},
+			Data: runRow(run),
+		})
 	},
 }
 
@@ -267,41 +349,26 @@ var pipelinesActiveCmd = &cobra.Command{
 		}
 		defer conn.Close()
 
-		resp, err := client.ListPipelineRuns(context.Background(), &flowctlpb.ListPipelineRunsRequest{
+		resp, err := client.ListPipelineRuns(cmd.Context(), &flowctlpb.ListPipelineRunsRequest{
 			Status: flowctlpb.RunStatus_RUN_STATUS_RUNNING,
 			Limit:  100,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to list active pipeline runs: %w", err)
+			return err
 		}
 
-		// Everything below is written by components flowctl did not start and is
-		// printed to a terminal, so strip control characters first (CLI-22).
-		// Remove this when the command is converted to internal/cliout, which
-		// sanitises at the point it formats a cell.
-		resp = sanitize.Message(resp)
-
-		if len(resp.Runs) == 0 {
-			fmt.Println("No active pipeline runs")
-			return nil
-		}
-
-		// Print table
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "RUN ID\tPIPELINE\tSTARTED\tDURATION\tEVENTS\tSTATUS")
+		rows := make([]cliout.Row, 0, len(resp.Runs))
 		for _, run := range resp.Runs {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-				run.RunId[:8],
-				run.PipelineName,
-				formatRunTime(run.StartTime.AsTime()),
-				formatRunDuration(run),
-				formatEventCount(run.Metrics.EventsProcessed),
-				formatRunStatus(run.Status))
+			rows = append(rows, runRow(run))
 		}
-		w.Flush()
 
-		fmt.Printf("\n%d active pipeline run(s)\n", len(resp.Runs))
-		return nil
+		return cliout.FromContext(cmd.Context()).List(cliout.List{
+			Schema:     pipelineRunListSchema,
+			ItemSchema: pipelineRunSchema,
+			Columns:    runListColumns(true),
+			Rows:       rows,
+			Empty:      "No active pipeline runs.",
+		})
 	},
 }
 
@@ -310,12 +377,8 @@ var pipelinesActiveCmd = &cobra.Command{
 func connectToControlPlane() (flowctlpb.ControlPlaneClient, *grpc.ClientConn, error) {
 	endpoint := fmt.Sprintf("%s:%d", pipelinesControlPlaneAddr, pipelinesControlPlanePort)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, endpoint,
+	conn, err := grpc.NewClient(endpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
 	)
 	if err != nil {
 		return nil, nil, formatPipelinesControlPlaneError(endpoint, err)
@@ -342,7 +405,7 @@ func formatRunTime(t time.Time) string {
 }
 
 func formatRunDuration(run *flowctlpb.PipelineRun) string {
-	start := run.StartTime.AsTime()
+	start := run.GetStartTime().AsTime()
 	var end time.Time
 
 	if run.EndTime != nil {
