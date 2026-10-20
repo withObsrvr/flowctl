@@ -379,6 +379,10 @@ func connectToControlPlane() (flowctlpb.ControlPlaneClient, *grpc.ClientConn, er
 
 	conn, err := grpc.NewClient(endpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		// grpc.NewClient connects lazily, so an unreachable control plane
+		// surfaces on the first RPC rather than here. The interceptor restores
+		// the actionable message that WithBlock used to produce at dial time.
+		cliout.UnreachableInterceptor(endpoint),
 	)
 	if err != nil {
 		return nil, nil, formatPipelinesControlPlaneError(endpoint, err)

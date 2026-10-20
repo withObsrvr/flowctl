@@ -2,6 +2,7 @@ package test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -137,25 +138,57 @@ spec:
 		t.Fatalf("expected shortened run id from pipelines active, got %q", shortRunID)
 	}
 
+	// Assert against --output json, not the table. The human layout is
+	// explicitly not a contract (ADR 0001); the schema is.
+	runInfo := runCommandJSON(t, repoRoot, 5*time.Second, flowctlBin,
+		"pipelines",
+		"run-info", shortRunID,
+		"--control-plane-address", "127.0.0.1",
+		"--control-plane-port", fmt.Sprintf("%d", controlPlanePort),
+		"--output", "json",
+	)
+	if got := runInfo["schema"]; got != "flowctl.pipeline_run.v1" {
+		t.Errorf("run-info schema = %v", got)
+	}
+	data := runInfo["data"].(map[string]any)
+	if got := data["pipeline_name"]; got != "operator-smoke" {
+		t.Errorf("pipeline_name = %v", got)
+	}
+	if got := data["status"]; got != "running" {
+		t.Errorf("status = %v", got)
+	}
+	if !strings.HasPrefix(data["run_id"].(string), shortRunID) {
+		t.Errorf("run_id %v does not start with the short id %q", data["run_id"], shortRunID)
+	}
+	components, _ := data["component_ids"].([]any)
+	joined := fmt.Sprint(components...)
+	if !strings.Contains(joined, "test-source") || !strings.Contains(joined, "test-sink") {
+		t.Errorf("component_ids = %v", components)
+	}
+
+	// The human path must still render; its exact spacing is not asserted.
 	runInfoOut := runCommand(t, repoRoot, 5*time.Second, flowctlBin,
 		"pipelines",
 		"run-info", shortRunID,
 		"--control-plane-address", "127.0.0.1",
 		"--control-plane-port", fmt.Sprintf("%d", controlPlanePort),
 	)
-	assertContains(t, runInfoOut, "Run ID:")
-	assertContains(t, runInfoOut, "Pipeline:      operator-smoke")
-	assertContains(t, runInfoOut, "Status:        running")
-	assertContains(t, runInfoOut, "test-source")
-	assertContains(t, runInfoOut, "test-sink")
+	assertContains(t, runInfoOut, "operator-smoke")
+	assertContains(t, runInfoOut, "running")
 
-	stopOut := runCommand(t, repoRoot, 5*time.Second, flowctlBin,
+	stopped := runCommandJSON(t, repoRoot, 5*time.Second, flowctlBin,
 		"pipelines",
 		"stop", shortRunID,
 		"--control-plane-address", "127.0.0.1",
 		"--control-plane-port", fmt.Sprintf("%d", controlPlanePort),
+		"--output", "json",
 	)
-	assertContains(t, stopOut, "Pipeline stopped")
+	if got := stopped["schema"]; got != "flowctl.pipeline_run.v1" {
+		t.Errorf("stop schema = %v", got)
+	}
+	if got := stopped["data"].(map[string]any)["status"]; got == "running" {
+		t.Errorf("run still reports %v after stop", got)
+	}
 
 	select {
 	case err := <-runDone:
@@ -401,3 +434,43 @@ func main() {
 	}
 }
 `
+
+// runCommandJSON runs a command capturing stdout and stderr separately, and
+// returns the parsed stdout document.
+//
+// Keeping the streams apart is the point: it asserts CLI-5 as a side effect.
+// If any progress line leaked onto stdout, the parse here would fail.
+func runCommandJSON(t *testing.T, repoRoot string, timeout time.Duration, bin string, args ...string) map[string]any {
+	t.Helper()
+
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = repoRoot
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start %s: %v", bin, err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("command failed: %s %s\nError: %v\nStderr:\n%s", bin, strings.Join(args, " "), err, stderr.String())
+		}
+	case <-time.After(timeout):
+		_ = cmd.Process.Kill()
+		t.Fatalf("command timed out: %s %s", bin, strings.Join(args, " "))
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &doc); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\nStdout:\n%s\nStderr:\n%s",
+			err, stdout.String(), stderr.String())
+	}
+	return doc
+}

@@ -44,7 +44,10 @@ func runList(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 	defer cancel()
 
-	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(endpoint,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		cliout.UnreachableInterceptor(endpoint),
+	)
 	if err != nil {
 		return exitcode.Errorf(exitcode.Unavailable,
 			"cannot reach the control plane at %s: %v\nHint: start 'flowctl run' or 'flowctl server' first", endpoint, err)

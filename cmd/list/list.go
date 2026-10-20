@@ -80,7 +80,10 @@ Examples:
 				time.Sleep(2 * time.Second)
 			}
 
-			conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			conn, err := grpc.NewClient(endpoint,
+				grpc.WithTransportCredentials(insecure.NewCredentials()),
+				cliout.UnreachableInterceptor(endpoint),
+			)
 			if err != nil {
 				return exitcode.Errorf(exitcode.Unavailable,
 					"cannot reach the control plane at %s: %v\nHint: start 'flowctl run' or 'flowctl server' first", endpoint, err)
