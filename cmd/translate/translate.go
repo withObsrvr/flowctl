@@ -98,7 +98,10 @@ func runTranslate(cmd *cobra.Command, args []string) error {
 
 	result, err := t.TranslateFromFile(cmd.Context(), opts.InputFile, format)
 	if err != nil {
-		return fmt.Errorf("translation failed: %w", err)
+		// Translation fails when the pipeline is incomplete for the target —
+		// a missing image, say. That is a data validation failure, not an
+		// unclassified one (CLI-15).
+		return exitcode.Wrap(exitcode.DataInvalid, fmt.Errorf("translation failed: %w", err))
 	}
 
 	if opts.OutputFile != "" {

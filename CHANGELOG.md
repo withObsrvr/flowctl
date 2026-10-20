@@ -12,11 +12,33 @@ called out below and, where they change a contract, carry an ADR in `docs/adr/`.
 
 ### Added
 
-- **Machine-readable output.** `--output json` emits one JSON document and
-  `--output ndjson` one object per line, each carrying a schema identifier such
-  as `flowctl.service_list.v1`. Converted so far: `version`, `list`,
-  `config show`. Other commands still print their own tables; they are being
-  converted incrementally. ([ADR 0001](docs/adr/0001-cli-output-and-exit-code-contract.md))
+- **Machine-readable output on every command that produces records.**
+  `--output json` emits one JSON document and `--output ndjson` one object per
+  line, each carrying a schema identifier.
+  ([ADR 0001](docs/adr/0001-cli-output-and-exit-code-contract.md))
+
+  | Command | Schema |
+  |---|---|
+  | `version` | `flowctl.version.v1` |
+  | `list` | `flowctl.service_list.v1` / `flowctl.service.v1` |
+  | `config show` | `flowctl.config_setting_list.v1` / `flowctl.config_setting.v1` |
+  | `status` | `flowctl.pipeline_status.v1` |
+  | `pipelines list` | `flowctl.pipeline_list.v1` / `flowctl.pipeline.v1` |
+  | `pipelines runs` / `active` / `run-info` / `stop` | `flowctl.pipeline_run_list.v1` / `flowctl.pipeline_run.v1` |
+  | `chunks list` / `show` | `flowctl.chunk_run_list.v1` / `flowctl.chunk_run.v1` |
+  | `processors list` / `find` / `show` | `flowctl.processor_list.v1` / `flowctl.processor.v1` |
+  | `sandbox status` | `flowctl.sandbox_container_list.v1` / `flowctl.sandbox_container.v1` |
+  | `validate` | `flowctl.validation_result.v1` |
+  | `translate` | `flowctl.translation.v1` |
+  | `init` | `flowctl.pipeline_init.v1` |
+
+  Machine output carries full values where the table condenses: every event
+  type rather than "first (+2)", raw counts, RFC 3339 timestamps, and status as
+  a stable lowercase string. The table layout is explicitly not a contract.
+
+  `dashboard` is an interactive terminal UI and rejects a machine format,
+  pointing at `flowctl status` instead. `run` and `server` are long-running and
+  produce no record; their progress now goes to stderr.
 - **Exit codes.** Failures now exit with a code that says why: 2 usage, 3 not
   found, 4 not permitted, 5 conflict, 6 timed out, 7 dependency unavailable,
   8 data validation. A clean shutdown on SIGINT or SIGTERM exits 130 or 143.
@@ -39,6 +61,9 @@ called out below and, where they change a contract, carry an ADR in `docs/adr/`.
   `json`.
 - **BREAKING: `flowctl processors find --output <type>` is now `--output-type`.**
   Same reason, same absence of an alias.
+- **BREAKING: `flowctl translate --output <format>` is now `--target` / `-t`.**
+  It selected a deployment target, not an encoding — the third instance of the
+  same collision. `flowctl translate -f p.yaml -t docker-compose`.
 - **BREAKING: `flowctl list --table` / `-t` removed.** Table is the default;
   use `--output json` for machine-readable output.
 - **BREAKING: `--output yaml` and `--output wide` are now errors.** They were
@@ -52,7 +77,18 @@ called out below and, where they change a contract, carry an ADR in `docs/adr/`.
   that is not `flowctl/v1`, with an actionable error (VER-7). Pipelines using a
   bare `v1` must change to `flowctl/v1`.
 - Progress messages, hints and prompts now go to stderr, leaving stdout for
-  results so that `flowctl … | jq` always works.
+  results so that `flowctl … | jq` always works. That includes the `flowctl run`
+  startup banner, the `--show-status` live monitor, and component download
+  progress, none of which were results.
+- `flowctl init` refuses to start its wizard when stdin is not a terminal,
+  instead of reading EOF for every answer and silently building a pipeline from
+  defaults (CLI-8). Use `--preset`, or `--non-interactive` with `--network` and
+  `--destination`. In table mode it now prints just the created path on stdout,
+  so `flowctl run "$(flowctl init --preset testnet-duckdb)"` works.
+- `flowctl status --watch` is a usage error when combined with a machine format,
+  since redrawing a terminal has no meaning for a consumer reading one document.
+- `flowctl validate` always emits a result document in machine mode, including
+  when the file fails to load — a caller never has to handle two shapes.
 - Colour is suppressed when output is not a terminal, when `NO_COLOR` is set,
   or when `TERM=dumb`.
 - Logs are JSON unless attached to a colour-capable terminal, carry `service`
@@ -99,6 +135,14 @@ called out below and, where they change a contract, carry an ADR in `docs/adr/`.
 - `parseFileMode` had a comparison that could never be true (`byte < 0`). The
   validation was still correct — the upper bound caught every bad input — but
   the dead half has been removed.
+- `flowctl pipelines` sliced `run.RunId[:8]` for its short-id column, which
+  panics on any run id shorter than eight bytes. The id arrives over the wire
+  from the control plane, which is a trust boundary; it now slices by rune count
+  and tolerates short input.
+- `flowctl validate` exited via a bare `os.Exit(1)`, bypassing the exit-code
+  contract. It now exits 8 when validation fails and 3 when the file is missing.
+- `flowctl translate` reported an incomplete pipeline — a missing image, say —
+  as a generic failure. It is a data validation failure and now exits 8.
 
 ### Removed
 

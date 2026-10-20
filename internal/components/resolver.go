@@ -90,7 +90,7 @@ func (r *Resolver) Resolve(ctx context.Context, ref string) (*Component, error) 
 	}
 
 	// Download and extract component
-	fmt.Printf("→ Downloading %s@%s...\n", name, version)
+	fmt.Fprintf(os.Stderr, "→ Downloading %s@%s...\n", name, version)
 	if err := r.download(ctx, name, version); err != nil {
 		return nil, fmt.Errorf("failed to download component %s@%s: %w", name, version, err)
 	}
@@ -103,7 +103,7 @@ func (r *Resolver) Resolve(ctx context.Context, ref string) (*Component, error) 
 	// Load metadata
 	metadata := r.loadMetadataWithFallback(name, version, metadataPath)
 
-	fmt.Printf("✓ Downloaded %s@%s\n", name, version)
+	fmt.Fprintf(os.Stderr, "✓ Downloaded %s@%s\n", name, version)
 
 	return &Component{
 		Name:       name,
@@ -195,7 +195,7 @@ func (r *Resolver) download(ctx context.Context, name, version string) error {
 		destMetadataPath := r.componentMetadataPath(name, version)
 		if err := copyFile(sourceMetadataPath, destMetadataPath); err != nil {
 			// Non-fatal - metadata is optional
-			fmt.Printf("  Warning: failed to copy metadata.json: %v\n", err)
+			fmt.Fprintf(os.Stderr, "  Warning: failed to copy metadata.json: %v\n", err)
 		}
 	}
 

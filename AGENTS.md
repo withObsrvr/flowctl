@@ -94,9 +94,13 @@ These cause real bugs or standard violations. Check them before proposing a chan
    unavailable, 8 data validation. Do not add a bare `os.Exit(1)`.
 
 4. **Anything from a registered component is untrusted.** Service names, metadata and
-   relayed errors arrive from processes flowctl did not start. Pass them through
-   `internal/sanitize` before they reach a terminal, a log, or persisted state. A
-   crafted service name can otherwise inject terminal escape sequences.
+   relayed errors arrive from processes flowctl did not start. A crafted service name
+   can otherwise inject terminal escape sequences. Rendering through `internal/cliout`
+   handles this for you — it strips control characters as it formats a cell. Only reach
+   for `sanitize.Message` or `sanitize.Line` when writing to a terminal outside cliout,
+   as `status` does for its grouped layout. Never sanitise what goes into JSON:
+   `encoding/json` escapes control characters already, and stripping them corrupts data
+   the consumer is entitled to receive intact.
 
 5. **Standalone ingestion never depends on the control plane.** A running pipeline must
    keep processing and checkpointing when the control plane is unreachable. Losing the

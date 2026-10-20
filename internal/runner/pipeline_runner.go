@@ -208,7 +208,7 @@ func (r *PipelineRunner) Run() error {
 			return fmt.Errorf("control plane not ready: %w", err)
 		}
 
-		fmt.Printf("✓ Control plane ready at %s\n", r.GetControlPlaneEndpoint())
+		fmt.Fprintf(os.Stderr, "✓ Control plane ready at %s\n", r.GetControlPlaneEndpoint())
 	} else {
 		// Verify external control plane is accessible
 		if err := r.waitForControlPlaneReady(); err != nil {
@@ -216,14 +216,14 @@ func (r *PipelineRunner) Run() error {
 				r.config.ControlPlaneAddress, r.config.ControlPlanePort, err)
 		}
 		logger.Info("External control plane is accessible")
-		fmt.Printf("✓ Connected to external control plane at %s\n", r.GetControlPlaneEndpoint())
+		fmt.Fprintf(os.Stderr, "✓ Connected to external control plane at %s\n", r.GetControlPlaneEndpoint())
 	}
 
 	// Create pipeline run record
 	r.createPipelineRun()
 
 	// Start components in dependency order
-	fmt.Println("→ Launching components...")
+	fmt.Fprintln(os.Stderr, "→ Launching components...")
 	if err := r.startComponents(); err != nil {
 		r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_FAILED)
 		_ = r.shutdown()
@@ -231,7 +231,7 @@ func (r *PipelineRunner) Run() error {
 	}
 
 	// Wait for all components to register
-	fmt.Println("→ Waiting for components to register...")
+	fmt.Fprintln(os.Stderr, "→ Waiting for components to register...")
 	if err := r.waitForComponentRegistration(); err != nil {
 		r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_FAILED)
 		_ = r.shutdown()
@@ -242,7 +242,7 @@ func (r *PipelineRunner) Run() error {
 		logger.Warn("Failed to enrich registered component metadata", zap.Error(err))
 	}
 
-	fmt.Println("→ Wiring data flow between components...")
+	fmt.Fprintln(os.Stderr, "→ Wiring data flow between components...")
 	streamOrch := NewStreamOrchestrator(r.ctx, r.controlPlane, r.pipeline)
 	streamOrch.runID = r.runID
 	streamOrch.controlPlaneEndpoint = r.GetControlPlaneEndpoint()
@@ -291,14 +291,14 @@ func (r *PipelineRunner) Run() error {
 	}
 
 	logger.Info("Pipeline started successfully with control plane integration")
-	fmt.Println("✓ Pipeline is running")
-	fmt.Println()
-	fmt.Println("Next, in another terminal:")
-	fmt.Printf("  flowctl status --control-plane-address %s --control-plane-port %d\n", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
-	fmt.Printf("  flowctl pipelines active --control-plane-address %s --control-plane-port %d\n", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
-	fmt.Println()
-	fmt.Printf("Component logs are being written under %s/\n", r.config.LogDir)
-	fmt.Println("Press Ctrl+C to stop the pipeline.")
+	fmt.Fprintln(os.Stderr, "✓ Pipeline is running")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Next, in another terminal:")
+	fmt.Fprintf(os.Stderr, "  flowctl status --control-plane-address %s --control-plane-port %d\n", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
+	fmt.Fprintf(os.Stderr, "  flowctl pipelines active --control-plane-address %s --control-plane-port %d\n", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "Component logs are being written under %s/\n", r.config.LogDir)
+	fmt.Fprintln(os.Stderr, "Press Ctrl+C to stop the pipeline.")
 
 	// Wait for shutdown or for all delivery edges to terminate. sigChan was
 	// registered at the top of Run, so a signal sent during startup is already

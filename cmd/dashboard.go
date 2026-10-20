@@ -3,7 +3,10 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/withobsrvr/flowctl/internal/cliout"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
 	"github.com/withobsrvr/flowctl/internal/sanitize"
+	"os"
 	"strings"
 	"time"
 
@@ -33,7 +36,23 @@ Keyboard shortcuts:
   ↑/↓       - Navigate (future)
 
 The dashboard auto-refreshes every second by default.`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		printer := cliout.FromContext(cmd.Context())
+
+		// The dashboard draws a full-screen terminal UI; there is no document
+		// it could emit instead. Say so rather than rendering escape codes into
+		// a pipe (CLI-6, CLI-7).
+		if printer.Machine() {
+			return exitcode.Errorf(exitcode.Usage,
+				"the dashboard is interactive and cannot produce --output %s; use 'flowctl status --output %s' instead",
+				printer.Format(), printer.Format())
+		}
+		if !cliout.IsTerminal(os.Stdout) {
+			return exitcode.Errorf(exitcode.Usage,
+				"the dashboard needs a terminal; use 'flowctl status' when output is redirected")
+		}
+
 		// Create the bubbletea program
 		p := tea.NewProgram(initialModel(), tea.WithAltScreen())
 

@@ -1,10 +1,11 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/withobsrvr/flowctl/internal/cliout"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
 	"github.com/withobsrvr/flowctl/internal/runner"
 	"github.com/withobsrvr/flowctl/internal/validator"
 )
@@ -22,49 +23,118 @@ This command checks for common configuration issues including:
 - Component executability (command, image, or type)
 - Processor chain and sink fan-out warnings
 
+Exits 8 when validation fails, 3 when the file does not exist.
+
 Examples:
   # Validate a pipeline file
   flowctl validate my-pipeline.yaml
 
   # Validate default pipeline
-  flowctl validate`,
+  flowctl validate
+
+  # Gate a deploy on it, reading the reasons from JSON
+  flowctl validate pipeline.yaml --output json | jq -r '.data.errors[].message'`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Default pipeline file
+		p := cliout.FromContext(cmd.Context())
+
 		pipelineFile := "flow.yml"
 		if len(args) > 0 {
 			pipelineFile = args[0]
 		}
 
-		// Check if file exists
 		if _, err := os.Stat(pipelineFile); err != nil {
-			return fmt.Errorf("pipeline file not found: %s", pipelineFile)
+			return exitcode.Errorf(exitcode.NotFound, "pipeline file not found: %s", pipelineFile)
 		}
 
-		// Load pipeline configuration
-		pipeline, err := runner.LoadPipelineFromFile(pipelineFile)
-		if err != nil {
-			return fmt.Errorf("failed to load pipeline: %w", err)
+		pipeline, loadErr := runner.LoadPipelineFromFile(pipelineFile)
+		if loadErr != nil {
+			// A file that will not parse is a validation failure, not a
+			// different kind of error. Reporting it through the same envelope
+			// means `validate --output json` always emits one document, so a
+			// caller never has to handle two shapes.
+			if err := emitResult(p, pipelineFile, validationRecord{
+				Valid:  false,
+				Errors: []map[string]any{{"field": "", "message": loadErr.Error()}},
+			}, loadErr.Error()); err != nil {
+				return err
+			}
+			return exitcode.Errorf(exitcode.DataInvalid,
+				"%s could not be loaded: %v", pipelineFile, loadErr)
 		}
 
-		// Create validator
-		v := validator.NewValidator(pipeline)
+		result := validator.NewValidator(pipeline).Validate()
 
-		// Run validation
-		result := v.Validate()
+		rec := validationRecord{Valid: result.Valid, Hints: result.Hints}
+		for _, e := range result.Errors {
+			item := map[string]any{"field": e.Field, "message": e.Message}
+			if e.Fix != "" {
+				item["fix"] = e.Fix
+			}
+			if e.Line > 0 {
+				item["line"] = e.Line
+			}
+			rec.Errors = append(rec.Errors, item)
+		}
+		for _, w := range result.Warnings {
+			item := map[string]any{"field": w.Field, "message": w.Message}
+			if w.Hint != "" {
+				item["hint"] = w.Hint
+			}
+			rec.Warnings = append(rec.Warnings, item)
+		}
 
-		// Print results
-		fmt.Println(result.Format())
+		if err := emitResult(p, pipelineFile, rec, result.Format()); err != nil {
+			return err
+		}
 
-		// Exit with error code if validation failed
 		if !result.Valid {
-			os.Exit(1)
+			// A failed validation is data invalid, not a generic failure
+			// (CLI-15). This used to be a bare os.Exit(1), which bypassed the
+			// exit-code contract entirely.
+			return exitcode.Errorf(exitcode.DataInvalid,
+				"%s failed validation with %d error(s)", pipelineFile, len(result.Errors))
 		}
-
 		return nil
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(validateCmd)
+}
+
+// validationRecord is the machine-readable shape of a validation outcome.
+type validationRecord struct {
+	Valid    bool
+	Errors   []map[string]any
+	Warnings []map[string]any
+	Hints    []string
+}
+
+// emitResult writes a validation outcome in whichever format was asked for.
+// humanText is what a person sees; it is ignored in machine mode.
+func emitResult(p *cliout.Printer, file string, rec validationRecord, humanText string) error {
+	if !p.Machine() {
+		_, err := p.Out().Write([]byte(humanText + "\n"))
+		return err
+	}
+	if rec.Errors == nil {
+		rec.Errors = []map[string]any{}
+	}
+	if rec.Warnings == nil {
+		rec.Warnings = []map[string]any{}
+	}
+	if rec.Hints == nil {
+		rec.Hints = []string{}
+	}
+	return p.Object(cliout.Object{
+		Schema: "flowctl.validation_result.v1",
+		Data: cliout.Row{
+			"file":     file,
+			"valid":    rec.Valid,
+			"errors":   rec.Errors,
+			"warnings": rec.Warnings,
+			"hints":    rec.Hints,
+		},
+	})
 }

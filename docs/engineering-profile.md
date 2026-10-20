@@ -44,7 +44,7 @@ a recorded supported-consumer range or deprecation policy yet — closing that i
 |---|---|---|---|---|
 | CLI grammar, flags and arguments | `cmd/**`, cobra definitions | v0.0.12 | Operators, CI jobs, `obsrvr` umbrella CLI | Unstable; pre-1.0 |
 | CLI exit codes | `internal/exitcode` | v1 ([ADR 0001](adr/0001-cli-output-and-exit-code-contract.md)) | Any script branching on failure | Live |
-| CLI `--output json` / NDJSON shapes | `internal/cliout` schema ids | `flowctl.<noun>.v1` | Scripts, agents | Partial — 3 of 14 commands converted (GAP-2) |
+| CLI `--output json` / NDJSON shapes | `internal/cliout` schema ids | `flowctl.<noun>.v1` | Scripts, agents | Live — every record-producing command converted |
 | Pipeline config format (`apiVersion: flowctl/v1`) | `schemas/cue/schema.cue` | `flowctl/v1` | Pipeline authors, `translate`, `run`, `validate` | Live; enforced by `internal/apiversion` on every path |
 | Control plane gRPC API | `proto/control_plane.proto` (package `flowctl`) | unversioned | Components, SDK, `flowctl` subcommands | Live; package not version-qualified (GAP-7) |
 | Event envelope | `proto/common.proto` → `Event` | `schema_version` field, per-event | Sources, processors, sinks | Live; missing required fields (GAP-4) |
@@ -120,7 +120,7 @@ Assessed 2026-10-20 against standard v2.0. ✓ met · ◐ partial · ✗ unmet.
 | § | Area | Status | Summary |
 |---|---|---|---|
 | 2 | Principles | ✓ | Architecture follows P-2, P-3, P-5, P-8 well. Headless core in `internal/`, adapters in `cmd/`, components as separate processes over documented gRPC. |
-| 3 | CLI | ◐ | CLI-3, 7, 11, 15, 22 now met across every command; CLI-5 and CLI-6 met by `internal/cliout` but only 3 of 14 commands are converted, so machine-readable output is still partial. CLI-1, 12, 13 partial; CLI-14, 17–21 unmet. |
+| 3 | CLI | ◐ | CLI-3, 5, 6, 7, 11, 15, 22 met across every command. CLI-8 now holds too: `init` refuses to prompt when stdin is not a terminal. CLI-1 (grammar), 12 (operation ids, `wait`, `cancel`) and 13 (`doctor`) partial; CLI-14, 17–21 unmet. |
 | 4 | Data contracts | ◐ | Proto and CUE are authoritative (DATA-5 ✓). Event envelope lacks network, ledger, correlation ID and cursor (DATA-6, DATA-7 ✗). |
 | 5 | Network APIs | ✗ | No health service, readiness or metrics (API-13). Errors carry no stable code or request ID (API-3). mTLS available but off by default (API-11 ◐). |
 | 6 | Versioning | ◐ | `buf lint`/`buf breaking` in CI, ADRs in place, changelog rewritten, VER-7 enforced. Tags still unsigned until the next release runs the new workflow (VER-12). Version matrix still missing (VER-9). |
@@ -139,7 +139,7 @@ the register reads as a history rather than only a backlog.
 | ID | Gap | Rule | Phase | Status |
 |---|---|---|---|---|
 | GAP-1 | No `LICENSE`, `SECURITY.md`, `AGENTS.md`, `CONTRIBUTING.md` | DOC-1, SEC-11, SEC-12 | 1 | **Closed** |
-| GAP-2 | `--output` declared and read nowhere; no JSON, NDJSON or schema identifiers | CLI-6 | 2 | **Partial** — `internal/cliout` exists and `version`, `list`, `config show` are converted; 11 commands remain |
+| GAP-2 | `--output` declared and read nowhere; no JSON, NDJSON or schema identifiers | CLI-6 | 2 | **Closed** — every record-producing command emits json/ndjson with a schema id. `dashboard` and `run`/`server` produce no records and reject or ignore machine formats accordingly |
 | GAP-3 | Only exit codes 0 and 1; clean signal shutdown exited 0 | CLI-15, CLI-11 | 2 | **Closed** |
 | GAP-4 | `Event` envelope has no network, ledger, correlation ID or cursor | DATA-6, DATA-7, FC-2 | 3 | Open — wire-breaking; pair with GAP-7 |
 | GAP-5 | No contract owners or change classification; no ADR directory | VER-1, VER-3, VER-8, DOC-4 | 1 | **Closed** — owners in §2, ADRs in `docs/adr/`, classification in the PR template |
@@ -155,7 +155,7 @@ the register reads as a history rather than only a backlog.
 | GAP-15 | `viper.AutomaticEnv` with no prefix; no XDG support; no `config show` | CLI-9 | 2 | **Closed** |
 | GAP-16 | `--output` reused for two unrelated meanings | CLI-3 | 2 | **Closed** — renamed to `--file` and `--output-type` |
 | GAP-17 | No colour suppression: no `NO_COLOR`, `TERM=dumb` or TTY detection | CLI-7 | 2 | **Closed** — logger, `cliout`, and `status` (which emitted raw ANSI and a screen-clear unconditionally). `dashboard` relies on lipgloss's own detection. |
-| GAP-18 | Progress and banners written to stdout alongside results | CLI-5 | 2 | **Partial** — `cliout` separates the streams; unconverted commands still print to stdout |
+| GAP-18 | Progress and banners written to stdout alongside results | CLI-5 | 2 | **Closed** — no bare `fmt.Print*` to stdout remains outside one TTY-gated screen clear; `run`, the live monitor and the component downloaders all write progress to stderr |
 | GAP-19 | No real-chain fixtures, fuzzing, golden, subprocess, parity or replay tests | TEST-1, TEST-2, TEST-3 | 3 | **Partial** — fuzz tests for the sanitiser and `apiVersion`; golden tests for the output envelopes; TEST-1 and TEST-2 levels 5–8 still open |
 | GAP-20 | No version-matrix tests for rolling deploys *(the gap §13 of the standard names)* | VER-9 | 3 | Open |
 | GAP-21 | No `toolchain` line; CI uses `setup-go` rather than the repo flake | BUILD-2 | 5 | **Partial** — `toolchain` pinned; CI still does not use the flake |
@@ -166,26 +166,25 @@ the register reads as a history rather than only a backlog.
 
 ### Next gap to close
 
-**GAP-2**, finishing the output conversion.
+**GAP-13 and GAP-14 together** — the gRPC health service and the first metrics.
 
-`internal/cliout` exists and three commands use it, but eleven still print their own
-tables with `fmt.Printf` — including `status`, `pipelines` and `chunks`, which are the
-ones an operator or an agent most wants to parse. Until they are converted, GAP-2 and
-GAP-18 both stay open and the `--output json` contract is true only in patches, which is
-arguably worse than it being uniformly absent: a caller cannot tell from the outside
-which commands honour it. Each conversion is mechanical now that the printer exists, and
-each should land with a golden test for its schema.
+These are what make flowctl operable rather than merely runnable. GAP-14 is the one with
+consequences outside this repo: without last-ledger, lag-behind-tip, backlog and
+gap-count signals, Obsrvr Lake cannot publish the freshness and completeness SLOs OBS-4
+requires of it. They belong together because both are served from the same place — a
+metrics listener alongside the health service, on a port that is not the gRPC port
+(API-13).
 
 After that, in order:
 
-1. **GAP-13 and GAP-14** together — the gRPC health service and the first metrics. These
-   are what make flowctl operable rather than merely runnable, and GAP-14 blocks the
-   freshness and completeness SLOs that Obsrvr Lake needs downstream (OBS-4).
-2. **GAP-12** — control plane authn/authz. The biggest single gap, and the one needing a
+1. **GAP-12** — control plane authn/authz. The biggest single gap, and the one needing a
    design decision first: workload identity versus per-caller keys, and where the
    read/operate split falls. That decision is an ADR, not a patch.
-3. **GAP-4 with GAP-7** — the event envelope fields and the `flowctl.v1` rename. Both are
+2. **GAP-4 with GAP-7** — the event envelope fields and the `flowctl.v1` rename. Both are
    wire-breaking, so they should cost one coordinated migration rather than two.
+3. **GAP-19 and GAP-20** — real-ledger fixtures and the version-matrix tests. VER-9 is
+   the gap §13 of the standard names for this repo, and it gates any confident rollout
+   of the migration above.
 
 ## 6. Revision history
 
@@ -193,3 +192,4 @@ After that, in order:
 |---|---|
 | 2026-10-20 | Initial profile against standard v2.0. Conformance assessed from a repo audit at `3c954ab`. |
 | 2026-10-20 | Updated after the conformance branch: GAP-1, 3, 5, 6, 9, 10, 15, 16, 17, 22 closed; GAP-2, 7, 11, 18, 19, 21 partial; GAP-24 and GAP-25 added for the two linter exclusions. |
+| 2026-10-20 | Output conversion finished: GAP-2 and GAP-18 closed. CLI-8 met by the `init` TTY guard. Next gap is now GAP-13/GAP-14. |
