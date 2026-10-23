@@ -11,15 +11,30 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         
-        # Go version to use
-        go = pkgs.go_1_26;
+        # Go version to use.
+        #
+        # go_1_27 (1.27.3) rather than go_1_26, because nixpkgs' go_1_26 is
+        # 1.26.9 and go.mod requires >= 1.26.10 for the crypto/x509 fix in
+        # GO-2026-6809. Without this the dev shell is older than the minimum
+        # and every developer relies on Go downloading a toolchain itself.
+        #
+        # No flake.lock change is needed: the pinned nixpkgs already carries
+        # 1.27.3.
+        go = pkgs.go_1_27;
+
+        # staticcheck must be built with a Go at least as new as the code it
+        # analyses: it links go/types, and a binary built with 1.26 cannot
+        # parse the 1.27 standard library. nixpkgs builds go-tools with the
+        # default Go, so without this override `make lint` fails in the dev
+        # shell with "method must have no type parameters" from math/rand/v2.
+        staticcheck = pkgs.go-tools.override { buildGoModule = pkgs.buildGo127Module; };
         
         # Build dependencies
         buildInputs = with pkgs; [
           # Go and build tools
           go
           gotools
-          go-tools
+          staticcheck
           gopls
           delve
           

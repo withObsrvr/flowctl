@@ -103,6 +103,20 @@ called out below and, where they change a contract, carry an ADR in `docs/adr/`.
 - Container images run as a non-root user and carry OCI source, revision and
   version annotations.
 
+### Security
+
+- Require Go 1.26.10, which fixes
+  [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809) — compromised
+  intermediate certificates were not distrusted by `crypto/x509`. flowctl
+  reaches it through TLS and mTLS to the control plane. Building with an older
+  toolchain now fails rather than silently linking the affected standard
+  library.
+- The Nix dev shell moves to Go 1.27.3, which satisfies that minimum without
+  relying on Go downloading a toolchain. `staticcheck` is rebuilt with the same
+  Go: it links `go/types`, so a binary built with 1.26 cannot parse a 1.27
+  standard library and `make lint` would otherwise fail in the shell. No
+  `flake.lock` change was needed — the pinned nixpkgs already carries 1.27.3.
+
 ### Fixed
 
 - **Data race in the control plane.** `GetComponentStatus` and `ListComponents`
