@@ -381,8 +381,8 @@ func buildLocalComponent(id, name, cType string, params map[string]interface{}, 
 
 		// Format full health check URL
 		if !strings.HasPrefix(component.HealthCheck, "http") {
-			component.HealthCheck = fmt.Sprintf("http://localhost:%d%s", 
-				component.HealthCheckPort, 
+			component.HealthCheck = fmt.Sprintf("http://localhost:%d%s",
+				component.HealthCheckPort,
 				component.HealthCheck)
 		}
 	}

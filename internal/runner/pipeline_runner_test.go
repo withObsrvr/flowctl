@@ -10,7 +10,7 @@ import (
 func TestNewPipelineRunner(t *testing.T) {
 	// Create a test pipeline
 	pipeline := &model.Pipeline{
-		APIVersion: "v1",
+		APIVersion: "flowctl/v1",
 		Kind:       "Pipeline",
 		Metadata: model.Metadata{
 			Name: "test-pipeline",
@@ -85,10 +85,10 @@ func TestNewPipelineRunner(t *testing.T) {
 
 func TestNewPipelineRunnerPreservesAutoPortSelection(t *testing.T) {
 	pipeline := &model.Pipeline{
-		APIVersion: "v1",
+		APIVersion: "flowctl/v1",
 		Kind:       "Pipeline",
-		Metadata: model.Metadata{Name: "test-pipeline"},
-		Spec: model.Spec{},
+		Metadata:   model.Metadata{Name: "test-pipeline"},
+		Spec:       model.Spec{},
 	}
 
 	runner, err := NewPipelineRunner(pipeline, Config{
@@ -110,7 +110,7 @@ func TestNewPipelineRunnerPreservesAutoPortSelection(t *testing.T) {
 }
 
 func TestLoadPipelineFromBytes(t *testing.T) {
-	testYAML := `apiVersion: v1
+	testYAML := `apiVersion: flowctl/v1
 kind: Pipeline
 metadata:
   name: test-pipeline
@@ -154,7 +154,7 @@ spec:
 func TestValidatePipeline(t *testing.T) {
 	// Test valid pipeline
 	validPipeline := &model.Pipeline{
-		APIVersion: "v1",
+		APIVersion: "flowctl/v1",
 		Kind:       "Pipeline",
 		Metadata: model.Metadata{
 			Name: "test-pipeline",
@@ -195,7 +195,7 @@ func TestValidatePipeline(t *testing.T) {
 
 	// Test invalid pipeline - wrong kind
 	invalidKindPipeline := &model.Pipeline{
-		APIVersion: "v1",
+		APIVersion: "flowctl/v1",
 		Kind:       "WrongKind",
 		Metadata: model.Metadata{
 			Name: "test-pipeline",
@@ -216,7 +216,7 @@ func TestValidatePipeline(t *testing.T) {
 
 	// Test invalid pipeline - no sources
 	noSourcesPipeline := &model.Pipeline{
-		APIVersion: "v1",
+		APIVersion: "flowctl/v1",
 		Kind:       "Pipeline",
 		Metadata: model.Metadata{
 			Name: "test-pipeline",

@@ -3,14 +3,18 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/withobsrvr/flowctl/internal/cliout"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
+	"github.com/withobsrvr/flowctl/internal/sanitize"
+	"os"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
-	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
+	flowctlpb "github.com/withobsrvr/flowctl/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -32,7 +36,23 @@ Keyboard shortcuts:
   ↑/↓       - Navigate (future)
 
 The dashboard auto-refreshes every second by default.`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		printer := cliout.FromContext(cmd.Context())
+
+		// The dashboard draws a full-screen terminal UI; there is no document
+		// it could emit instead. Say so rather than rendering escape codes into
+		// a pipe (CLI-6, CLI-7).
+		if printer.Machine() {
+			return exitcode.Errorf(exitcode.Usage,
+				"the dashboard is interactive and cannot produce --output %s; use 'flowctl status --output %s' instead",
+				printer.Format(), printer.Format())
+		}
+		if !cliout.IsTerminal(os.Stdout) {
+			return exitcode.Errorf(exitcode.Usage,
+				"the dashboard needs a terminal; use 'flowctl status' when output is redirected")
+		}
+
 		// Create the bubbletea program
 		p := tea.NewProgram(initialModel(), tea.WithAltScreen())
 
@@ -194,9 +214,13 @@ func fetchDataCmd(addr string, port int) tea.Cmd {
 			return dataMsg{err: fmt.Errorf("failed to list components: %w", err)}
 		}
 
+		// Both lists are written by components flowctl did not start and are
+		// rendered into the operator's terminal, so strip control characters
+		// first (CLI-22). A refreshing TUI is a particularly attractive
+		// injection target, since the payload is redrawn continuously.
 		return dataMsg{
-			pipelines:  runsResp.Runs,
-			components: compsResp.Components,
+			pipelines:  sanitize.Message(runsResp).Runs,
+			components: sanitize.Message(compsResp).Components,
 		}
 	}
 }
@@ -284,52 +308,52 @@ func countRunning(pipelines []*flowctlpb.PipelineRun) int {
 
 var (
 	// Colors
-	primaryColor   = lipgloss.Color("#7D56F4")
-	successColor   = lipgloss.Color("#04B575")
-	errorColor     = lipgloss.Color("#FF0000")
-	dimColor       = lipgloss.Color("#666666")
+	primaryColor = lipgloss.Color("#7D56F4")
+	successColor = lipgloss.Color("#04B575")
+	errorColor   = lipgloss.Color("#FF0000")
+	dimColor     = lipgloss.Color("#666666")
 
 	// Text styles
 	headerStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(primaryColor).
-		PaddingLeft(2)
+			Bold(true).
+			Foreground(primaryColor).
+			PaddingLeft(2)
 
 	sectionTitleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(primaryColor)
+				Bold(true).
+				Foreground(primaryColor)
 
 	boxStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor).
-		Padding(1, 2).
-		Width(80)
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(primaryColor).
+			Padding(1, 2).
+			Width(80)
 
 	boldStyle = lipgloss.NewStyle().
-		Bold(true)
+			Bold(true)
 
 	dimStyle = lipgloss.NewStyle().
-		Foreground(dimColor)
+			Foreground(dimColor)
 
 	activeStyle = lipgloss.NewStyle().
-		Foreground(successColor).
-		Bold(true)
+			Foreground(successColor).
+			Bold(true)
 
 	healthyStyle = lipgloss.NewStyle().
-		Foreground(successColor).
-		Bold(true)
+			Foreground(successColor).
+			Bold(true)
 
 	unhealthyStyle = lipgloss.NewStyle().
-		Foreground(errorColor).
-		Bold(true)
+			Foreground(errorColor).
+			Bold(true)
 
 	errorStyle = lipgloss.NewStyle().
-		Foreground(errorColor).
-		Bold(true)
+			Foreground(errorColor).
+			Bold(true)
 
 	helpStyle = lipgloss.NewStyle().
-		Foreground(dimColor).
-		Italic(true)
+			Foreground(dimColor).
+			Italic(true)
 )
 
 func init() {

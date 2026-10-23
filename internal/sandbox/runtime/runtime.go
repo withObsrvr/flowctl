@@ -22,7 +22,6 @@ type Runtime struct {
 	network      string
 	containers   map[string]*Container
 	watcher      *watcher.Watcher
-	mu           sync.RWMutex
 }
 
 // Config represents runtime configuration
@@ -158,7 +157,7 @@ func (r *Runtime) performPreflightChecks() error {
 
 		// Check for daemon not running
 		if strings.Contains(errMsg, "Cannot connect to the Docker daemon") || strings.Contains(errMsg, "Is the docker daemon running") {
-			return fmt.Errorf("Docker daemon is not running. Please start Docker and try again.\n\nOriginal error: %s", errMsg)
+			return fmt.Errorf("docker daemon is not running; start Docker and try again\n\nOriginal error: %s", errMsg)
 		}
 
 		// Check for command not found
@@ -241,12 +240,12 @@ func (r *Runtime) createNetwork() error {
 
 		// Check for daemon not running
 		if strings.Contains(errMsg, "Cannot connect to the Docker daemon") || strings.Contains(errMsg, "Is the docker daemon running") {
-			return fmt.Errorf("Docker daemon is not running. Please start Docker and try again.\n\nOriginal error: %s", errMsg)
+			return fmt.Errorf("docker daemon is not running; start Docker and try again\n\nOriginal error: %s", errMsg)
 		}
 
 		// Check for command not found
 		if !r.config.UseSystemRuntime && strings.Contains(err.Error(), "no such file or directory") {
-			return fmt.Errorf("failed to list networks: %w\n\nThis error often occurs when the bundled runtime is not properly set up. Please use the --use-system-runtime flag instead.", err)
+			return fmt.Errorf("failed to list networks: %w\n\nThis often means the bundled runtime is not set up; use --use-system-runtime instead", err)
 		}
 
 		return fmt.Errorf("failed to list networks: %s", errMsg)

@@ -320,7 +320,11 @@ func (s *ControlPlaneServer) GetComponentStatus(ctx context.Context, req *flowct
 		return nil, fmt.Errorf("service %s not found", req.ServiceId)
 	}
 
-	return service.Status, nil
+	// Clone rather than returning the pointer. service.Status lives in the map
+	// guarded by s.mu, and the janitor mutates it when a heartbeat goes stale.
+	// Handing the live pointer to a caller lets gRPC serialise it after the lock
+	// is released, racing the janitor — which `go test -race` catches.
+	return gproto.Clone(service.Status).(*flowctlv1.ComponentStatusResponse), nil
 }
 
 // ListComponents implements the ListComponents RPC
@@ -340,7 +344,8 @@ func (s *ControlPlaneServer) ListComponents(ctx context.Context, req *flowctlv1.
 			continue
 		}
 
-		components = append(components, service.Status)
+		// Cloned for the same reason as GetComponentStatus above.
+		components = append(components, gproto.Clone(service.Status).(*flowctlv1.ComponentStatusResponse))
 	}
 
 	return &flowctlv1.ListComponentsResponse{Components: components}, nil
@@ -865,7 +870,7 @@ func (w *ControlPlaneWrapper) ListServices(ctx context.Context, req *emptypb.Emp
 	return &flowctlpb.ServiceList{Services: services}, nil
 }
 
-// Pipeline run tracking methods - delegate directly to the server
+// CreatePipelineRun delegates pipeline run tracking directly to the server.
 func (w *ControlPlaneWrapper) CreatePipelineRun(ctx context.Context, req *flowctlpb.CreatePipelineRunRequest) (*flowctlpb.PipelineRun, error) {
 	return w.server.CreatePipelineRun(ctx, req)
 }

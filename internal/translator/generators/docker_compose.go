@@ -95,24 +95,24 @@ func (g *DockerComposeGenerator) Generate(pipeline *models.Pipeline, writer io.W
 	// Process processors
 	for _, processor := range pipeline.Spec.Processors {
 		service := createDockerComposeService(processor, pipeline.Metadata.Name)
-		
+
 		// Add dependencies
 		for _, input := range processor.Inputs {
 			service.DependsOn = append(service.DependsOn, sanitizeServiceName(input))
 		}
-		
+
 		composeConfig.Services[sanitizeServiceName(processor.ID)] = service
 	}
 
 	// Process sinks
 	for _, sink := range pipeline.Spec.Sinks {
 		service := createDockerComposeService(sink, pipeline.Metadata.Name)
-		
+
 		// Add dependencies
 		for _, input := range sink.Inputs {
 			service.DependsOn = append(service.DependsOn, sanitizeServiceName(input))
 		}
-		
+
 		composeConfig.Services[sanitizeServiceName(sink.ID)] = service
 	}
 
@@ -144,9 +144,9 @@ func createDockerComposeService(component models.Component, pipelineName string)
 		Networks:      []string{"flow-network"},
 		Environment:   make(map[string]string),
 		Labels: map[string]string{
-			"com.obsrvr.flow.pipeline":   pipelineName,
-			"com.obsrvr.flow.component":  component.ID,
-			"com.obsrvr.flow.type":       component.Type,
+			"com.obsrvr.flow.pipeline":  pipelineName,
+			"com.obsrvr.flow.component": component.ID,
+			"com.obsrvr.flow.type":      component.Type,
 		},
 	}
 
@@ -177,11 +177,11 @@ func createDockerComposeService(component models.Component, pipelineName string)
 			} else {
 				portStr = fmt.Sprintf("%d", port.ContainerPort)
 			}
-			
+
 			if port.Protocol != "" {
 				portStr = fmt.Sprintf("%s/%s", portStr, port.Protocol)
 			}
-			
+
 			service.Ports = append(service.Ports, portStr)
 		}
 	}

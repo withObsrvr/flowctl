@@ -3,6 +3,8 @@ package parsers
 import (
 	"fmt"
 
+	"github.com/withobsrvr/flowctl/internal/apiversion"
+
 	"github.com/withobsrvr/flowctl/internal/translator/models"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
@@ -20,7 +22,7 @@ func NewYAMLParser() *YAMLParser {
 // Parse parses YAML data into a Pipeline object
 func (p *YAMLParser) Parse(data []byte) (*models.Pipeline, error) {
 	var pipeline models.Pipeline
-	
+
 	err := yaml.Unmarshal(data, &pipeline)
 	if err != nil {
 		logger.Error("Failed to parse YAML", zap.Error(err))
@@ -45,23 +47,23 @@ func (p *YAMLParser) Parse(data []byte) (*models.Pipeline, error) {
 // validate checks if the parsed pipeline is valid
 func (p *YAMLParser) validate(pipeline *models.Pipeline) error {
 	// Check required fields
-	if pipeline.APIVersion == "" {
-		return fmt.Errorf("apiVersion is required")
+	if err := apiversion.Validate(pipeline.APIVersion); err != nil {
+		return err
 	}
-	
-	if pipeline.Kind != "Pipeline" {
-		return fmt.Errorf("kind must be 'Pipeline'")
+
+	if err := apiversion.ValidateKind(pipeline.Kind); err != nil {
+		return err
 	}
-	
+
 	if pipeline.Metadata.Name == "" {
 		return fmt.Errorf("metadata.name is required")
 	}
-	
+
 	// Check components
 	if len(pipeline.Spec.Sources) == 0 {
 		return fmt.Errorf("at least one source is required")
 	}
-	
+
 	// Validate that each component has required fields
 	for _, src := range pipeline.Spec.Sources {
 		if src.ID == "" {
@@ -71,7 +73,7 @@ func (p *YAMLParser) validate(pipeline *models.Pipeline) error {
 			return fmt.Errorf("source image is required for %s", src.ID)
 		}
 	}
-	
+
 	for _, proc := range pipeline.Spec.Processors {
 		if proc.ID == "" {
 			return fmt.Errorf("processor id is required")
@@ -83,7 +85,7 @@ func (p *YAMLParser) validate(pipeline *models.Pipeline) error {
 			return fmt.Errorf("processor %s must have at least one input", proc.ID)
 		}
 	}
-	
+
 	for _, sink := range pipeline.Spec.Sinks {
 		if sink.ID == "" {
 			return fmt.Errorf("sink id is required")
@@ -95,16 +97,16 @@ func (p *YAMLParser) validate(pipeline *models.Pipeline) error {
 			return fmt.Errorf("sink %s must have at least one input", sink.ID)
 		}
 	}
-	
+
 	// Validate connections between components
 	// (Check that all input references exist)
 	componentIDs := make(map[string]bool)
-	
+
 	// Collect all component IDs
 	for _, src := range pipeline.Spec.Sources {
 		componentIDs[src.ID] = true
 	}
-	
+
 	// Check processor inputs
 	for _, proc := range pipeline.Spec.Processors {
 		componentIDs[proc.ID] = true
@@ -114,7 +116,7 @@ func (p *YAMLParser) validate(pipeline *models.Pipeline) error {
 			}
 		}
 	}
-	
+
 	// Check sink inputs
 	for _, sink := range pipeline.Spec.Sinks {
 		for _, input := range sink.Inputs {
@@ -123,6 +125,6 @@ func (p *YAMLParser) validate(pipeline *models.Pipeline) error {
 			}
 		}
 	}
-	
+
 	return nil
 }

@@ -208,7 +208,7 @@ if ./bin/flowctl validate schemas/cue/invalid-pipeline.yaml >/dev/null 2>&1; the
 fi
 
 echo "==> Generate starter pipeline"
-./bin/flowctl init --preset testnet-duckdb -o "${TMP_DIR}/stellar-pipeline.yaml" >/dev/null
+./bin/flowctl init --preset testnet-duckdb --file "${TMP_DIR}/stellar-pipeline.yaml" >/dev/null
 perl -0pi -e "s#\./stellar-pipeline\.duckdb#${TMP_DIR}/stellar-pipeline.duckdb#g" "${TMP_DIR}/stellar-pipeline.yaml"
 
 echo "==> DuckDB starter pipeline smoke"
@@ -217,7 +217,7 @@ DUCKDB_PID=$!
 wait_for_control_plane 9090 "$DUCKDB_PID" "${TMP_DIR}/duckdb.log" 180
 ./bin/flowctl processors list --endpoint 127.0.0.1:9090 >/dev/null
 ./bin/flowctl processors find --input stellar.ledger.v1 --endpoint 127.0.0.1:9090 >/dev/null
-./bin/flowctl processors find --output stellar.contract.events.v1 --endpoint 127.0.0.1:9090 >/dev/null
+./bin/flowctl processors find --output-type stellar.contract.events.v1 --endpoint 127.0.0.1:9090 >/dev/null
 wait_for_log_pattern "${TMP_DIR}/duckdb.log" "Stored [0-9][0-9]* contract events" "$DUCKDB_PID" 180
 kill "${DUCKDB_PID}" >/dev/null 2>&1 || true
 wait "${DUCKDB_PID}" || true
@@ -247,7 +247,7 @@ if command -v docker >/dev/null 2>&1; then
   done
   docker exec "${POSTGRES_CONTAINER}" createdb -U postgres stellar_events >/dev/null 2>&1 || true
 
-  ./bin/flowctl init --preset testnet-postgres -o "${TMP_DIR}/postgres-pipeline.yaml" >/dev/null
+  ./bin/flowctl init --preset testnet-postgres --file "${TMP_DIR}/postgres-pipeline.yaml" >/dev/null
   nohup ./bin/flowctl run --control-plane-port 9091 --no-persistence "${TMP_DIR}/postgres-pipeline.yaml" >"${TMP_DIR}/postgres.log" 2>&1 &
   POSTGRES_PID=$!
   wait_for_postgres_events "${POSTGRES_CONTAINER}" "$POSTGRES_PID" "${TMP_DIR}/postgres.log" 240

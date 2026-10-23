@@ -18,10 +18,10 @@ type Metadata struct {
 
 // Spec contains the pipeline specification
 type Spec struct {
-	Description string      `yaml:"description,omitempty"`
-	Sources     []Component `yaml:"sources"`
-	Processors  []Component `yaml:"processors"`
-	Sinks       []Component `yaml:"sinks"`
+	Description string                 `yaml:"description,omitempty"`
+	Sources     []Component            `yaml:"sources"`
+	Processors  []Component            `yaml:"processors"`
+	Sinks       []Component            `yaml:"sinks"`
 	Config      map[string]interface{} `yaml:"config,omitempty"`
 }
 

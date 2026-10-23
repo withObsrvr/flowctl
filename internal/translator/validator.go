@@ -3,6 +3,8 @@ package translator
 import (
 	"fmt"
 
+	"github.com/withobsrvr/flowctl/internal/apiversion"
+
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 )
@@ -20,53 +22,53 @@ func (v *BasicValidator) Validate(pipeline *model.Pipeline) error {
 	logger.Debug("Validating pipeline configuration")
 
 	// Check required fields
-	if pipeline.APIVersion == "" {
-		return fmt.Errorf("apiVersion is required")
+	if err := apiversion.Validate(pipeline.APIVersion); err != nil {
+		return err
 	}
-	
-	if pipeline.Kind != "Pipeline" {
-		return fmt.Errorf("kind must be 'Pipeline'")
+
+	if err := apiversion.ValidateKind(pipeline.Kind); err != nil {
+		return err
 	}
-	
+
 	if pipeline.Metadata.Name == "" {
 		return fmt.Errorf("metadata.name is required")
 	}
-	
+
 	// Check components - at least one source or pipeline component is required
 	if len(pipeline.Spec.Sources) == 0 && len(pipeline.Spec.Pipelines) == 0 {
 		return fmt.Errorf("at least one source or pipeline component is required")
 	}
-	
+
 	// Validate that each component has required fields
 	for _, source := range pipeline.Spec.Sources {
 		if err := v.ValidateSource(source); err != nil {
 			return err
 		}
 	}
-	
+
 	for _, processor := range pipeline.Spec.Processors {
 		if err := v.ValidateProcessor(processor); err != nil {
 			return err
 		}
 	}
-	
+
 	for _, sink := range pipeline.Spec.Sinks {
 		if err := v.ValidateSink(sink); err != nil {
 			return err
 		}
 	}
-	
+
 	// Validate pipeline components
 	for _, pipelineComp := range pipeline.Spec.Pipelines {
 		if err := v.ValidatePipeline(pipelineComp); err != nil {
 			return err
 		}
 	}
-	
+
 	// Validate connections between components
 	// (Check that all input references exist)
 	componentIDs := make(map[string]bool)
-	
+
 	// Collect all component IDs
 	for _, src := range pipeline.Spec.Sources {
 		componentIDs[src.ID] = true
@@ -74,7 +76,7 @@ func (v *BasicValidator) Validate(pipeline *model.Pipeline) error {
 	for _, pipelineComp := range pipeline.Spec.Pipelines {
 		componentIDs[pipelineComp.ID] = true
 	}
-	
+
 	// Check processor inputs
 	for _, proc := range pipeline.Spec.Processors {
 		componentIDs[proc.ID] = true
@@ -84,7 +86,7 @@ func (v *BasicValidator) Validate(pipeline *model.Pipeline) error {
 			}
 		}
 	}
-	
+
 	// Check sink inputs
 	for _, sink := range pipeline.Spec.Sinks {
 		for _, input := range sink.Inputs {
@@ -121,7 +123,7 @@ func (v *BasicValidator) ValidateSource(source model.Component) error {
 	if source.Image == "" {
 		return fmt.Errorf("source image is required for %s", source.ID)
 	}
-	
+
 	// Source-specific validations can go here
 	if source.HealthCheck != "" && source.HealthPort == 0 {
 		return fmt.Errorf("source %s has health_check but no health_port specified", source.ID)
@@ -178,7 +180,7 @@ func (v *BasicValidator) ValidatePipeline(pipeline model.Component) error {
 	if pipeline.Image == "" {
 		return fmt.Errorf("pipeline image is required for %s", pipeline.ID)
 	}
-	
+
 	// Pipeline-specific validations
 	if pipeline.Type != "" && pipeline.Type != "pipeline" {
 		return fmt.Errorf("pipeline %s has invalid type: %s", pipeline.ID, pipeline.Type)

@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 	"github.com/withobsrvr/flowctl/internal/controlplane"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/orchestrator"
 	"github.com/withobsrvr/flowctl/internal/storage"
@@ -168,6 +169,16 @@ func resolveEmbeddedDBPath(dbPath string) (string, error) {
 
 // Run starts the pipeline with embedded or external control plane
 func (r *PipelineRunner) Run() error {
+	// Register for signals before starting anything. CLI-11 requires a tool to
+	// stop starting new work and shut down cleanly on SIGINT or SIGTERM; if the
+	// handler is only installed once startup finishes, a signal arriving during
+	// startup kills the process outright, leaving child components orphaned and
+	// the run row marked running. The channel is buffered so a signal that
+	// arrives before the wait below is still delivered.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+
 	if r.config.UseExternalCP {
 		logger.Info("Starting pipeline with external control plane",
 			zap.String("pipeline", r.pipeline.Metadata.Name),
@@ -197,7 +208,7 @@ func (r *PipelineRunner) Run() error {
 			return fmt.Errorf("control plane not ready: %w", err)
 		}
 
-		fmt.Printf("✓ Control plane ready at %s\n", r.GetControlPlaneEndpoint())
+		fmt.Fprintf(os.Stderr, "✓ Control plane ready at %s\n", r.GetControlPlaneEndpoint())
 	} else {
 		// Verify external control plane is accessible
 		if err := r.waitForControlPlaneReady(); err != nil {
@@ -205,14 +216,14 @@ func (r *PipelineRunner) Run() error {
 				r.config.ControlPlaneAddress, r.config.ControlPlanePort, err)
 		}
 		logger.Info("External control plane is accessible")
-		fmt.Printf("✓ Connected to external control plane at %s\n", r.GetControlPlaneEndpoint())
+		fmt.Fprintf(os.Stderr, "✓ Connected to external control plane at %s\n", r.GetControlPlaneEndpoint())
 	}
 
 	// Create pipeline run record
 	r.createPipelineRun()
 
 	// Start components in dependency order
-	fmt.Println("→ Launching components...")
+	fmt.Fprintln(os.Stderr, "→ Launching components...")
 	if err := r.startComponents(); err != nil {
 		r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_FAILED)
 		_ = r.shutdown()
@@ -220,7 +231,7 @@ func (r *PipelineRunner) Run() error {
 	}
 
 	// Wait for all components to register
-	fmt.Println("→ Waiting for components to register...")
+	fmt.Fprintln(os.Stderr, "→ Waiting for components to register...")
 	if err := r.waitForComponentRegistration(); err != nil {
 		r.updateRunStatus(flowctlpb.RunStatus_RUN_STATUS_FAILED)
 		_ = r.shutdown()
@@ -231,7 +242,7 @@ func (r *PipelineRunner) Run() error {
 		logger.Warn("Failed to enrich registered component metadata", zap.Error(err))
 	}
 
-	fmt.Println("→ Wiring data flow between components...")
+	fmt.Fprintln(os.Stderr, "→ Wiring data flow between components...")
 	streamOrch := NewStreamOrchestrator(r.ctx, r.controlPlane, r.pipeline)
 	streamOrch.runID = r.runID
 	streamOrch.controlPlaneEndpoint = r.GetControlPlaneEndpoint()
@@ -280,23 +291,21 @@ func (r *PipelineRunner) Run() error {
 	}
 
 	logger.Info("Pipeline started successfully with control plane integration")
-	fmt.Println("✓ Pipeline is running")
-	fmt.Println()
-	fmt.Println("Next, in another terminal:")
-	fmt.Printf("  flowctl status --control-plane-address %s --control-plane-port %d\n", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
-	fmt.Printf("  flowctl pipelines active --control-plane-address %s --control-plane-port %d\n", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
-	fmt.Println()
-	fmt.Printf("Component logs are being written under %s/\n", r.config.LogDir)
-	fmt.Println("Press Ctrl+C to stop the pipeline.")
+	fmt.Fprintln(os.Stderr, "✓ Pipeline is running")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Next, in another terminal:")
+	fmt.Fprintf(os.Stderr, "  flowctl status --control-plane-address %s --control-plane-port %d\n", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
+	fmt.Fprintf(os.Stderr, "  flowctl pipelines active --control-plane-address %s --control-plane-port %d\n", r.config.ControlPlaneAddress, r.config.ControlPlanePort)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "Component logs are being written under %s/\n", r.config.LogDir)
+	fmt.Fprintln(os.Stderr, "Press Ctrl+C to stop the pipeline.")
 
-	// Set up signal handling
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	defer signal.Stop(sigChan)
-	// Wait for shutdown or for all delivery edges to terminate.
+	// Wait for shutdown or for all delivery edges to terminate. sigChan was
+	// registered at the top of Run, so a signal sent during startup is already
+	// buffered and taken here rather than killing the process.
 	var shutdownStatus flowctlpb.RunStatus
 	var deliveryErr error
+	var receivedSignal os.Signal
 	select {
 	case deliveryErr = <-terminal:
 		if deliveryErr != nil {
@@ -306,8 +315,11 @@ func (r *PipelineRunner) Run() error {
 		} else {
 			shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_COMPLETED
 		}
-	case <-sigChan:
-		logger.Info("Received shutdown signal")
+	case sig := <-sigChan:
+		logger.Info("Received shutdown signal", zap.String("signal", sig.String()))
+		// Remembered so the process can exit 130/143 after a clean shutdown,
+		// telling a supervisor it was interrupted and can resume (CLI-11).
+		receivedSignal = sig
 		shutdownStatus = flowctlpb.RunStatus_RUN_STATUS_STOPPED
 	case <-r.ctx.Done():
 		logger.Info("Context cancelled")
@@ -337,7 +349,16 @@ func (r *PipelineRunner) Run() error {
 	if deliveryErr != nil {
 		return deliveryErr
 	}
-	return shutdownErr
+	if shutdownErr != nil {
+		return shutdownErr
+	}
+	// A clean shutdown that was asked for by a signal still exits non-zero, so a
+	// supervisor can tell "interrupted, resume from checkpoint" apart from
+	// "finished" (CLI-11, CLI-15).
+	if receivedSignal != nil {
+		return exitcode.Signal(receivedSignal)
+	}
+	return nil
 }
 
 // waitForTerminalOnStop preserves a failure already reported or captured by

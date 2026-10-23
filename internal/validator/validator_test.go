@@ -11,7 +11,7 @@ func TestValidatorRejectsKnownInvalidPipeline(t *testing.T) {
 	pipeline := &model.Pipeline{
 		APIVersion: "flowctl/v1",
 		Kind:       "Pipeline",
-		Metadata: model.Metadata{Name: "invalid-pipeline"},
+		Metadata:   model.Metadata{Name: "invalid-pipeline"},
 		Spec: model.Spec{
 			Driver: "unsupported-driver",
 			Sources: []model.Component{{
@@ -54,9 +54,9 @@ func TestValidatorAcceptsQuickstartStylePipeline(t *testing.T) {
 	pipeline := &model.Pipeline{
 		APIVersion: "flowctl/v1",
 		Kind:       "Pipeline",
-		Metadata: model.Metadata{Name: "quickstart"},
+		Metadata:   model.Metadata{Name: "quickstart"},
 		Spec: model.Spec{
-			Driver: "process",
+			Driver:  "process",
 			Sources: []model.Component{{ID: "stellar-source", Type: "stellar-live-source@v1.0.0"}},
 			Processors: []model.Component{{
 				ID:     "contract-events",

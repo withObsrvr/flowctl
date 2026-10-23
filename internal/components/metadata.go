@@ -11,9 +11,9 @@ type Metadata struct {
 	Name         string                    `json:"name"`
 	Version      string                    `json:"version"`
 	Description  string                    `json:"description"`
-	Type         string                    `json:"type"`          // "source", "processor", "sink"
-	Produces     []string                  `json:"produces"`      // Event types produced
-	Consumes     []string                  `json:"consumes"`      // Event types consumed
+	Type         string                    `json:"type"`     // "source", "processor", "sink"
+	Produces     []string                  `json:"produces"` // Event types produced
+	Consumes     []string                  `json:"consumes"` // Event types consumed
 	InputTypes   []string                  `json:"input_types"`
 	OutputTypes  []string                  `json:"output_types"`
 	EnvMapping   map[string]string         `json:"env_mapping"`   // Config key -> ENV var mapping

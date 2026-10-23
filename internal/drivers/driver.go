@@ -2,35 +2,35 @@ package drivers
 
 import (
 	"context"
-	
+
 	"github.com/withobsrvr/flowctl/internal/model"
 )
 
 // Driver represents a driver for deploying and managing pipelines
 type Driver interface {
-	// Apply deploys a pipeline 
+	// Apply deploys a pipeline
 	Apply(ctx context.Context, pipeline *model.Pipeline, options map[string]string) error
-	
+
 	// Delete removes a deployed pipeline
 	Delete(ctx context.Context, pipelineName string, namespace string, options map[string]string) error
-	
+
 	// Status retrieves the status of a deployed pipeline
 	Status(ctx context.Context, pipelineName string, namespace string, options map[string]string) (*PipelineStatus, error)
 }
 
 // PipelineStatus represents the status of a deployed pipeline
 type PipelineStatus struct {
-	Name      string                      `json:"name"`
-	Namespace string                      `json:"namespace"`
-	State     string                      `json:"state"` // running, failed, pending
+	Name       string                     `json:"name"`
+	Namespace  string                     `json:"namespace"`
+	State      string                     `json:"state"` // running, failed, pending
 	Components map[string]ComponentStatus `json:"components"`
-	Message   string                      `json:"message,omitempty"`
+	Message    string                     `json:"message,omitempty"`
 }
 
 // ComponentStatus represents the status of a pipeline component
 type ComponentStatus struct {
 	ID        string            `json:"id"`
-	Type      string            `json:"type"` // source, processor, sink
+	Type      string            `json:"type"`  // source, processor, sink
 	State     string            `json:"state"` // running, failed, pending, stopped
 	Replicas  int               `json:"replicas"`
 	Ready     int               `json:"ready"`

@@ -14,9 +14,9 @@ import (
 // - OCI image download and extraction
 // - Binary extraction and permission setting
 type ProcessorResolver struct {
-	client      *Client
-	cacheDir    string
-	defaultOrg  string // Default organization for short refs (e.g., "stellar")
+	client     *Client
+	cacheDir   string
+	defaultOrg string // Default organization for short refs (e.g., "stellar")
 }
 
 // NewProcessorResolver creates a new processor resolver.
@@ -70,7 +70,7 @@ func (r *ProcessorResolver) Resolve(ctx context.Context, ref string) (string, er
 	}
 
 	// Download and extract processor
-	fmt.Printf("⬇ Downloading %s...\n", ref)
+	fmt.Fprintf(os.Stderr, "⬇ Downloading %s...\n", ref)
 	if err := r.download(ctx, imgRef); err != nil {
 		return "", fmt.Errorf("failed to download processor %s: %w", ref, err)
 	}
@@ -80,7 +80,7 @@ func (r *ProcessorResolver) Resolve(ctx context.Context, ref string) (string, er
 		return "", fmt.Errorf("processor binary not found after download: %s", binaryPath)
 	}
 
-	fmt.Printf("✓ Downloaded %s\n", ref)
+	fmt.Fprintf(os.Stderr, "✓ Downloaded %s\n", ref)
 	return binaryPath, nil
 }
 

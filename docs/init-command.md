@@ -60,7 +60,7 @@ flowctl init --preset testnet-duckdb
 flowctl init --non-interactive --network testnet --destination duckdb
 
 # Custom output file
-flowctl init --non-interactive --network mainnet --destination postgres -o prod-pipeline.yaml
+flowctl init --non-interactive --network mainnet --destination postgres -f prod-pipeline.yaml
 ```
 
 ## Examples
@@ -109,7 +109,7 @@ spec:
 ### Create a Mainnet PostgreSQL Pipeline
 
 ```bash
-flowctl init --preset mainnet-postgres -o mainnet.yaml
+flowctl init --preset mainnet-postgres -f mainnet.yaml
 ```
 
 ## Component Auto-Download
@@ -232,7 +232,7 @@ After creating your first pipeline:
 1. **Run it**: `./bin/flowctl run stellar-pipeline.yaml`
 2. **Monitor it**: `./bin/flowctl dashboard`
 3. **Add processors**: Edit the YAML to add transformation stages
-4. **Deploy to production**: `./bin/flowctl translate -f pipeline.yaml -o docker-compose`
+4. **Deploy to production**: `./bin/flowctl translate -f pipeline.yaml -t docker-compose`
 
 ## See Also
 

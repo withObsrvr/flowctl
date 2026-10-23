@@ -2,6 +2,7 @@ package logger
 
 import (
 	"fmt"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -19,19 +20,65 @@ func GetLogger() *zap.Logger {
 	return log
 }
 
-// Init initializes the logger with the specified level
-func Init(level string) error {
+// Options configure the global logger.
+type Options struct {
+	// Color enables ANSI level colouring. Callers decide this, because only they
+	// know whether the destination is a terminal and whether NO_COLOR is set
+	// (CLI-7). The zero value is off, which is the safe default.
+	Color bool
+	// JSON forces structured JSON output. When unset, JSON is used unless Color is
+	// on, so an operator at a terminal gets readable console output and anything
+	// collecting logs gets parseable ones (OBS-1).
+	JSON bool
+	// Service and Version are attached to every line (OBS-1).
+	Service string
+	Version string
+}
+
+// Option modifies Options.
+type Option func(*Options)
+
+// WithColor enables or disables ANSI colour.
+func WithColor(enabled bool) Option { return func(o *Options) { o.Color = enabled } }
+
+// WithJSON forces JSON encoding regardless of whether colour is enabled.
+func WithJSON(enabled bool) Option { return func(o *Options) { o.JSON = enabled } }
+
+// WithService sets the service and version fields carried on every line.
+func WithService(service, version string) Option {
+	return func(o *Options) { o.Service, o.Version = service, version }
+}
+
+// Init initializes the logger with the specified level.
+//
+// Logs always go to stderr: stdout carries results only (CLI-5).
+func Init(level string, opts ...Option) error {
 	zapLevel, err := parseLevel(level)
 	if err != nil {
 		return err
 	}
 
+	options := Options{Service: "flowctl"}
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	encodeLevel := zapcore.CapitalLevelEncoder
+	encoding := "json"
+	switch {
+	case options.JSON:
+		// explicit JSON wins
+	case options.Color:
+		encoding = "console"
+		encodeLevel = zapcore.CapitalColorLevelEncoder
+	}
+
 	config := zap.Config{
 		Level:       zap.NewAtomicLevelAt(zapLevel),
 		Development: false,
-		Encoding:    "console",
+		Encoding:    encoding,
 		EncoderConfig: zapcore.EncoderConfig{
-			TimeKey:        "ts",
+			TimeKey:        "time",
 			LevelKey:       "level",
 			NameKey:        "logger",
 			CallerKey:      "caller",
@@ -39,8 +86,8 @@ func Init(level string) error {
 			MessageKey:     "msg",
 			StacktraceKey:  "stacktrace",
 			LineEnding:     zapcore.DefaultLineEnding,
-			EncodeLevel:    zapcore.CapitalColorLevelEncoder,
-			EncodeTime:     zapcore.ISO8601TimeEncoder,
+			EncodeLevel:    encodeLevel,
+			EncodeTime:     utcRFC3339,
 			EncodeDuration: zapcore.StringDurationEncoder,
 			EncodeCaller:   zapcore.ShortCallerEncoder,
 		},
@@ -53,9 +100,21 @@ func Init(level string) error {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
 
+	fields := []zap.Field{zap.String("service", options.Service)}
+	if options.Version != "" {
+		fields = append(fields, zap.String("version", options.Version))
+	}
+	logger = logger.With(fields...)
+
 	log = logger
 	sugar = logger.Sugar()
 	return nil
+}
+
+// utcRFC3339 encodes timestamps as RFC 3339 in UTC with a Z suffix, as DATA-3
+// requires. zap's own RFC3339 encoders emit a local offset instead.
+func utcRFC3339(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+	enc.AppendString(t.UTC().Format(time.RFC3339Nano))
 }
 
 // parseLevel converts a string log level to a zapcore.Level

@@ -2,10 +2,7 @@ package list
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,13 +10,15 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/withobsrvr/flowctl/internal/cliout"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
 	pb "github.com/withobsrvr/flowctl/proto"
 )
 
 var (
 	endpoint      string
 	waitForServer bool
-	tableFormat   bool
+	timeout       time.Duration
 )
 
 // formatServiceType converts a ServiceType to a user-friendly string
@@ -58,100 +57,93 @@ func NewCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List registered services",
 		Long: `List all services registered with the control plane.
-If a pipeline is running, it will connect to the embedded control plane automatically.`,
+If a pipeline is running, it will connect to the embedded control plane automatically.
+
+Examples:
+  # Human-readable table
+  flowctl list
+
+  # Every unhealthy service, for a monitoring check
+  flowctl list --output json | jq '.items[] | select(.healthy | not)'
+
+  # Stream records as they are produced
+  flowctl list --output ndjson`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// If endpoint is default, check if embedded control plane is running
-			if endpoint == "localhost:8080" && waitForServer {
-				fmt.Println("Checking for embedded control plane...")
+			p := cliout.FromContext(cmd.Context())
+
+			// Only wait for the embedded control plane when a person is watching.
+			// A script that asked for JSON wants an answer or an error, not a
+			// two-second sleep (CLI-8).
+			if endpoint == "localhost:8080" && waitForServer && !p.Machine() {
+				p.Info("Checking for embedded control plane...")
 				time.Sleep(2 * time.Second)
 			}
 
-			// Connect to control plane
-			conn, err := grpc.Dial(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			conn, err := grpc.NewClient(endpoint,
+				grpc.WithTransportCredentials(insecure.NewCredentials()),
+				cliout.UnreachableInterceptor(endpoint),
+			)
 			if err != nil {
-				return fmt.Errorf("failed to connect to control plane at %s: %w\nHint: Make sure 'flowctl run' is running or start 'flowctl server'", endpoint, err)
+				return exitcode.Errorf(exitcode.Unavailable,
+					"cannot reach the control plane at %s: %v\nHint: start 'flowctl run' or 'flowctl server' first", endpoint, err)
 			}
 			defer conn.Close()
 
-			// Create client
 			client := pb.NewControlPlaneClient(conn)
 
-			// Set timeout
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
 
-			// List services
 			resp, err := client.ListServices(ctx, &emptypb.Empty{})
 			if err != nil {
-				return fmt.Errorf("failed to list services: %w", err)
+				// exitcode.Of maps the gRPC status, so a dead control plane
+				// exits 7 and a deadline exits 6 without classifying here.
+				return err
 			}
 
-			// Print services
-			if len(resp.Services) == 0 {
-				fmt.Println("No services registered with the control plane.")
-				return nil
-			}
-
-			if tableFormat {
-				// Table format output
-				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "ID\tTYPE\tSTATUS\tLAST HEARTBEAT")
-				fmt.Fprintln(w, "----\t----\t------\t--------------")
-
-				for _, service := range resp.Services {
-					status := "UNHEALTHY"
-					if service.IsHealthy {
-						status = "HEALTHY"
-					}
-
-					lastHeartbeat := "Never"
-					if service.LastHeartbeat != nil {
-						lastHeartbeat = service.LastHeartbeat.AsTime().Format("2006-01-02 15:04:05")
-					}
-
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-						service.ServiceId,
-						formatServiceType(service.ServiceType),
-						status,
-						lastHeartbeat,
-					)
+			rows := make([]cliout.Row, 0, len(resp.Services))
+			for _, service := range resp.Services {
+				row := cliout.Row{
+					"id":      service.ServiceId,
+					"type":    formatServiceType(service.ServiceType),
+					"healthy": service.IsHealthy,
 				}
-				w.Flush()
-			} else {
-				// Detailed format output
-				fmt.Printf("Registered Services (%d):\n", len(resp.Services))
-				fmt.Println("========================")
-				for _, service := range resp.Services {
-					status := "🔴 UNHEALTHY"
-					if service.IsHealthy {
-						status = "🟢 HEALTHY"
-					}
-
-					fmt.Printf("ID: %s\n", service.ServiceId)
-					fmt.Printf("Type: %s\n", formatServiceType(service.ServiceType))
-					fmt.Printf("Status: %s\n", status)
-					if service.LastHeartbeat != nil {
-						fmt.Printf("Last Heartbeat: %s\n", service.LastHeartbeat.AsTime().Format(time.RFC3339))
-					}
-
-					if len(service.Metrics) > 0 {
-						fmt.Println("Metrics:")
-						for k, v := range service.Metrics {
-							fmt.Printf("  %s: %.2f\n", k, v)
-						}
-					}
-					fmt.Println("------------------------")
+				if service.LastHeartbeat != nil {
+					row["last_heartbeat"] = service.LastHeartbeat.AsTime()
 				}
+				if len(service.Metrics) > 0 {
+					row["metrics"] = service.Metrics
+				}
+				rows = append(rows, row)
 			}
 
-			return nil
+			return p.List(cliout.List{
+				Schema:     "flowctl.service_list.v1",
+				ItemSchema: "flowctl.service.v1",
+				Columns: []cliout.Column{
+					{Header: "ID", Key: "id"},
+					{Header: "Type", Key: "type"},
+					{Header: "Status", Key: "healthy", Format: health},
+					{Header: "Last Heartbeat", Key: "last_heartbeat"},
+				},
+				Rows:  rows,
+				Empty: "No services registered with the control plane.",
+			})
 		},
 	}
 
-	// Add flags
 	cmd.Flags().StringVarP(&endpoint, "endpoint", "e", "localhost:8080", "Control plane endpoint")
-	cmd.Flags().BoolVar(&waitForServer, "wait", true, "Wait briefly for embedded control plane")
-	cmd.Flags().BoolVarP(&tableFormat, "table", "t", false, "Display output in table format")
+	cmd.Flags().BoolVar(&waitForServer, "wait", true, "Wait briefly for an embedded control plane")
+	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "Timeout for the control plane call")
 
 	return cmd
+}
+
+// health renders the boolean health field for human output.
+func health(v any) string {
+	if healthy, ok := v.(bool); ok && healthy {
+		return "HEALTHY"
+	}
+	return "UNHEALTHY"
 }

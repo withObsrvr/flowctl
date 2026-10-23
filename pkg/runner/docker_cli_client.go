@@ -71,61 +71,61 @@ func (d *DockerCLIClient) Close() error {
 // CreateContainer creates a new container using docker create
 func (d *DockerCLIClient) CreateContainer(ctx context.Context, config *ContainerConfig) (string, error) {
 	args := []string{"create"}
-	
+
 	// Add name
 	if config.Name != "" {
 		args = append(args, "--name", config.Name)
 	}
-	
+
 	// Add network mode
 	if config.NetworkMode != "" {
 		args = append(args, "--network", config.NetworkMode)
 	}
-	
+
 	// Add restart policy
 	if config.RestartPolicy != "" && config.RestartPolicy != "no" {
 		args = append(args, "--restart", config.RestartPolicy)
 	}
-	
+
 	// Add labels
 	for k, v := range config.Labels {
 		args = append(args, "--label", fmt.Sprintf("%s=%s", k, v))
 	}
-	
+
 	// Add environment variables
 	for _, env := range config.Environment {
 		args = append(args, "-e", env)
 	}
-	
+
 	// Add volume mounts
 	d.logger.Debug("Adding volumes to container",
 		zap.String("name", config.Name),
 		zap.Int("count", len(config.Volumes)))
-		
+
 	for _, vol := range config.Volumes {
 		hostPath := vol.HostPath
 		// Expand environment variables
 		hostPath = os.ExpandEnv(hostPath)
-		
+
 		// Handle $HOME specially if not in environment
 		if strings.Contains(hostPath, "$HOME") {
 			home, _ := os.UserHomeDir()
 			hostPath = strings.ReplaceAll(hostPath, "$HOME", home)
 		}
-		
+
 		// Handle $PWD if not in environment
 		if strings.Contains(hostPath, "$PWD") {
 			pwd, _ := os.Getwd()
 			hostPath = strings.ReplaceAll(hostPath, "$PWD", pwd)
 		}
-		
+
 		mount := fmt.Sprintf("%s:%s", hostPath, vol.ContainerPath)
 		if vol.ReadOnly {
 			mount += ":ro"
 		}
 		args = append(args, "-v", mount)
 	}
-	
+
 	// Add port mappings
 	for _, port := range config.Ports {
 		portMap := fmt.Sprintf("%d:%d", port.HostPort, port.ContainerPort)
@@ -134,15 +134,15 @@ func (d *DockerCLIClient) CreateContainer(ctx context.Context, config *Container
 		}
 		args = append(args, "-p", portMap)
 	}
-	
+
 	// Add image
 	args = append(args, config.Image)
-	
+
 	// Add command
 	if len(config.Command) > 0 {
 		args = append(args, config.Command...)
 	}
-	
+
 	// Run docker create
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	d.logger.Debug("Docker create command",
@@ -154,14 +154,14 @@ func (d *DockerCLIClient) CreateContainer(ctx context.Context, config *Container
 		}
 		return "", fmt.Errorf("docker create failed: %w", err)
 	}
-	
+
 	// Extract container ID from output
 	containerID := strings.TrimSpace(string(output))
 
 	d.logger.Info("Created container",
 		zap.String("id", safeContainerIDPrefix(containerID)),
 		zap.String("image", config.Image))
-	
+
 	return containerID, nil
 }
 
@@ -209,13 +209,13 @@ func (d *DockerCLIClient) WaitContainer(ctx context.Context, containerID string)
 	if err != nil {
 		return -1, fmt.Errorf("failed to wait for container: %w", err)
 	}
-	
+
 	// Parse exit code
 	var exitCode int
 	if _, err := fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &exitCode); err != nil {
 		return -1, fmt.Errorf("failed to parse exit code: %w", err)
 	}
-	
+
 	return exitCode, nil
 }
 
@@ -226,7 +226,7 @@ func (d *DockerCLIClient) InspectContainer(ctx context.Context, containerID stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
-	
+
 	// For now, return basic info
 	// In a real implementation, we would parse the JSON output
 	info := &ContainerInfo{
@@ -237,7 +237,7 @@ func (d *DockerCLIClient) InspectContainer(ctx context.Context, containerID stri
 			Running: true,
 		},
 	}
-	
+
 	// Check if container is actually running
 	statusCmd := exec.CommandContext(ctx, "docker", "ps", "-q", "--filter", fmt.Sprintf("id=%s", containerID))
 	statusOutput, _ := statusCmd.Output()
@@ -245,7 +245,7 @@ func (d *DockerCLIClient) InspectContainer(ctx context.Context, containerID stri
 		info.State.Running = false
 		info.State.Status = "stopped"
 	}
-	
+
 	return info, nil
 }
 

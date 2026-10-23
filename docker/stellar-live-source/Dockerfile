@@ -11,6 +11,14 @@
 
 FROM scratch
 
+# BUILD-4: OCI annotations so an image can be traced back to its source.
+ARG VERSION=dev
+ARG REVISION=unknown
+LABEL org.opencontainers.image.source="https://github.com/withObsrvr/flowctl" \
+      org.opencontainers.image.licenses="MPL-2.0" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.version="${VERSION}"
+
 # Copy CA certificates for HTTPS connections (needed for Stellar RPC/Horizon)
 COPY --from=alpine:latest /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
@@ -20,6 +28,10 @@ COPY go/bin/stellar-live-source /component
 
 # Copy metadata (must be at /metadata.json for flowctl resolver)
 COPY metadata.json /metadata.json
+
+# BUILD-4: never run as root. A numeric UID needs no /etc/passwd entry, which
+# a scratch image does not have.
+USER 65532:65532
 
 # The binary is the entrypoint
 ENTRYPOINT ["/component"]

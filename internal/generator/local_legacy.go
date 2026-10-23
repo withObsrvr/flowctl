@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
-	
+
 	"github.com/withobsrvr/flowctl/internal/model"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
@@ -232,7 +232,7 @@ func (g *LegacyLocalGenerator) Generate(pipeline *model.Pipeline, opts model.Tra
 	for i, proc := range pipeline.Spec.Processors {
 		procID := sanitizeID(proc.ID)
 		processorIDs[i] = procID
-		
+
 		// Determine dependencies
 		var dependencies []string
 		if len(proc.Inputs) > 0 {
@@ -245,7 +245,7 @@ func (g *LegacyLocalGenerator) Generate(pipeline *model.Pipeline, opts model.Tra
 			// Default to depending on all sources
 			dependencies = sourceIDs
 		}
-		
+
 		procComponent := buildLocalComponent(procID, proc.ID, "processor", proc, dependencies)
 		runConfig.Components = append(runConfig.Components, procComponent)
 	}
@@ -253,7 +253,7 @@ func (g *LegacyLocalGenerator) Generate(pipeline *model.Pipeline, opts model.Tra
 	// Process sinks
 	for _, sink := range pipeline.Spec.Sinks {
 		sinkID := sanitizeID(sink.ID)
-		
+
 		// Determine dependencies
 		var dependencies []string
 		if len(sink.Inputs) > 0 {
@@ -269,7 +269,7 @@ func (g *LegacyLocalGenerator) Generate(pipeline *model.Pipeline, opts model.Tra
 			// If no processors, depend on sources
 			dependencies = sourceIDs
 		}
-		
+
 		sinkComponent := buildLocalComponent(sinkID, sink.ID, "sink", sink, dependencies)
 		runConfig.Components = append(runConfig.Components, sinkComponent)
 	}
@@ -412,8 +412,8 @@ func buildLocalComponent(id, name, cType string, component model.Component, depe
 
 		// Format full health check URL
 		if !strings.HasPrefix(localComponent.HealthCheck, "http") {
-			localComponent.HealthCheck = fmt.Sprintf("http://localhost:%d%s", 
-				localComponent.HealthCheckPort, 
+			localComponent.HealthCheck = fmt.Sprintf("http://localhost:%d%s",
+				localComponent.HealthCheckPort,
 				localComponent.HealthCheck)
 		}
 	}

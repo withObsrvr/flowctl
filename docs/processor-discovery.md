@@ -82,7 +82,7 @@ flowctl processors find [flags]
 ./bin/flowctl processors find --input stellar.ledger.v1
 
 # Find processors that produce token.transfer events
-./bin/flowctl processors find --output stellar.token.transfer.v1
+./bin/flowctl processors find --output-type stellar.token.transfer.v1
 
 # Find processors for a specific network
 ./bin/flowctl processors find --metadata network=testnet

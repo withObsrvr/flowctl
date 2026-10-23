@@ -1,0 +1,22 @@
+version: v2
+
+# buf is the single generator for this repo. Previously `make generate` shelled
+# out to a locally installed protoc, so the checked-in output depended on
+# whichever plugin versions a given developer happened to have — which made the
+# "generated code is current" check in CI unstable.
+#
+# Plugin versions are pinned for the same reason the Go toolchain is (BUILD-2):
+# regenerating must produce the same bytes everywhere. Bumping one is a normal
+# dependency update, and the resulting diff should be committed with it.
+managed:
+  enabled: false
+
+plugins:
+  - remote: buf.build/protocolbuffers/go:v1.36.12
+    out: .
+    opt:
+      - paths=source_relative
+  - remote: buf.build/grpc/go:v1.6.2
+    out: .
+    opt:
+      - paths=source_relative

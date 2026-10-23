@@ -3,15 +3,104 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/withobsrvr/flowctl/internal/cliout"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
 	flowctlpb "github.com/withobsrvr/flowctl/proto"
 )
+
+// Schema identifiers for this command group's machine-readable output.
+const (
+	chunkListSchema = "flowctl.chunk_run_list.v1"
+	chunkSchema     = "flowctl.chunk_run.v1"
+)
+
+// chunkRow converts a chunk run into a record. Machine output carries the
+// numbers and maps as themselves; the table condenses them.
+func chunkRow(chunk *flowctlpb.ChunkRun) cliout.Row {
+	row := cliout.Row{
+		"chunk_id":        chunk.GetChunkId(),
+		"pipeline_run_id": chunk.GetPipelineRunId(),
+		"component_id":    chunk.GetComponentId(),
+		"chunk_start":     chunk.GetChunkStart(),
+		"chunk_end":       chunk.GetChunkEnd(),
+		"attempt":         chunk.GetAttempt(),
+		"status":          formatChunkStatus(chunk.GetStatus()),
+		"phase":           chunk.GetPhase(),
+		"total_rows":      totalRows(chunk.GetRowCounts()),
+	}
+	if chunk.GetFailureClass() != flowctlpb.FailureClass_FAILURE_CLASS_UNKNOWN {
+		row["failure_class"] = formatFailureClass(chunk.GetFailureClass())
+	}
+	if v := chunk.GetError(); v != "" {
+		row["error"] = v
+	}
+	if v := chunk.GetRecommendedAction(); v != "" {
+		row["recommended_action"] = v
+	}
+	if ts := chunk.GetStartedAt(); ts != nil {
+		row["started_at"] = ts.AsTime()
+	}
+	if ts := chunk.GetCompletedAt(); ts != nil {
+		row["completed_at"] = ts.AsTime()
+	}
+	if ts := chunk.GetVerifiedAt(); ts != nil {
+		row["verified_at"] = ts.AsTime()
+	}
+	if len(chunk.GetRowCounts()) > 0 {
+		row["row_counts"] = chunk.GetRowCounts()
+	}
+	if len(chunk.GetVerification()) > 0 {
+		row["verification"] = chunk.GetVerification()
+	}
+	return row
+}
+
+// chunkRange renders the ledger range for a table cell.
+func chunkRange(row cliout.Row) string {
+	return fmt.Sprintf("%v-%v", row["chunk_start"], row["chunk_end"])
+}
+
+// sortedCounts renders an int64 map for a detail view, keys sorted so output
+// is stable between runs.
+func sortedCounts(v any) string {
+	m, ok := v.(map[string]int64)
+	if !ok || len(m) == 0 {
+		return "-"
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", cliout.Value(k), m[k]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// sortedStrings renders a string map for a detail view, keys sorted.
+func sortedStrings(v any) string {
+	m, ok := v.(map[string]string)
+	if !ok || len(m) == 0 {
+		return "-"
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, cliout.Value(k)+"="+cliout.Value(m[k]))
+	}
+	return strings.Join(parts, ", ")
+}
 
 var (
 	chunksRunID       string
@@ -63,13 +152,11 @@ var chunksListCmd = &cobra.Command{
 			Limit:         chunksLimit,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to list chunk runs: %w", err)
+			return err
 		}
 
-		if len(resp.Chunks) == 0 {
-			fmt.Println("No chunk runs found")
-			return nil
-		}
+		// No sanitize.Message here: cliout strips control characters as it
+		// formats each cell, and machine output keeps the original bytes.
 
 		sort.Slice(resp.Chunks, func(i, j int) bool {
 			if resp.Chunks[i].ChunkStart == resp.Chunks[j].ChunkStart {
@@ -78,26 +165,45 @@ var chunksListCmd = &cobra.Command{
 			return resp.Chunks[i].ChunkStart < resp.Chunks[j].ChunkStart
 		})
 
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "CHUNK ID\tCOMPONENT\tRANGE\tATTEMPT\tSTATUS\tFAILURE\tPHASE\tROWS")
+		rows := make([]cliout.Row, 0, len(resp.Chunks))
 		for _, chunk := range resp.Chunks {
-			fmt.Fprintf(w, "%s\t%s\t%d-%d\t%d\t%s\t%s\t%s\t%d\n",
-				chunk.ChunkId,
-				chunk.ComponentId,
-				chunk.ChunkStart,
-				chunk.ChunkEnd,
-				chunk.Attempt,
-				formatChunkStatus(chunk.Status),
-				formatFailureClass(chunk.FailureClass),
-				chunk.Phase,
-				totalRows(chunk.RowCounts),
-			)
+			rows = append(rows, chunkRow(chunk))
 		}
-		w.Flush()
 
-		fmt.Printf("\n%d chunk run(s) found\n", len(resp.Chunks))
+		p := cliout.FromContext(cmd.Context())
+		if err := p.List(cliout.List{
+			Schema:     chunkListSchema,
+			ItemSchema: chunkSchema,
+			Columns: []cliout.Column{
+				{Header: "Chunk ID", Key: "chunk_id"},
+				{Header: "Component", Key: "component_id"},
+				{Header: "Range", Key: "_range"},
+				{Header: "Attempt", Key: "attempt"},
+				{Header: "Status", Key: "status"},
+				{Header: "Failure", Key: "failure_class"},
+				{Header: "Phase", Key: "phase"},
+				{Header: "Rows", Key: "total_rows"},
+			},
+			Rows:  withRange(rows),
+			Empty: "No chunk runs found.",
+		}); err != nil {
+			return err
+		}
+
+		if !p.Machine() && len(rows) > 0 {
+			p.Info("\n%d chunk run(s) found", len(rows))
+		}
 		return nil
 	},
+}
+
+// withRange adds the derived display-only range cell. It is not part of the
+// record: machine consumers get chunk_start and chunk_end as numbers.
+func withRange(rows []cliout.Row) []cliout.Row {
+	for _, row := range rows {
+		row["_range"] = chunkRange(row)
+	}
+	return rows
 }
 
 var chunksShowCmd = &cobra.Command{
@@ -116,57 +222,37 @@ var chunksShowCmd = &cobra.Command{
 
 		chunk, err := client.GetChunkRun(ctx, &flowctlpb.GetChunkRunRequest{ChunkId: args[0]})
 		if err != nil {
-			return fmt.Errorf("failed to get chunk run: %w", err)
+			return exitcode.Errorf(exitcode.NotFound,
+				"chunk run %q not found: %v", args[0], err)
 		}
 
-		fmt.Printf("Chunk ID:      %s\n", chunk.ChunkId)
-		fmt.Printf("Run ID:        %s\n", chunk.PipelineRunId)
-		fmt.Printf("Component:     %s\n", chunk.ComponentId)
-		fmt.Printf("Range:         %d-%d\n", chunk.ChunkStart, chunk.ChunkEnd)
-		fmt.Printf("Attempt:       %d\n", chunk.Attempt)
-		fmt.Printf("Status:        %s\n", formatChunkStatus(chunk.Status))
-		fmt.Printf("Phase:         %s\n", chunk.Phase)
-		if chunk.FailureClass != flowctlpb.FailureClass_FAILURE_CLASS_UNKNOWN {
-			fmt.Printf("Failure:       %s\n", formatFailureClass(chunk.FailureClass))
-		}
-		if chunk.Error != "" {
-			fmt.Printf("Error:         %s\n", chunk.Error)
-		}
-		if chunk.RecommendedAction != "" {
-			fmt.Printf("Next action:   %s\n", chunk.RecommendedAction)
-		}
-		if chunk.StartedAt != nil {
-			fmt.Printf("Started:       %s\n", chunk.StartedAt.AsTime().Format("2006-01-02 15:04:05 MST"))
-		}
-		if chunk.CompletedAt != nil {
-			fmt.Printf("Completed:     %s\n", chunk.CompletedAt.AsTime().Format("2006-01-02 15:04:05 MST"))
-		}
-		if chunk.VerifiedAt != nil {
-			fmt.Printf("Verified:      %s\n", chunk.VerifiedAt.AsTime().Format("2006-01-02 15:04:05 MST"))
-		}
-		if len(chunk.RowCounts) > 0 {
-			fmt.Println("\nRow counts:")
-			keys := make([]string, 0, len(chunk.RowCounts))
-			for k := range chunk.RowCounts {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				fmt.Printf("  %s: %d\n", k, chunk.RowCounts[k])
-			}
-		}
-		if len(chunk.Verification) > 0 {
-			fmt.Println("\nVerification:")
-			keys := make([]string, 0, len(chunk.Verification))
-			for k := range chunk.Verification {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				fmt.Printf("  %s: %s\n", k, chunk.Verification[k])
-			}
-		}
-		return nil
+		// No sanitize.Message here: cliout strips control characters as it
+		// formats each cell, and machine output keeps the original bytes.
+
+		row := chunkRow(chunk)
+		row["_range"] = chunkRange(row)
+
+		return cliout.FromContext(cmd.Context()).Object(cliout.Object{
+			Schema: chunkSchema,
+			Fields: []cliout.Field{
+				{Label: "Chunk ID", Key: "chunk_id"},
+				{Label: "Run ID", Key: "pipeline_run_id"},
+				{Label: "Component", Key: "component_id"},
+				{Label: "Range", Key: "_range"},
+				{Label: "Attempt", Key: "attempt"},
+				{Label: "Status", Key: "status"},
+				{Label: "Phase", Key: "phase"},
+				{Label: "Failure", Key: "failure_class"},
+				{Label: "Error", Key: "error"},
+				{Label: "Next action", Key: "recommended_action"},
+				{Label: "Started", Key: "started_at"},
+				{Label: "Completed", Key: "completed_at"},
+				{Label: "Verified", Key: "verified_at"},
+				{Label: "Row counts", Key: "row_counts", Format: sortedCounts},
+				{Label: "Verification", Key: "verification", Format: sortedStrings},
+			},
+			Data: row,
+		})
 	},
 }
 
@@ -191,13 +277,6 @@ func formatFailureClass(failure flowctlpb.FailureClass) string {
 		return "-"
 	}
 	return strings.ToLower(strings.TrimPrefix(failure.String(), "FAILURE_CLASS_"))
-}
-
-func shortChunkID(chunkID string) string {
-	if len(chunkID) <= 18 {
-		return chunkID
-	}
-	return chunkID[:18]
 }
 
 func totalRows(rows map[string]int64) int64 {

@@ -35,10 +35,10 @@ type LocalExecutionOptions struct {
 
 // DockerComposeConfigWithProfiles extends DockerComposeConfig to use services with profiles
 type DockerComposeConfigWithProfiles struct {
-	Version  string                                `yaml:"version"`
+	Version  string                                      `yaml:"version"`
 	Services map[string]DockerComposeServiceWithProfiles `yaml:"services"`
-	Networks map[string]DockerComposeNetwork       `yaml:"networks,omitempty"`
-	Volumes  map[string]interface{}                `yaml:"volumes,omitempty"`
+	Networks map[string]DockerComposeNetwork             `yaml:"networks,omitempty"`
+	Volumes  map[string]interface{}                      `yaml:"volumes,omitempty"`
 }
 
 // Generate produces Docker Compose configuration for local execution
@@ -72,13 +72,13 @@ func (g *DockerComposeLocalGenerator) Generate(pipeline *model.Pipeline, opts mo
 			"local-data": map[string]interface{}{
 				"labels": map[string]string{
 					"com.obsrvr.flow.pipeline": pipelineName,
-					"com.obsrvr.flow.local": "true",
+					"com.obsrvr.flow.local":    "true",
 				},
 			},
 			"local-logs": map[string]interface{}{
 				"labels": map[string]string{
 					"com.obsrvr.flow.pipeline": pipelineName,
-					"com.obsrvr.flow.local": "true",
+					"com.obsrvr.flow.local":    "true",
 				},
 			},
 		},
@@ -105,7 +105,7 @@ func (g *DockerComposeLocalGenerator) Generate(pipeline *model.Pipeline, opts mo
 	// Process processors
 	for _, proc := range pipeline.Spec.Processors {
 		service := createLocalDockerComposeService(proc, pipelineName, localOpts, "processor")
-		
+
 		// Add dependencies
 		if len(proc.Inputs) > 0 {
 			service.DependsOn = make([]string, len(proc.Inputs))
@@ -113,14 +113,14 @@ func (g *DockerComposeLocalGenerator) Generate(pipeline *model.Pipeline, opts mo
 				service.DependsOn[i] = sanitizeLocalServiceName(input)
 			}
 		}
-		
+
 		composeConfig.Services[sanitizeLocalServiceName(proc.ID)] = service
 	}
 
 	// Process sinks
 	for _, sink := range pipeline.Spec.Sinks {
 		service := createLocalDockerComposeService(sink, pipelineName, localOpts, "sink")
-		
+
 		// Add dependencies
 		if len(sink.Inputs) > 0 {
 			service.DependsOn = make([]string, len(sink.Inputs))
@@ -128,7 +128,7 @@ func (g *DockerComposeLocalGenerator) Generate(pipeline *model.Pipeline, opts mo
 				service.DependsOn[i] = sanitizeLocalServiceName(input)
 			}
 		}
-		
+
 		composeConfig.Services[sanitizeLocalServiceName(sink.ID)] = service
 	}
 
@@ -137,7 +137,7 @@ func (g *DockerComposeLocalGenerator) Generate(pipeline *model.Pipeline, opts mo
 	if opts.OutputPath != "" {
 		envFilePath = filepath.Join(filepath.Dir(opts.OutputPath), localOpts.EnvFile)
 	}
-	
+
 	if err := generateEnvFile(pipeline, pipelineName, envFilePath, localOpts); err != nil {
 		logger.Warn("Failed to write environment file", zap.Error(err))
 	}
@@ -215,12 +215,12 @@ func (g *DockerComposeLocalGenerator) Validate(pipeline *model.Pipeline) error {
 }
 
 // createLocalDockerComposeService creates a Docker Compose service for local execution
-func createLocalDockerComposeService(component model.Component, pipelineName string, 
+func createLocalDockerComposeService(component model.Component, pipelineName string,
 	opts LocalExecutionOptions, componentType string) DockerComposeServiceWithProfiles {
 
 	sanitizedID := sanitizeLocalServiceName(component.ID)
 	containerName := fmt.Sprintf("local-%s-%s", pipelineName, sanitizedID)
-	
+
 	// Create base service
 	service := DockerComposeServiceWithProfiles{
 		DockerComposeService: DockerComposeService{
@@ -237,7 +237,7 @@ func createLocalDockerComposeService(component model.Component, pipelineName str
 				"com.obsrvr.flow.local":     "true",
 			},
 		},
-		Profiles:    []string{"local"},
+		Profiles: []string{"local"},
 	}
 
 	// Add environment variables for configuration
@@ -279,11 +279,11 @@ func createLocalDockerComposeService(component model.Component, pipelineName str
 			} else {
 				portStr = fmt.Sprintf("%d:%d", port.ContainerPort, port.ContainerPort)
 			}
-			
+
 			if port.Protocol != "" && strings.ToLower(port.Protocol) != "tcp" {
 				portStr = fmt.Sprintf("%s/%s", portStr, strings.ToLower(port.Protocol))
 			}
-			
+
 			service.Ports = append(service.Ports, portStr)
 		}
 	}
@@ -309,7 +309,7 @@ func createLocalDockerComposeService(component model.Component, pipelineName str
 	// Add health check if specified
 	if component.HealthCheck != "" {
 		healthPort := component.HealthPort
-		
+
 		// Default to a reasonable port if not specified
 		if healthPort == 0 {
 			// Try to use the first port if available
@@ -348,12 +348,12 @@ func sanitizeLocalServiceName(id string) string {
 		}
 		return '_'
 	}, id)
-	
+
 	// Ensure the name starts with a letter or underscore
 	if len(sanitized) > 0 && !((sanitized[0] >= 'a' && sanitized[0] <= 'z') || (sanitized[0] >= 'A' && sanitized[0] <= 'Z') || sanitized[0] == '_') {
 		sanitized = "_" + sanitized
 	}
-	
+
 	return sanitized
 }
 
@@ -362,48 +362,48 @@ func generateEnvFile(pipeline *model.Pipeline, pipelineName, envFilePath string,
 	// Create environment variables map
 	envVars := map[string]string{
 		"FLOW_PIPELINE_NAME": pipelineName,
-		"FLOW_LOG_DIR": opts.LogDirectory,
+		"FLOW_LOG_DIR":       opts.LogDirectory,
 	}
-	
+
 	// Add component-specific environment variables
 	for _, src := range pipeline.Spec.Sources {
 		prefix := fmt.Sprintf("FLOW_SOURCE_%s_", strings.ToUpper(sanitizeLocalServiceName(src.ID)))
 		envVars[prefix+"ID"] = src.ID
-		
+
 		if src.Env != nil {
 			for key, value := range src.Env {
 				envVars[key] = value
 			}
 		}
 	}
-	
+
 	for _, proc := range pipeline.Spec.Processors {
 		prefix := fmt.Sprintf("FLOW_PROCESSOR_%s_", strings.ToUpper(sanitizeLocalServiceName(proc.ID)))
 		envVars[prefix+"ID"] = proc.ID
-		
+
 		if proc.Env != nil {
 			for key, value := range proc.Env {
 				envVars[key] = value
 			}
 		}
 	}
-	
+
 	for _, sink := range pipeline.Spec.Sinks {
 		prefix := fmt.Sprintf("FLOW_SINK_%s_", strings.ToUpper(sanitizeLocalServiceName(sink.ID)))
 		envVars[prefix+"ID"] = sink.ID
-		
+
 		if sink.Env != nil {
 			for key, value := range sink.Env {
 				envVars[key] = value
 			}
 		}
 	}
-	
+
 	// Build env file content
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("# Environment variables for %s\n", pipelineName))
 	sb.WriteString("# Generated by flowctl\n\n")
-	
+
 	sb.WriteString("# Global environment variables\n")
 	keys := make([]string, 0, len(envVars))
 	for key := range envVars {
@@ -413,17 +413,17 @@ func generateEnvFile(pipeline *model.Pipeline, pipelineName, envFilePath string,
 	for _, key := range keys {
 		sb.WriteString(fmt.Sprintf("%s=%s\n", key, envVars[key]))
 	}
-	
+
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(envFilePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory for env file: %w", err)
 	}
-	
+
 	// Write env file
 	if err := os.WriteFile(envFilePath, []byte(sb.String()), 0644); err != nil {
 		return fmt.Errorf("failed to write env file: %w", err)
 	}
-	
+
 	return nil
 }

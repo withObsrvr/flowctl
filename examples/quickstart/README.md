@@ -60,7 +60,7 @@ flowctl init --preset testnet-duckdb
 flowctl init --non-interactive --network testnet --destination duckdb
 
 # Create a mainnet pipeline with PostgreSQL sink
-flowctl init --non-interactive --network mainnet --destination postgres -o mainnet-pipeline.yaml
+flowctl init --non-interactive --network mainnet --destination postgres -f mainnet-pipeline.yaml
 ```
 
 ## Run the Pipeline

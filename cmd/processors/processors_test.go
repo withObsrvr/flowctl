@@ -6,82 +6,57 @@ import (
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
 )
 
-func TestFormatEventTypes(t *testing.T) {
+func TestSummariseTypes(t *testing.T) {
 	tests := []struct {
 		name     string
-		types    []string
+		types    any
 		expected string
 	}{
+		{"nil", nil, "-"},
+		{"empty", []string{}, "-"},
+		{"single type", []string{"stellar.ledger.v1"}, "stellar.ledger.v1"},
 		{
-			name:     "empty",
-			types:    []string{},
-			expected: "-",
-		},
-		{
-			name:     "single type",
-			types:    []string{"stellar.ledger.v1"},
-			expected: "stellar.ledger.v1",
-		},
-		{
-			name:     "multiple types",
+			name:     "multiple types are condensed for the table",
 			types:    []string{"stellar.ledger.v1", "stellar.transaction.v1", "stellar.event.v1"},
 			expected: "stellar.ledger.v1 (+2)",
+		},
+		{
+			// CLI-22: a type string comes from a registered component.
+			name:     "control characters are stripped",
+			types:    []string{"evil\x1b[2K.v1"},
+			expected: "evil[2K.v1",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := formatEventTypes(tt.types)
-			if result != tt.expected {
-				t.Errorf("formatEventTypes() = %v, want %v", result, tt.expected)
+			if got := summariseTypes(tt.types); got != tt.expected {
+				t.Errorf("summariseTypes() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
 }
 
-func TestFormatHealthStatus(t *testing.T) {
+func TestHealthName(t *testing.T) {
+	// These strings appear in --output json and are therefore a contract:
+	// changing one is a breaking change under VER-3.
 	tests := []struct {
 		name     string
 		status   flowctlv1.HealthStatus
 		expected string
 	}{
-		{
-			name:     "healthy",
-			status:   flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY,
-			expected: "✓ healthy",
-		},
-		{
-			name:     "unhealthy",
-			status:   flowctlv1.HealthStatus_HEALTH_STATUS_UNHEALTHY,
-			expected: "✗ unhealthy",
-		},
-		{
-			name:     "degraded",
-			status:   flowctlv1.HealthStatus_HEALTH_STATUS_DEGRADED,
-			expected: "⚠ degraded",
-		},
-		{
-			name:     "starting",
-			status:   flowctlv1.HealthStatus_HEALTH_STATUS_STARTING,
-			expected: "⟳ starting",
-		},
-		{
-			name:     "stopping",
-			status:   flowctlv1.HealthStatus_HEALTH_STATUS_STOPPING,
-			expected: "⊗ stopping",
-		},
-		{
-			name:     "unknown",
-			status:   flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN,
-			expected: "? unknown",
-		},
+		{"healthy", flowctlv1.HealthStatus_HEALTH_STATUS_HEALTHY, "healthy"},
+		{"unhealthy", flowctlv1.HealthStatus_HEALTH_STATUS_UNHEALTHY, "unhealthy"},
+		{"degraded", flowctlv1.HealthStatus_HEALTH_STATUS_DEGRADED, "degraded"},
+		{"starting", flowctlv1.HealthStatus_HEALTH_STATUS_STARTING, "starting"},
+		{"stopping", flowctlv1.HealthStatus_HEALTH_STATUS_STOPPING, "stopping"},
+		{"unknown", flowctlv1.HealthStatus_HEALTH_STATUS_UNKNOWN, "unknown"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := formatHealthStatus(tt.status)
-			if result != tt.expected {
-				t.Errorf("formatHealthStatus() = %v, want %v", result, tt.expected)
+			if got := healthName(tt.status); got != tt.expected {
+				t.Errorf("healthName() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
@@ -162,43 +137,6 @@ func TestMatchesFilters(t *testing.T) {
 			result := matchesFilters(tt.comp, tt.inputType, tt.outputType)
 			if result != tt.expected {
 				t.Errorf("matchesFilters() = %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestTruncateString(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		maxLen   int
-		expected string
-	}{
-		{
-			name:     "no truncation needed",
-			input:    "short",
-			maxLen:   10,
-			expected: "short",
-		},
-		{
-			name:     "truncation needed",
-			input:    "this is a very long string",
-			maxLen:   10,
-			expected: "this is...",
-		},
-		{
-			name:     "exact length",
-			input:    "exactly10!",
-			maxLen:   10,
-			expected: "exactly10!",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := truncateString(tt.input, tt.maxLen)
-			if result != tt.expected {
-				t.Errorf("truncateString() = %v, want %v", result, tt.expected)
 			}
 		})
 	}

@@ -25,19 +25,19 @@ type DockerOrchestrator struct {
 // NewDockerOrchestrator creates a new Docker orchestrator
 func NewDockerOrchestrator(controlPlaneEndpoint string) (*DockerOrchestrator, error) {
 	log := logger.GetLogger().Named("docker-orchestrator")
-	
+
 	// Create Docker client
 	dockerClient, err := runner.NewDockerClient(log)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
 	}
-	
+
 	// Create control plane client
 	controlPlaneClient, err := runner.NewControlPlaneClient(controlPlaneEndpoint, log)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create control plane client: %w", err)
 	}
-	
+
 	return &DockerOrchestrator{
 		controlPlaneEndpoint: controlPlaneEndpoint,
 		pipelines:            make(map[string]*runner.PipelineRunner),
@@ -56,20 +56,20 @@ func (o *DockerOrchestrator) GetType() string {
 func (o *DockerOrchestrator) StartComponent(ctx context.Context, component *Component) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	
+
 	// Check if component is already running
 	if _, exists := o.pipelines[component.ID]; exists {
 		return fmt.Errorf("component %s is already running", component.ID)
 	}
-	
+
 	o.logger.Info("Starting Docker component",
 		zap.String("id", component.ID),
 		zap.String("type", component.Type),
 		zap.String("image", component.Image))
-	
+
 	// Convert orchestrator component to model component
 	modelComponent := o.convertToModelComponent(component)
-	
+
 	// Add control plane endpoint to environment if it's a pipeline type
 	if component.Type == "pipeline" {
 		if modelComponent.Env == nil {
@@ -83,18 +83,18 @@ func (o *DockerOrchestrator) StartComponent(ctx context.Context, component *Comp
 			}
 		}
 	}
-	
+
 	// Create pipeline runner for the component
 	pipelineRunner := runner.NewPipelineRunner(modelComponent, o.dockerClient, o.controlPlaneClient, o.logger)
-	
+
 	// Start the component
 	if err := pipelineRunner.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start component %s: %w", component.ID, err)
 	}
-	
+
 	// Store the runner
 	o.pipelines[component.ID] = pipelineRunner
-	
+
 	return nil
 }
 
@@ -102,12 +102,12 @@ func (o *DockerOrchestrator) StartComponent(ctx context.Context, component *Comp
 func (o *DockerOrchestrator) StopComponent(ctx context.Context, componentID string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	
+
 	runner, exists := o.pipelines[componentID]
 	if !exists {
 		return &ComponentNotFoundError{ComponentID: componentID}
 	}
-	
+
 	// Stop the component
 	if err := runner.Stop(ctx); err != nil {
 		return &OrchestratorError{
@@ -116,7 +116,7 @@ func (o *DockerOrchestrator) StopComponent(ctx context.Context, componentID stri
 			Err:         err,
 		}
 	}
-	
+
 	delete(o.pipelines, componentID)
 	return nil
 }
@@ -125,21 +125,21 @@ func (o *DockerOrchestrator) StopComponent(ctx context.Context, componentID stri
 func (o *DockerOrchestrator) StopAll(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	
+
 	var errors []error
 	for id, runner := range o.pipelines {
 		if err := runner.Stop(ctx); err != nil {
 			errors = append(errors, fmt.Errorf("failed to stop component %s: %w", id, err))
 		}
 	}
-	
+
 	// Clear all pipelines
 	o.pipelines = make(map[string]*runner.PipelineRunner)
-	
+
 	if len(errors) > 0 {
 		return fmt.Errorf("errors stopping components: %v", errors)
 	}
-	
+
 	return nil
 }
 
@@ -147,12 +147,12 @@ func (o *DockerOrchestrator) StopAll(ctx context.Context) error {
 func (o *DockerOrchestrator) GetStatus(ctx context.Context, componentID string) (*ComponentStatus, error) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
-	
+
 	runner, exists := o.pipelines[componentID]
 	if !exists {
 		return nil, &ComponentNotFoundError{ComponentID: componentID}
 	}
-	
+
 	// For now, return a basic status
 	// TODO: Implement proper status retrieval from Docker
 	status := &ComponentStatus{
@@ -164,7 +164,7 @@ func (o *DockerOrchestrator) GetStatus(ctx context.Context, componentID string) 
 			"image": runner.Pipeline.Image,
 		},
 	}
-	
+
 	return status, nil
 }
 
@@ -172,7 +172,7 @@ func (o *DockerOrchestrator) GetStatus(ctx context.Context, componentID string) 
 func (o *DockerOrchestrator) GetAllStatus(ctx context.Context) (map[string]*ComponentStatus, error) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
-	
+
 	statuses := make(map[string]*ComponentStatus)
 	for id := range o.pipelines {
 		status, err := o.GetStatus(ctx, id)
@@ -181,7 +181,7 @@ func (o *DockerOrchestrator) GetAllStatus(ctx context.Context) (map[string]*Comp
 		}
 		statuses[id] = status
 	}
-	
+
 	return statuses, nil
 }
 
@@ -189,12 +189,12 @@ func (o *DockerOrchestrator) GetAllStatus(ctx context.Context) (map[string]*Comp
 func (o *DockerOrchestrator) IsHealthy(ctx context.Context, componentID string) (bool, error) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
-	
+
 	_, exists := o.pipelines[componentID]
 	if !exists {
 		return false, &ComponentNotFoundError{ComponentID: componentID}
 	}
-	
+
 	// TODO: Implement actual health checking
 	return true, nil
 }
@@ -204,7 +204,7 @@ func (o *DockerOrchestrator) WaitForHealthy(ctx context.Context, componentID str
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -213,12 +213,12 @@ func (o *DockerOrchestrator) WaitForHealthy(ctx context.Context, componentID str
 			if time.Now().After(deadline) {
 				return fmt.Errorf("timeout waiting for component %s to become healthy", componentID)
 			}
-			
+
 			healthy, err := o.IsHealthy(ctx, componentID)
 			if err != nil {
 				return err
 			}
-			
+
 			if healthy {
 				return nil
 			}
@@ -230,12 +230,12 @@ func (o *DockerOrchestrator) WaitForHealthy(ctx context.Context, componentID str
 func (o *DockerOrchestrator) GetLogs(ctx context.Context, componentID string, follow bool) (LogStream, error) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
-	
+
 	runner, exists := o.pipelines[componentID]
 	if !exists {
 		return nil, &ComponentNotFoundError{ComponentID: componentID}
 	}
-	
+
 	return runner.GetLogs(ctx, follow)
 }
 
@@ -250,7 +250,7 @@ func (o *DockerOrchestrator) convertToModelComponent(orchComp *Component) model.
 			ReadOnly:      v.ReadOnly,
 		})
 	}
-	
+
 	// Convert ports
 	ports := make([]model.Port, 0, len(orchComp.Ports))
 	for _, p := range orchComp.Ports {
@@ -260,7 +260,7 @@ func (o *DockerOrchestrator) convertToModelComponent(orchComp *Component) model.
 			Protocol:      p.Protocol,
 		})
 	}
-	
+
 	// Use restart policy from component, with defaults based on type
 	restartPolicy := orchComp.RestartPolicy
 	if restartPolicy == "" {
@@ -273,7 +273,7 @@ func (o *DockerOrchestrator) convertToModelComponent(orchComp *Component) model.
 			restartPolicy = "unless-stopped"
 		}
 	}
-	
+
 	return model.Component{
 		ID:            orchComp.ID,
 		Type:          orchComp.Type,

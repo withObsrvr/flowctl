@@ -33,7 +33,7 @@ func (s *MockSink) Connect(cfg map[string]any) error {
 func (s *MockSink) Write(ctx context.Context, msgs []*processor.Message) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	
+
 	s.writeCalled = true
 	s.messages = append(s.messages, msgs)
 	return nil
@@ -52,7 +52,7 @@ func (s *MockSink) Healthy() error {
 func (s *MockSink) Messages() [][]*processor.Message {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	
+
 	result := make([][]*processor.Message, len(s.messages))
 	copy(result, s.messages)
 	return result
@@ -62,7 +62,7 @@ func (s *MockSink) Messages() [][]*processor.Message {
 func (s *MockSink) Stats() map[string]interface{} {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	
+
 	return map[string]interface{}{
 		"connect_called": s.connectCalled,
 		"write_called":   s.writeCalled,

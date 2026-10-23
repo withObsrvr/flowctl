@@ -2,10 +2,10 @@ package sandbox
 
 import (
 	"fmt"
-	"os"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"github.com/withobsrvr/flowctl/internal/cliout"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
 	"github.com/withobsrvr/flowctl/internal/sandbox/runtime"
 	"github.com/withobsrvr/flowctl/internal/utils/logger"
 	"go.uber.org/zap"
@@ -20,60 +20,74 @@ func newStatusCommand() *cobra.Command {
 - Port mappings
 - Service endpoints
 - Resource usage`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus()
+			return runStatus(cliout.FromContext(cmd.Context()))
 		},
 	}
 
 	return cmd
 }
 
-func runStatus() error {
+func runStatus(p *cliout.Printer) error {
 	logger.Info("Checking sandbox status")
 
-	// Get runtime instance
 	rt, err := runtime.GetExistingRuntime()
 	if err != nil {
-		return fmt.Errorf("failed to connect to runtime: %w", err)
+		return exitcode.Errorf(exitcode.Unavailable,
+			"cannot reach the container runtime: %v", err)
 	}
 
-	// Get container status
 	containers, err := rt.ListContainers()
 	if err != nil {
-		return fmt.Errorf("failed to list containers: %w", err)
+		return exitcode.Errorf(exitcode.Unavailable, "failed to list containers: %v", err)
 	}
 
-	if len(containers) == 0 {
-		fmt.Println("No sandbox containers running.")
-		fmt.Println("Use 'flowctl sandbox start' to start the sandbox.")
-		return nil
-	}
-
-	// Display status in table format
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSTATUS\tPORTS\tIMAGE\tUPTIME")
-	fmt.Fprintln(w, "----\t------\t-----\t-----\t------")
-
+	rows := make([]cliout.Row, 0, len(containers))
 	for _, container := range containers {
-		ports := formatPorts(container.Ports)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			container.Name,
-			container.Status,
-			ports,
-			container.Image,
-			container.Uptime,
-		)
+		ports := make([]map[string]any, 0, len(container.Ports))
+		for _, port := range container.Ports {
+			ports = append(ports, map[string]any{
+				"host":      port.Host,
+				"container": port.Container,
+			})
+		}
+		rows = append(rows, cliout.Row{
+			"name":   container.Name,
+			"status": container.Status,
+			"image":  container.Image,
+			"uptime": container.Uptime,
+			"ports":  ports,
+			"_ports": formatPorts(container.Ports),
+		})
 	}
 
-	w.Flush()
+	if err := p.List(cliout.List{
+		Schema:     "flowctl.sandbox_container_list.v1",
+		ItemSchema: "flowctl.sandbox_container.v1",
+		Columns: []cliout.Column{
+			{Header: "Name", Key: "name"},
+			{Header: "Status", Key: "status"},
+			{Header: "Ports", Key: "_ports"},
+			{Header: "Image", Key: "image"},
+			{Header: "Uptime", Key: "uptime"},
+		},
+		Rows:  rows,
+		Empty: "No sandbox containers running.\nUse 'flowctl sandbox start' to start the sandbox.",
+	}); err != nil {
+		return err
+	}
 
-	// Show network information
-	network, err := rt.GetNetworkInfo()
-	if err != nil {
-		logger.Warn("Failed to get network info", zap.Error(err))
-	} else {
-		fmt.Printf("\nNetwork: %s\n", network.Name)
-		fmt.Printf("Subnet: %s\n", network.Subnet)
+	// Network details are context for a person, not part of the container
+	// list, so they go to stderr and are omitted for a program (CLI-5).
+	if !p.Machine() && len(rows) > 0 {
+		network, err := rt.GetNetworkInfo()
+		if err != nil {
+			logger.Warn("Failed to get network info", zap.Error(err))
+		} else {
+			p.Info("\nNetwork: %s", network.Name)
+			p.Info("Subnet: %s", network.Subnet)
+		}
 	}
 
 	return nil

@@ -166,7 +166,7 @@ Let's walk through understanding a simple pipeline. We'll use the generated star
 ### Step 1: Examine the Configuration
 
 ```bash
-flowctl init --preset testnet-duckdb -o /tmp/stellar-pipeline.yaml
+flowctl init --preset testnet-duckdb -f /tmp/stellar-pipeline.yaml
 cat /tmp/stellar-pipeline.yaml
 ```
 
@@ -603,7 +603,7 @@ sinks:
 
 # Translate image-based pipelines to deployment format
 # (the default `flowctl init` starter pipelines are meant to run directly with `flowctl run`)
-./bin/flowctl translate -f image-based-pipeline.yaml -o docker-compose
+./bin/flowctl translate -f image-based-pipeline.yaml -t docker-compose
 
 # Check version
 ./bin/flowctl version

@@ -2,7 +2,8 @@ package processors
 
 import (
 	"context"
-	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -10,6 +11,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	flowctlv1 "github.com/withObsrvr/flow-proto/go/gen/flowctl/v1"
+	"github.com/withobsrvr/flowctl/internal/cliout"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
 )
 
 func newShowCommand() *cobra.Command {
@@ -35,125 +38,101 @@ This command displays full details including:
 }
 
 func runShow(cmd *cobra.Command, args []string) error {
+	p := cliout.FromContext(cmd.Context())
 	processorID := args[0]
 
-	// Connect to control plane
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 	defer cancel()
 
-	conn, err := grpc.DialContext(ctx, endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(endpoint,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		cliout.UnreachableInterceptor(endpoint),
+	)
 	if err != nil {
-		return fmt.Errorf("failed to connect to control plane at %s: %w", endpoint, err)
+		return exitcode.Errorf(exitcode.Unavailable,
+			"cannot reach the control plane at %s: %v", endpoint, err)
 	}
 	defer conn.Close()
 
-	// Create client
 	client := flowctlv1.NewControlPlaneServiceClient(conn)
 
-	// Get component status
 	resp, err := client.GetComponentStatus(ctx, &flowctlv1.ComponentStatusRequest{
 		ServiceId: processorID,
 	})
 	if err != nil {
-		return fmt.Errorf("processor '%s' not found: %w\nHint: Use 'flowctl processors list' to see available processors", processorID, err)
+		return exitcode.Errorf(exitcode.NotFound,
+			"processor %q not found: %v\nHint: run 'flowctl processors list' to see what is registered", processorID, err)
 	}
 
-	// Verify it's a processor
-	if resp.Component == nil {
-		return fmt.Errorf("component '%s' has no information available", processorID)
-	}
+	// No sanitize.Message here: cliout strips control characters as it formats
+	// each cell, and machine output must keep the original bytes (CLI-22).
 
+	if resp.GetComponent() == nil {
+		return exitcode.Errorf(exitcode.NotFound,
+			"component %q has no information available", processorID)
+	}
 	if resp.Component.Type != flowctlv1.ComponentType_COMPONENT_TYPE_PROCESSOR {
-		return fmt.Errorf("component '%s' is not a processor (type: %s)", processorID, resp.Component.Type)
+		return exitcode.Errorf(exitcode.Conflict,
+			"component %q is not a processor (type: %s)", processorID, componentTypeName(resp.Component.Type))
 	}
 
-	// Print detailed information
-	printProcessorDetails(resp)
+	row := componentRow(resp)
+	if len(resp.GetMetrics()) > 0 {
+		row["metrics"] = resp.GetMetrics()
+	}
+	if ts := resp.GetLastHeartbeat(); ts != nil {
+		row["last_heartbeat_age"] = time.Since(ts.AsTime()).Round(time.Second).String()
+	}
 
-	return nil
+	return p.Object(cliout.Object{
+		Schema: processorSchema,
+		Fields: []cliout.Field{
+			{Label: "Processor", Key: "id"},
+			{Label: "Name", Key: "name"},
+			{Label: "Version", Key: "version"},
+			{Label: "Description", Key: "description"},
+			{Label: "Input types", Key: "input_event_types", Format: listLines},
+			{Label: "Output types", Key: "output_event_types", Format: listLines},
+			{Label: "Endpoint", Key: "endpoint"},
+			{Label: "Status", Key: "status"},
+			{Label: "Last heartbeat", Key: "last_heartbeat"},
+			{Label: "Registered at", Key: "registered_at"},
+			{Label: "Metrics", Key: "metrics", Format: mapLines},
+			{Label: "Metadata", Key: "metadata", Format: mapLines},
+		},
+		Data: row,
+	})
 }
 
-func printProcessorDetails(status *flowctlv1.ComponentStatusResponse) {
-	comp := status.Component
+// listLines renders a string slice for a detail view: all values, comma
+// separated. The record keeps the slice itself.
+func listLines(v any) string {
+	items, ok := v.([]string)
+	if !ok || len(items) == 0 {
+		return "-"
+	}
+	out := make([]string, len(items))
+	for i, s := range items {
+		out[i] = cliout.Value(s)
+	}
+	return strings.Join(out, ", ")
+}
 
-	fmt.Printf("Processor: %s\n", comp.Id)
-	fmt.Println("═══════════════════════════════════════════════════════")
-	fmt.Println()
-
-	// Basic info
-	fmt.Println("Basic Information:")
-	if comp.Name != "" {
-		fmt.Printf("  Name:        %s\n", comp.Name)
+// mapLines renders a string map for a detail view, with keys sorted so the
+// output is stable between runs.
+func mapLines(v any) string {
+	m, ok := v.(map[string]string)
+	if !ok || len(m) == 0 {
+		return "-"
 	}
-	if comp.Version != "" {
-		fmt.Printf("  Version:     %s\n", comp.Version)
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
 	}
-	if comp.Description != "" {
-		fmt.Printf("  Description: %s\n", comp.Description)
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, cliout.Value(k)+"="+cliout.Value(m[k]))
 	}
-	fmt.Println()
-
-	// Event types
-	fmt.Println("Event Types:")
-	fmt.Printf("  Input Types:  ")
-	if len(comp.InputEventTypes) == 0 {
-		fmt.Println("(none)")
-	} else {
-		fmt.Println()
-		for _, t := range comp.InputEventTypes {
-			fmt.Printf("    - %s\n", t)
-		}
-	}
-
-	fmt.Printf("  Output Types: ")
-	if len(comp.OutputEventTypes) == 0 {
-		fmt.Println("(none)")
-	} else {
-		fmt.Println()
-		for _, t := range comp.OutputEventTypes {
-			fmt.Printf("    - %s\n", t)
-		}
-	}
-	fmt.Println()
-
-	// Connection info
-	fmt.Println("Connection:")
-	if comp.Endpoint != "" {
-		fmt.Printf("  Endpoint:    %s\n", comp.Endpoint)
-	} else {
-		fmt.Printf("  Endpoint:    (not specified)\n")
-	}
-	fmt.Println()
-
-	// Health status
-	fmt.Println("Health:")
-	fmt.Printf("  Status:       %s\n", formatHealthStatus(status.Status))
-	if status.LastHeartbeat != nil {
-		lastSeen := status.LastHeartbeat.AsTime()
-		fmt.Printf("  Last Heartbeat: %s (%s ago)\n",
-			lastSeen.Format("2006-01-02 15:04:05"),
-			time.Since(lastSeen).Round(time.Second))
-	}
-	if status.RegisteredAt != nil {
-		fmt.Printf("  Registered At:  %s\n", status.RegisteredAt.AsTime().Format("2006-01-02 15:04:05"))
-	}
-	fmt.Println()
-
-	// Metrics
-	if len(status.Metrics) > 0 {
-		fmt.Println("Metrics:")
-		for key, value := range status.Metrics {
-			fmt.Printf("  %s: %s\n", key, value)
-		}
-		fmt.Println()
-	}
-
-	// Metadata
-	if len(comp.Metadata) > 0 {
-		fmt.Println("Metadata:")
-		for key, value := range comp.Metadata {
-			fmt.Printf("  %s: %s\n", key, value)
-		}
-		fmt.Println()
-	}
+	return strings.Join(parts, ", ")
 }

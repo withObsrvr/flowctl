@@ -1,0 +1,39 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/withObsrvr/flowctl/.vex/flowctl.openvex.json",
+  "author": "Tillman Mosley III <tillman@withobsrvr.com>",
+  "role": "Maintainer",
+  "timestamp": "2026-10-20T00:00:00Z",
+  "version": 1,
+  "tooling": "hand-authored; see scripts/govulncheck.sh",
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GO-2026-4887",
+        "description": "Moby has AuthZ plugin bypass when provided oversized request bodies"
+      },
+      "products": [
+        { "@id": "pkg:golang/github.com/withObsrvr/flowctl" }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The vulnerability is in the Moby daemon's HTTP API authorization path. flowctl imports github.com/docker/docker only as a client (api/types/container, client, pkg/stdcopy in pkg/runner/docker_cli_client.go) to talk to a Docker daemon the operator already runs. flowctl does not run a Moby daemon, does not serve the Docker API, and does not use AuthZ plugins. govulncheck reaches the module through package init functions only, not through any vulnerable symbol. Upstream reports no fixed version.",
+      "action_statement": "Re-evaluate when docker/docker publishes a fixed release, or if flowctl ever serves a Docker-compatible API.",
+      "action_statement_timestamp": "2026-10-20T00:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "GO-2026-4883",
+        "description": "Moby has an off-by-one error in its plugin privilege validation"
+      },
+      "products": [
+        { "@id": "pkg:golang/github.com/withObsrvr/flowctl" }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The vulnerability is in the Moby daemon's plugin privilege validation. flowctl neither installs nor validates Docker plugins; it starts and stops containers through the client API. As above, govulncheck reaches the module only through package init. Upstream reports no fixed version.",
+      "action_statement": "Re-evaluate when docker/docker publishes a fixed release, or if flowctl ever manages Docker plugins.",
+      "action_statement_timestamp": "2026-10-20T00:00:00Z"
+    }
+  ]
+}

@@ -24,7 +24,7 @@ func NewVolumeHandler(logger *zap.Logger) *VolumeHandler {
 // ProcessVolumes processes and validates volume mounts
 func (h *VolumeHandler) ProcessVolumes(volumes []Volume) ([]VolumeMount, error) {
 	processed := make([]VolumeMount, 0, len(volumes))
-	
+
 	for _, vol := range volumes {
 		mount, err := h.processVolume(vol)
 		if err != nil {
@@ -32,7 +32,7 @@ func (h *VolumeHandler) ProcessVolumes(volumes []Volume) ([]VolumeMount, error) 
 		}
 		processed = append(processed, mount)
 	}
-	
+
 	return processed, nil
 }
 
@@ -43,7 +43,7 @@ func (h *VolumeHandler) processVolume(vol Volume) (VolumeMount, error) {
 	if err != nil {
 		return VolumeMount{}, fmt.Errorf("failed to resolve host path: %w", err)
 	}
-	
+
 	// Determine container path
 	containerPath := vol.ContainerPath
 	if containerPath == "" {
@@ -52,12 +52,12 @@ func (h *VolumeHandler) processVolume(vol Volume) (VolumeMount, error) {
 	if containerPath == "" {
 		return VolumeMount{}, fmt.Errorf("container path not specified")
 	}
-	
+
 	// Validate paths
 	if err := h.validatePaths(hostPath, containerPath); err != nil {
 		return VolumeMount{}, err
 	}
-	
+
 	// Check if host path exists and is accessible
 	if err := h.checkHostPath(hostPath, vol.ReadOnly); err != nil {
 		h.logger.Warn("Host path validation warning",
@@ -65,19 +65,19 @@ func (h *VolumeHandler) processVolume(vol Volume) (VolumeMount, error) {
 			zap.Error(err))
 		// Continue anyway - Docker might create it
 	}
-	
+
 	mount := VolumeMount{
 		HostPath:      hostPath,
 		ContainerPath: containerPath,
 		ReadOnly:      vol.ReadOnly,
 	}
-	
+
 	h.logger.Debug("Processed volume mount",
 		zap.String("name", vol.Name),
 		zap.String("host", mount.HostPath),
 		zap.String("container", mount.ContainerPath),
 		zap.Bool("readonly", mount.ReadOnly))
-	
+
 	return mount, nil
 }
 
@@ -86,10 +86,10 @@ func (h *VolumeHandler) resolveHostPath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("host path is empty")
 	}
-	
+
 	// Expand environment variables
 	expanded := h.expandEnvVars(path)
-	
+
 	// Handle home directory expansion
 	if strings.HasPrefix(expanded, "~/") {
 		home, err := os.UserHomeDir()
@@ -98,7 +98,7 @@ func (h *VolumeHandler) resolveHostPath(path string) (string, error) {
 		}
 		expanded = filepath.Join(home, expanded[2:])
 	}
-	
+
 	// Convert to absolute path if relative
 	if !filepath.IsAbs(expanded) {
 		abs, err := filepath.Abs(expanded)
@@ -107,10 +107,10 @@ func (h *VolumeHandler) resolveHostPath(path string) (string, error) {
 		}
 		expanded = abs
 	}
-	
+
 	// Clean the path
 	cleaned := filepath.Clean(expanded)
-	
+
 	return cleaned, nil
 }
 
@@ -118,25 +118,25 @@ func (h *VolumeHandler) resolveHostPath(path string) (string, error) {
 func (h *VolumeHandler) expandEnvVars(path string) string {
 	// First pass: expand $VAR and ${VAR} syntax
 	expanded := os.ExpandEnv(path)
-	
+
 	// Second pass: handle $HOME specially if not set
 	if strings.Contains(expanded, "$HOME") {
 		home, _ := os.UserHomeDir()
 		expanded = strings.ReplaceAll(expanded, "$HOME", home)
 	}
-	
+
 	// Handle common variables that might not be in environment
 	replacements := map[string]string{
 		"$PWD":  mustGetwd(),
 		"$USER": os.Getenv("USER"),
 	}
-	
+
 	for placeholder, value := range replacements {
 		if value != "" {
 			expanded = strings.ReplaceAll(expanded, placeholder, value)
 		}
 	}
-	
+
 	return expanded
 }
 
@@ -146,16 +146,16 @@ func (h *VolumeHandler) validatePaths(hostPath, containerPath string) error {
 	if hostPath == "" {
 		return fmt.Errorf("host path is empty after resolution")
 	}
-	
+
 	// Validate container path
 	if containerPath == "" {
 		return fmt.Errorf("container path is empty")
 	}
-	
+
 	if !filepath.IsAbs(containerPath) {
 		return fmt.Errorf("container path must be absolute: %s", containerPath)
 	}
-	
+
 	// Check for dangerous paths
 	dangerousPaths := []string{"/", "/etc", "/bin", "/sbin", "/usr", "/lib", "/var"}
 	for _, dangerous := range dangerousPaths {
@@ -163,7 +163,7 @@ func (h *VolumeHandler) validatePaths(hostPath, containerPath string) error {
 			return fmt.Errorf("mounting system directory %s is not allowed", dangerous)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -176,19 +176,19 @@ func (h *VolumeHandler) checkHostPath(hostPath string, readOnly bool) error {
 		}
 		return fmt.Errorf("failed to stat host path: %w", err)
 	}
-	
+
 	// Check read permissions
 	if err := h.checkReadAccess(hostPath); err != nil {
 		return fmt.Errorf("no read access to host path: %w", err)
 	}
-	
+
 	// Check write permissions if not read-only
 	if !readOnly && !info.IsDir() {
 		if err := h.checkWriteAccess(hostPath); err != nil {
 			return fmt.Errorf("no write access to host path: %w", err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -208,7 +208,7 @@ func (h *VolumeHandler) checkWriteAccess(path string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	if info.IsDir() {
 		// For directories, check if we can create a temp file
 		testFile := filepath.Join(path, ".flowctl-write-test")
@@ -220,7 +220,7 @@ func (h *VolumeHandler) checkWriteAccess(path string) error {
 		os.Remove(testFile)
 		return nil
 	}
-	
+
 	// For files, check if we can open for writing
 	file, err := os.OpenFile(path, os.O_WRONLY, 0)
 	if err != nil {

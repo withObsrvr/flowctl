@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"github.com/withobsrvr/flowctl/internal/cliout"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,10 +16,10 @@ import (
 
 // Monitor provides real-time monitoring and status display for the pipeline
 type Monitor struct {
-	runner     *PipelineRunner
-	displayCh  chan bool
-	logCh      chan LogEntry
-	quit       chan struct{}
+	runner      *PipelineRunner
+	displayCh   chan bool
+	logCh       chan LogEntry
+	quit        chan struct{}
 	clearScreen bool
 }
 
@@ -95,14 +96,18 @@ func (m *Monitor) displayStatus() {
 
 	if m.clearScreen {
 		// Clear screen and move cursor to top
-		fmt.Print("\033[2J\033[H")
+		// Only clear a real terminal: writing escape codes into a redirected
+		// stream corrupts it (CLI-7).
+		if cliout.ShouldColor(os.Stderr) {
+			fmt.Fprint(os.Stderr, "\033[2J\033[H")
+		}
 	}
 
 	// Header
-	fmt.Printf("🚀 Pipeline: %s\n", m.runner.pipeline.Metadata.Name)
-	fmt.Printf("⏰ Status as of: %s\n", time.Now().Format("15:04:05"))
-	fmt.Printf("📡 Control Plane: %s\n", m.runner.controlPlane.GetEndpoint())
-	fmt.Println()
+	fmt.Fprintf(os.Stderr, "🚀 Pipeline: %s\n", m.runner.pipeline.Metadata.Name)
+	fmt.Fprintf(os.Stderr, "⏰ Status as of: %s\n", time.Now().Format("15:04:05"))
+	fmt.Fprintf(os.Stderr, "📡 Control Plane: %s\n", m.runner.controlPlane.GetEndpoint())
+	fmt.Fprintln(os.Stderr)
 
 	// Component status
 	healthyCount := 0
@@ -127,39 +132,39 @@ func (m *Monitor) displayStatus() {
 		}
 		componentColor.Printf("%-30s ", componentId)
 		statusColor.Printf("%s", status)
-		fmt.Println()
+		fmt.Fprintln(os.Stderr)
 
 		// Show metrics if available
 		if len(service.Metrics) > 0 {
 			for k, v := range service.Metrics {
-				fmt.Printf("  %s: %s\n", k, v)
+				fmt.Fprintf(os.Stderr, "  %s: %s\n", k, v)
 			}
 		}
 
 		// Show last heartbeat
 		if service.LastHeartbeat != nil {
-			fmt.Printf("  Last seen: %s\n", service.LastHeartbeat.AsTime().Format("15:04:05"))
+			fmt.Fprintf(os.Stderr, "  Last seen: %s\n", service.LastHeartbeat.AsTime().Format("15:04:05"))
 		}
-		fmt.Println()
+		fmt.Fprintln(os.Stderr)
 	}
 
 	// Summary
 	summaryColor := color.New(color.FgYellow, color.Bold)
 	summaryColor.Printf("📊 Summary: %d/%d components healthy\n", healthyCount, len(services))
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 
 	// Instructions
-	fmt.Println("Press Ctrl+C to stop pipeline")
-	fmt.Println("=====================================")
+	fmt.Fprintln(os.Stderr, "Press Ctrl+C to stop pipeline")
+	fmt.Fprintln(os.Stderr, "=====================================")
 }
 
 // displayLogEntry displays a log entry
 func (m *Monitor) displayLogEntry(entry LogEntry) {
 	timestamp := entry.Timestamp.Format("15:04:05")
-	
+
 	// Color code by component
 	componentColor := m.getComponentColor(entry.ComponentID)
-	
+
 	// Color code by log level
 	var levelColor *color.Color
 	switch entry.Level {
@@ -176,7 +181,7 @@ func (m *Monitor) displayLogEntry(entry LogEntry) {
 	prefix := fmt.Sprintf("[%s] %s:", timestamp, entry.ComponentID)
 	componentColor.Printf("%-30s ", prefix)
 	levelColor.Printf("%-5s ", entry.Level)
-	fmt.Printf("%s\n", entry.Message)
+	fmt.Fprintf(os.Stderr, "%s\n", entry.Message)
 }
 
 // getComponentColor returns a color for a component

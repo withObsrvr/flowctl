@@ -7,6 +7,9 @@ on:
 
 permissions:
   contents: write
+  # SEC-10: lets cosign exchange a GitHub OIDC token for a Sigstore
+  # certificate, so releases are signed without a long-lived key.
+  id-token: write
 
 jobs:
   release:
@@ -28,8 +31,33 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      # Release gate (§9): the merge gate plus the extras below. These repeat
+      # the PR jobs because a tag can be pushed to a commit that never went
+      # through a PR.
+      - name: Lint
+        run: make lint
+
       - name: Run tests
         run: make test
+
+      - name: Run tests with the race detector
+        run: make test-race
+
+      - name: Vulnerability scan
+        run: ./scripts/govulncheck.sh
+
+      # BUILD-3: a release that cannot be rebuilt byte-for-byte from its tag
+      # is not a release.
+      - name: Verify the build is reproducible
+        run: make verify-repro
+
+      # SEC-10: SBOM generation and keyless signing, both driven by
+      # .goreleaser.yaml.
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6

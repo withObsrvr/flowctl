@@ -18,12 +18,18 @@ builds:
     goarch:
       - amd64
       - arm64
+    # BUILD-3: no absolute build-machine paths in the binary, and the only
+    # timestamp embedded is the commit's, so building a tag twice gives the
+    # same bytes.
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - >-
         -s -w
         -X github.com/withobsrvr/flowctl/cmd/version.Version={{ .Version }}
         -X github.com/withobsrvr/flowctl/cmd/version.Commit={{ .Commit }}
-        -X github.com/withobsrvr/flowctl/cmd/version.BuildDate={{ .Date }}
+        -X github.com/withobsrvr/flowctl/cmd/version.BuildDate={{ .CommitDate }}
 
 archives:
   - id: default
@@ -32,16 +38,59 @@ archives:
     files:
       - README.md
       - CHANGELOG.md
+      - LICENSE
+      - SECURITY.md
 
 checksum:
   name_template: "checksums.txt"
+
+# SEC-10: every release ships an SBOM alongside the archives.
+sboms:
+  - id: archive
+    artifacts: archive
+
+# SEC-10: keyless Sigstore signing of the checksum file, which transitively
+# covers every artifact listed in it. Requires `id-token: write` in the release
+# workflow so GitHub can mint the OIDC token cosign exchanges for a certificate.
+signs:
+  - cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+release:
+  footer: |
+    ## Verifying this release
+
+    Checksums:
+
+    ```
+    sha256sum --check checksums.txt
+    ```
+
+    Signature (keyless Sigstore, no key to distribute):
+
+    ```
+    cosign verify-blob checksums.txt \
+      --certificate checksums.txt.pem \
+      --signature checksums.txt.sig \
+      --certificate-identity-regexp 'https://github\.com/withObsrvr/flowctl/\.github/workflows/.+' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
+    ```
 
 changelog:
   use: git
   sort: asc
   filters:
     exclude:
-      - '^docs:'
-      - '^test:'
-      - '^chore:'
-      - '^ci:'
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "^style:"

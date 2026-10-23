@@ -21,7 +21,7 @@ type Client struct {
 	sessionID     string
 	webhookSecret string
 	httpClient    *http.Client
-	ledgerCount   int64      // Atomic counter
+	ledgerCount   int64       // Atomic counter
 	logger        *log.Logger // Logger for heartbeat messages
 }
 

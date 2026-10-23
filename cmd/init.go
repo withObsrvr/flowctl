@@ -5,6 +5,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/withobsrvr/flowctl/internal/apiversion"
+	"github.com/withobsrvr/flowctl/internal/cliout"
+	"github.com/withobsrvr/flowctl/internal/exitcode"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -38,7 +42,7 @@ Examples:
   flowctl init
 
   # Specify output file
-  flowctl init --output my-pipeline.yaml
+  flowctl init --file my-pipeline.yaml
 
   # Non-interactive mode (use flags)
   flowctl init --non-interactive --network testnet --destination duckdb
@@ -52,17 +56,43 @@ Examples:
 func init() {
 	rootCmd.AddCommand(initCmd)
 
-	initCmd.Flags().StringVarP(&outputFile, "output", "o", "", "output file (default: <pipeline-name>.yaml)")
+	// Renamed from --output, which CLI-3 reserves for selecting an output format.
+	// No deprecated alias: a local --output would shadow the global one, so
+	// `--output json` would silently be read as a filename — the exact confusion
+	// the rule exists to prevent. Pre-1.0, VER-2 permits the clean break.
+	initCmd.Flags().StringVarP(&outputFile, "file", "f", "", "file to write (default: <pipeline-name>.yaml)")
 	initCmd.Flags().BoolVar(&initNonInteractive, "non-interactive", false, "non-interactive mode (requires --network/--destination unless --preset is used)")
 	initCmd.Flags().StringVar(&networkFlag, "network", "", "network (testnet, mainnet)")
 	initCmd.Flags().StringVar(&destinationFlag, "destination", "", "destination (postgres, duckdb)")
 	initCmd.Flags().StringVar(&presetFlag, "preset", "", "starter preset (testnet-duckdb, testnet-postgres, mainnet-duckdb, mainnet-postgres)")
 }
 
+// wizardOut is where the interactive wizard writes. Prompts, progress and the
+// closing summary are all messages, not results, so they go to stderr and
+// leave stdout for the record emitted at the end (CLI-5).
+var wizardOut io.Writer = os.Stderr
+
 func runInit(cmd *cobra.Command, args []string) error {
-	if !initNonInteractive && presetFlag == "" {
-		fmt.Println("\n🚀 Welcome to flowctl!")
-		fmt.Println("Let's create your first Stellar data pipeline.")
+	p := cliout.FromContext(cmd.Context())
+	wizardOut = p.Err()
+
+	interactive := !initNonInteractive && presetFlag == ""
+
+	// CLI-8: a tool must run without prompts when stdin is not a terminal.
+	// Without this the wizard reads EOF for every answer and silently builds a
+	// pipeline from defaults.
+	if interactive && !cliout.IsTerminal(os.Stdin) {
+		return exitcode.Errorf(exitcode.Usage,
+			"flowctl init needs a terminal to prompt; use --preset, or --non-interactive with --network and --destination")
+	}
+	if interactive && p.Machine() {
+		return exitcode.Errorf(exitcode.Usage,
+			"--output %s cannot be combined with the interactive wizard; use --preset or --non-interactive", p.Format())
+	}
+
+	if interactive {
+		fmt.Fprintln(wizardOut, "\n🚀 Welcome to flowctl!")
+		fmt.Fprintln(wizardOut, "Let's create your first Stellar data pipeline.")
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -121,12 +151,35 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write pipeline file: %w", err)
 	}
 
-	fmt.Printf("\n✓ Created %s\n\n", filename)
+	fmt.Fprintf(wizardOut, "\n✓ Created %s\n\n", filename)
 
 	// Show summary
 	printSummary(intent, filename, blockchain, network, destination)
 
-	return nil
+	row := cliout.Row{
+		"file":        filename,
+		"name":        name,
+		"blockchain":  blockchain,
+		"network":     network,
+		"destination": destination,
+		"api_version": apiversion.Current,
+	}
+	if startLedger != "" {
+		row["start_ledger"] = startLedger
+	}
+	if endLedger != "" {
+		row["end_ledger"] = endLedger
+	}
+	row["continuous"] = startLedger == ""
+
+	// In table mode the summary above already told the operator everything, so
+	// stdout carries just the path — which makes
+	// `flowctl run "$(flowctl init --preset …)"` work.
+	if !p.Machine() {
+		_, err := fmt.Fprintln(p.Out(), filename)
+		return err
+	}
+	return p.Object(cliout.Object{Schema: "flowctl.pipeline_init.v1", Data: row})
 }
 
 func resolveInitPreset(preset string) (network string, destination string, err error) {
@@ -147,65 +200,65 @@ func resolveInitPreset(preset string) (network string, destination string, err e
 func promptNetwork(reader *bufio.Reader) string {
 	options := []string{"Testnet (recommended for learning)", "Mainnet"}
 
-	fmt.Println("? Which network?")
+	fmt.Fprintln(wizardOut, "? Which network?")
 	for i, opt := range options {
 		prefix := "  "
 		if i == 0 {
 			prefix = ">"
 		}
-		fmt.Printf("  %s %d. %s\n", prefix, i+1, opt)
+		fmt.Fprintf(wizardOut, "  %s %d. %s\n", prefix, i+1, opt)
 	}
-	fmt.Print("Enter number [1]: ")
+	fmt.Fprint(wizardOut, "Enter number [1]: ")
 
 	choice := readIntWithDefault(reader, 1, 1, len(options))
 
 	// Extract network name (strip description)
 	networkMap := []string{"testnet", "mainnet"}
 	selected := networkMap[choice-1]
-	fmt.Printf("Selected: %s\n\n", options[choice-1])
+	fmt.Fprintf(wizardOut, "Selected: %s\n\n", options[choice-1])
 	return selected
 }
 
 func promptDestination(reader *bufio.Reader) string {
 	options := []string{"PostgreSQL database", "DuckDB file"}
 
-	fmt.Println("? What do you want to do with the data?")
+	fmt.Fprintln(wizardOut, "? What do you want to do with the data?")
 	for i, opt := range options {
 		prefix := "  "
 		if i == 0 {
 			prefix = ">"
 		}
-		fmt.Printf("  %s %d. %s\n", prefix, i+1, opt)
+		fmt.Fprintf(wizardOut, "  %s %d. %s\n", prefix, i+1, opt)
 	}
-	fmt.Print("Enter number [1]: ")
+	fmt.Fprint(wizardOut, "Enter number [1]: ")
 
 	choice := readIntWithDefault(reader, 1, 1, len(options))
 
 	// Map display names to event types
 	destMap := []string{"postgres", "duckdb"}
 	selected := destMap[choice-1]
-	fmt.Printf("Selected: %s\n\n", options[choice-1])
+	fmt.Fprintf(wizardOut, "Selected: %s\n\n", options[choice-1])
 	return selected
 }
 
 func promptLedgerRange(reader *bufio.Reader) [2]string {
-	fmt.Println("? Ledger range (optional - press Enter to skip for continuous processing):")
+	fmt.Fprintln(wizardOut, "? Ledger range (optional - press Enter to skip for continuous processing):")
 
-	fmt.Print("  Start ledger [leave empty for continuous]: ")
+	fmt.Fprint(wizardOut, "  Start ledger [leave empty for continuous]: ")
 	startLedger, _ := reader.ReadString('\n')
 	startLedger = strings.TrimSpace(startLedger)
 
 	var endLedger string
 	if startLedger != "" {
-		fmt.Print("  End ledger [leave empty for continuous]: ")
+		fmt.Fprint(wizardOut, "  End ledger [leave empty for continuous]: ")
 		endLedger, _ = reader.ReadString('\n')
 		endLedger = strings.TrimSpace(endLedger)
 	}
 
 	if startLedger != "" && endLedger != "" {
-		fmt.Printf("Selected: Ledgers %s to %s\n\n", startLedger, endLedger)
+		fmt.Fprintf(wizardOut, "Selected: Ledgers %s to %s\n\n", startLedger, endLedger)
 	} else {
-		fmt.Println("Selected: Continuous processing")
+		fmt.Fprintln(wizardOut, "Selected: Continuous processing")
 	}
 
 	return [2]string{startLedger, endLedger}
@@ -213,7 +266,7 @@ func promptLedgerRange(reader *bufio.Reader) [2]string {
 
 func promptName(reader *bufio.Reader, blockchain string) string {
 	defaultName := blockchain + "-pipeline"
-	fmt.Printf("? Pipeline name [%s]: ", defaultName)
+	fmt.Fprintf(wizardOut, "? Pipeline name [%s]: ", defaultName)
 
 	name, _ := reader.ReadString('\n')
 	name = strings.TrimSpace(name)
@@ -222,7 +275,7 @@ func promptName(reader *bufio.Reader, blockchain string) string {
 		name = defaultName
 	}
 
-	fmt.Printf("Selected: %s\n\n", name)
+	fmt.Fprintf(wizardOut, "Selected: %s\n\n", name)
 	return name
 }
 
@@ -236,7 +289,7 @@ func readIntWithDefault(reader *bufio.Reader, defaultVal, min, max int) int {
 
 	choice, err := strconv.Atoi(input)
 	if err != nil || choice < min || choice > max {
-		fmt.Printf("Invalid choice. Using default: %d\n", defaultVal)
+		fmt.Fprintf(wizardOut, "Invalid choice. Using default: %d\n", defaultVal)
 		return defaultVal
 	}
 
@@ -418,12 +471,12 @@ func writeIntentToFile(intent map[string]interface{}, filename string) error {
 func printSummary(intent map[string]interface{}, filename, blockchain, network, destination string) {
 	spec := intent["spec"].(map[string]interface{})
 
-	fmt.Println("Pipeline summary")
-	fmt.Println("----------------")
-	fmt.Printf("Source:      %s ledgers (%s)\n", blockchain, network)
-	fmt.Println("Processor:   contract-events")
-	fmt.Printf("Destination: %s\n", destination)
-	fmt.Printf("File:        %s\n", filename)
+	fmt.Fprintln(wizardOut, "Pipeline summary")
+	fmt.Fprintln(wizardOut, "----------------")
+	fmt.Fprintf(wizardOut, "Source:      %s ledgers (%s)\n", blockchain, network)
+	fmt.Fprintln(wizardOut, "Processor:   contract-events")
+	fmt.Fprintf(wizardOut, "Destination: %s\n", destination)
+	fmt.Fprintf(wizardOut, "File:        %s\n", filename)
 
 	// Show configuration details
 	if sources, ok := spec["sources"].([]map[string]interface{}); ok && len(sources) > 0 {
@@ -432,34 +485,34 @@ func printSummary(intent map[string]interface{}, filename, blockchain, network, 
 			endLedger := configValueString(config["end_ledger"])
 			if startLedger != "" {
 				if endLedger != "" {
-					fmt.Printf("Ledgers:     %s to %s\n", startLedger, endLedger)
+					fmt.Fprintf(wizardOut, "Ledgers:     %s to %s\n", startLedger, endLedger)
 				} else {
-					fmt.Printf("Start at:    %s\n", startLedger)
+					fmt.Fprintf(wizardOut, "Start at:    %s\n", startLedger)
 				}
 			} else {
-				fmt.Println("Mode:        continuous")
+				fmt.Fprintln(wizardOut, "Mode:        continuous")
 			}
 		}
 	}
-	fmt.Println("Format:      flowctl/v1")
+	fmt.Fprintln(wizardOut, "Format:      flowctl/v1")
 
-	fmt.Println("\nNext:")
-	fmt.Printf("  flowctl validate %s\n", filename)
-	fmt.Printf("  flowctl run %s\n", filename)
-	fmt.Println("\nThen, in another terminal:")
-	fmt.Println("  flowctl status")
-	fmt.Println("  flowctl pipelines active")
+	fmt.Fprintln(wizardOut, "\nNext:")
+	fmt.Fprintf(wizardOut, "  flowctl validate %s\n", filename)
+	fmt.Fprintf(wizardOut, "  flowctl run %s\n", filename)
+	fmt.Fprintln(wizardOut, "\nThen, in another terminal:")
+	fmt.Fprintln(wizardOut, "  flowctl status")
+	fmt.Fprintln(wizardOut, "  flowctl pipelines active")
 
 	if destination == "duckdb" {
 		duckdbFile := duckDBPathFromIntent(spec)
-		fmt.Println("\nOptional, after stopping the pipeline:")
-		fmt.Printf("  duckdb %s \"SELECT event_type, COUNT(*) FROM contract_events GROUP BY event_type\"\n", duckdbFile)
-		fmt.Println("\nDuckDB is the recommended first-run path and does not require a local Docker daemon.")
+		fmt.Fprintln(wizardOut, "\nOptional, after stopping the pipeline:")
+		fmt.Fprintf(wizardOut, "  duckdb %s \"SELECT event_type, COUNT(*) FROM contract_events GROUP BY event_type\"\n", duckdbFile)
+		fmt.Fprintln(wizardOut, "\nDuckDB is the recommended first-run path and does not require a local Docker daemon.")
 	} else {
-		fmt.Println("\nNote: ensure PostgreSQL is running and the sink credentials in the pipeline file are correct.")
+		fmt.Fprintln(wizardOut, "\nNote: ensure PostgreSQL is running and the sink credentials in the pipeline file are correct.")
 	}
 
-	fmt.Println("\nComponents are downloaded automatically on first run and cached under ~/.flowctl/.")
+	fmt.Fprintln(wizardOut, "\nComponents are downloaded automatically on first run and cached under ~/.flowctl/.")
 }
 
 func configValueString(v interface{}) string {

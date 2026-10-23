@@ -16,13 +16,12 @@ import (
 
 // DAGPipeline represents a data processing pipeline implemented with a DAG of buffered channels
 type DAGPipeline struct {
-	cfg         *config.Config
-	pipeline    *model.Pipeline
-	dag         *DAG
-	sources     map[string]source.Source
-	processors  map[string]processor.Processor
-	sinks       map[string]sink.Sink
-	sinkChan    chan *processor.Message
+	cfg        *config.Config
+	pipeline   *model.Pipeline
+	dag        *DAG
+	sources    map[string]source.Source
+	processors map[string]processor.Processor
+	sinks      map[string]sink.Sink
 }
 
 // NewDAGPipeline creates a new pipeline from configuration
@@ -70,10 +69,10 @@ func (p *DAGPipeline) buildPipelineGraph() error {
 		}
 
 		p.processors[procConfig.ID] = proc
-		
+
 		// Determine input event types from the inputs
 		inputTypes := determineInputEventTypes(procConfig, p.pipeline)
-		
+
 		if err := p.dag.AddProcessor(procConfig.ID, proc, inputTypes); err != nil {
 			return fmt.Errorf("failed to add processor to DAG: %w", err)
 		}
@@ -87,7 +86,7 @@ func (p *DAGPipeline) buildPipelineGraph() error {
 		}
 
 		p.sinks[sinkConfig.ID] = snk
-		
+
 		// Create a sink channel for each sink
 		p.dag.AddSinkChannel(sinkConfig.ID)
 	}
@@ -107,12 +106,12 @@ func (p *DAGPipeline) buildPipelineGraph() error {
 	for _, src := range p.pipeline.Spec.Sources {
 		sourceMap[src.ID] = src
 	}
-	
+
 	processorMap := make(map[string]model.Component)
 	for _, proc := range p.pipeline.Spec.Processors {
 		processorMap[proc.ID] = proc
 	}
-	
+
 	// Connect sources to processors
 	for _, procConfig := range p.pipeline.Spec.Processors {
 		// For each input, find the source or processor
@@ -127,7 +126,7 @@ func (p *DAGPipeline) buildPipelineGraph() error {
 				}
 				continue // Found a source, no need to check processors
 			}
-			
+
 			// Check if input is a processor
 			if upstreamProc, exists := processorMap[inputID]; exists {
 				// Connect upstream processor to this processor
@@ -178,7 +177,7 @@ func (p *DAGPipeline) Start(ctx context.Context) error {
 		sinkChan := p.dag.SinkChannels[id]
 		go func(sinkID string, s sink.Sink, ch chan *processor.Message) {
 			ctx := context.Background() // Use a separate context for sinks
-			
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -211,7 +210,7 @@ func (p *DAGPipeline) Start(ctx context.Context) error {
 // Stop gracefully shuts down the pipeline
 func (p *DAGPipeline) Stop() error {
 	logger.Info("Stopping DAG pipeline")
-	
+
 	// Stop the DAG first
 	if err := p.dag.Stop(); err != nil {
 		return fmt.Errorf("failed to stop DAG: %w", err)
@@ -259,30 +258,26 @@ func createSink(component model.Component) (sink.Sink, error) {
 // determineInputEventTypes determines the input event types for a processor
 func determineInputEventTypes(processor model.Component, pipeline *model.Pipeline) []string {
 	var inputTypes []string
-	
+
 	// For each input, find the corresponding component and get its output event types
 	for _, inputID := range processor.Inputs {
 		// Check sources
 		for _, src := range pipeline.Spec.Sources {
 			if src.ID == inputID {
 				// Add output event types from this source
-				for _, eventType := range src.OutputEventTypes {
-					inputTypes = append(inputTypes, eventType)
-				}
+				inputTypes = append(inputTypes, src.OutputEventTypes...)
 			}
 		}
-		
+
 		// Check processors
 		for _, proc := range pipeline.Spec.Processors {
 			if proc.ID == inputID {
 				// Add output event types from this processor
-				for _, eventType := range proc.OutputEventTypes {
-					inputTypes = append(inputTypes, eventType)
-				}
+				inputTypes = append(inputTypes, proc.OutputEventTypes...)
 			}
 		}
 	}
-	
+
 	return inputTypes
 }
 
@@ -345,7 +340,7 @@ func (s *mockSource) Events(ctx context.Context, out chan<- source.EventEnvelope
 				Payload:   []byte(`{"data": "test event from ` + s.id + `"}`),
 				Cursor:    "test-cursor",
 			}
-			
+
 			// Try to send, but check context again before sending
 			if ctxCanceled {
 				return ctx.Err()
