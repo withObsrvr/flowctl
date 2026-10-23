@@ -103,6 +103,15 @@ called out below and, where they change a contract, carry an ADR in `docs/adr/`.
 - Container images run as a non-root user and carry OCI source, revision and
   version annotations.
 
+### Security
+
+- Require Go 1.26.10, which fixes
+  [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809) — compromised
+  intermediate certificates were not distrusted by `crypto/x509`. flowctl
+  reaches it through TLS and mTLS to the control plane. Building with an older
+  toolchain now fails rather than silently linking the affected standard
+  library.
+
 ### Fixed
 
 - **Data race in the control plane.** `GetComponentStatus` and `ListComponents`
