@@ -127,7 +127,7 @@ Assessed 2026-10-20 against standard v2.0. ✓ met · ◐ partial · ✗ unmet.
 | 7 | Security | ◐ | `govulncheck` and `gitleaks` now gate the merge (SEC-6, SEC-9); signing and SBOM are wired into the release workflow and take effect on the next tag (SEC-10); `LICENSE` and `SECURITY.md` published (SEC-11, SEC-12). The control plane still has no authn/authz — the largest remaining gap (SEC-1–4, GAP-12). |
 | 8 | Observability | ✗ | Logs are now JSON off-terminal with `service`, `version` and RFC 3339 UTC timestamps (OBS-1 ◐; still no `trace_id`/`network`/`ledger`). No OpenTelemetry (OBS-2). flowctl still exports no metrics (OBS-3) — the second-largest gap. |
 | 9 | Testing | ◐ | Merge gate now complete except change classification, which a PR template prompts for. `-race` runs in CI (TEST-4) and found a real race on first run. Fuzz tests cover the sanitiser and `apiVersion` (TEST-3, partial). Still no real-chain fixtures (TEST-1) and no parity, replay or benchmark tests (TEST-2 levels 5–8). |
-| 10 | Builds | ◐ | `toolchain` pinned in `go.mod`; builds use `-trimpath` and embed only the commit date, verified by `make verify-repro` in the release gate (BUILD-3). Containers run non-root with OCI annotations (BUILD-4). CI still uses `setup-go` rather than the flake (BUILD-2, GAP-21). |
+| 10 | Builds | ◐ | Go version pinned by the `go` directive in `go.mod` (a bare `toolchain` line is redundant once the two match, and `go mod tidy` — which CI enforces — removes it) and matched by the flake; builds use `-trimpath` and embed only the commit date, verified by `make verify-repro` in the release gate (BUILD-3). Containers run non-root with OCI annotations (BUILD-4). CI still uses `setup-go` rather than the flake (BUILD-2, GAP-21). |
 | 11 | Stellar | ◐ | Correctly delegated to components. No pubnet default anywhere ✓ (BUILD-7). FC-3 relay path not yet machine-readable, pending GAP-2. |
 | 12 | Documentation | ◐ | DOC-1 met. ADRs in place (DOC-4). CLI reference still hand-maintained in the README (DOC-2) and `docs/` still mixes tutorials, reference and internal planning (DOC-3). |
 
@@ -158,11 +158,12 @@ the register reads as a history rather than only a backlog.
 | GAP-18 | Progress and banners written to stdout alongside results | CLI-5 | 2 | **Closed** — no bare `fmt.Print*` to stdout remains outside one TTY-gated screen clear; `run`, the live monitor and the component downloaders all write progress to stderr |
 | GAP-19 | No real-chain fixtures, fuzzing, golden, subprocess, parity or replay tests | TEST-1, TEST-2, TEST-3 | 3 | **Partial** — fuzz tests for the sanitiser and `apiVersion`; golden tests for the output envelopes; TEST-1 and TEST-2 levels 5–8 still open |
 | GAP-20 | No version-matrix tests for rolling deploys *(the gap §13 of the standard names)* | VER-9 | 3 | Open |
-| GAP-21 | No `toolchain` line; CI uses `setup-go` rather than the repo flake | BUILD-2 | 5 | **Partial** — `toolchain` pinned; CI still does not use the flake |
+| GAP-21 | CI uses `setup-go` rather than the repo flake | BUILD-2 | 5 | **Partial** — the flake now provides Go 1.27.3, which satisfies the `go.mod` minimum, so the dev shell no longer lags and needs no toolchain download. CI still resolves its own Go from `go-version-file` rather than entering the flake, which is the remaining half. |
 | GAP-22 | Containers run as root; no OCI annotations | BUILD-4 | 5 | **Closed** |
 | GAP-23 | No MCP server or JSON help for agent operation | CLI-14 | 6 | Open |
 | GAP-24 | Packages lack package comments (`ST1000` excluded in `staticcheck.conf`) | §9 linters | 2 | Open — mechanical, ~20 packages |
 | GAP-25 | `grpc.DialContext`/`WithBlock` deprecated (`SA1019` excluded) | §9 linters | 2 | Open — `NewClient` never blocks, so call sites relying on `WithBlock` change behaviour |
+| GAP-26 | `nix build .#default` fails: the derivation runs protobuf generation without the protoc plugins in its `nativeBuildInputs` | BUILD-1 | 5 | Open — pre-existing and unrelated to the Go bump. `nix develop`, the path BUILD-1 documents, is unaffected. The generation step can probably be dropped from the derivation: the generated code is committed and CI checks it is current. |
 
 ### Next gap to close
 
